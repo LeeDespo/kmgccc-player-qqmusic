@@ -33,6 +33,8 @@ struct SidebarView: View {
     @EnvironmentObject private var themeStore: ThemeStore
     @Environment(\.colorScheme) private var currentColorScheme
     @ObservedObject private var updateCoordinator = UpdateCoordinator.shared
+    /// `@Observable`, so it is read directly rather than through `@ObservedObject`.
+    private var qqMusicWindow = QQMusicWindowManager.shared
     @ObservedObject private var crashReportService = CrashReportService.shared
 
     @State private var showSettings = false
@@ -459,6 +461,16 @@ struct SidebarView: View {
             if !isPresented {
                 finishCrashReportTipPresentation()
             }
+        }
+        .sheet(isPresented: Binding(
+            get: { QQMusicWindowManager.shared.isPresented },
+            set: { QQMusicWindowManager.shared.isPresented = $0 }
+        ), onDismiss: {
+            FeatureTipPresentationCoordinator.shared.setSuspended(false)
+        }) {
+            QQMusicSettingsView(coordinator: appSession.qqMusicOnlineCoordinator)
+                .environment(AppSettings.shared)
+                .environmentObject(themeStore)
         }
         .sheet(isPresented: $showSettings, onDismiss: {
             FeatureTipPresentationCoordinator.shared.setSuspended(false)
@@ -957,7 +969,7 @@ struct SidebarView: View {
             help: "QQ 音乐",
             surfaceVariant: .sidebarBottom
         ) {
-            QQMusicWindowManager.shared.coordinator = appSession.qqMusicOnlineCoordinator
+            FeatureTipPresentationCoordinator.shared.setSuspended(true)
             QQMusicWindowManager.shared.present()
         }
     }

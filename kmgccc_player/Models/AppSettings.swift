@@ -1105,6 +1105,20 @@ public final class AppSettings {
         static let sourcePreferences = "externalPlaybackSourcePreferences"
     }
 
+    /// How many tracks ahead of the current one the QQ Music source prefetches.
+    ///
+    /// 0 disables prefetching entirely (download only what you play); the
+    /// default of 2 keeps the next track ready without fetching a whole list.
+    @ObservationIgnored
+    @AppStorage("qqMusicPrefetchDepth") var qqMusicPrefetchDepth: Int = 2
+
+    /// Preferred download quality for QQ Music tracks.
+    ///
+    /// The upstream grants the best tier the account allows, so this is a
+    /// ceiling rather than a guarantee.
+    @ObservationIgnored
+    @AppStorage("qqMusicPreferredQuality") var qqMusicPreferredQuality: QQMusicQualityPreference = .automatic
+
     /// Whether to show the playback source switcher (local / Apple Music) in the sidebar.
     /// When false, shows the legacy app header (icon + app name) instead.
     @ObservationIgnored

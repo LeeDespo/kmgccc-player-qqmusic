@@ -11,7 +11,6 @@
 //
 //    Catalog/   JSON payloads (recommendations, playlists, rankings, search)
 //    Artwork/   cover images, keyed by their upstream URL
-//    Lyrics/    lyric text fetched for a track
 //
 //  `QQMusic/` is deliberately a sibling of the app's own `Cache/` folder, so
 //  the app's cache eviction cannot delete data this feature owns, and so it can
@@ -34,8 +33,6 @@ nonisolated enum QQMusicCacheCategory: String, Sendable {
     case playlistTracks
     /// Search results; short-lived because the user is iterating on queries.
     case search
-    /// Lyrics for a track; effectively immutable.
-    case lyrics
 
     var timeToLive: TimeInterval {
         switch self {
@@ -43,7 +40,6 @@ nonisolated enum QQMusicCacheCategory: String, Sendable {
         case .recommendFeed, .recommendPlaylists: return 30 * 60
         case .toplists: return 6 * 60 * 60
         case .playlistTracks: return 2 * 60 * 60
-        case .lyrics: return 30 * 24 * 60 * 60
         }
     }
 }
@@ -125,27 +121,6 @@ actor QQMusicCacheStore {
         }
     }
 
-    // MARK: - Lyrics
-
-    func lyrics(songMid: String) -> Data? {
-        let url = paths.qqMusicLyricsCacheURL.appendingPathComponent("\(Self.safeName(songMid)).json")
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return data
-    }
-
-    func storeLyrics(_ data: Data, songMid: String) {
-        let url = paths.qqMusicLyricsCacheURL.appendingPathComponent("\(Self.safeName(songMid)).json")
-        do {
-            try fileManager.createDirectory(
-                at: paths.qqMusicLyricsCacheURL,
-                withIntermediateDirectories: true
-            )
-            try data.write(to: url, options: .atomic)
-        } catch {
-            Log.warning("[QQMusicCache] lyrics write failed reason=\(error)", category: .import)
-        }
-    }
-
     // MARK: - Maintenance
 
     /// Total bytes held by the QQ Music data folder, for the settings window.
@@ -168,7 +143,6 @@ actor QQMusicCacheStore {
         for directory in [
             paths.qqMusicCatalogCacheURL,
             paths.qqMusicArtworkCacheURL,
-            paths.qqMusicLyricsCacheURL,
         ] {
             try? fileManager.removeItem(at: directory)
         }

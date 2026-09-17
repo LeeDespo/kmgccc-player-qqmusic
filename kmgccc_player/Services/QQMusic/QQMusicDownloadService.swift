@@ -85,6 +85,8 @@ actor QQMusicDownloadService {
     /// Shared with the browse coordinator so artwork fetched once is reused by
     /// both the list rows and the download pipeline.
     private weak var cacheStore: QQMusicCacheStore?
+    /// Download ceiling chosen in settings; nil means let the helper decide.
+    private var preferredQuality: QQMusicQualityPreference?
 
     /// Deduplicates concurrent downloads of the same song so a double tap
     /// joins the first attempt instead of fetching twice.
@@ -105,6 +107,10 @@ actor QQMusicDownloadService {
         self.cacheStore = cacheStore
     }
 
+    func setPreferredQuality(_ quality: QQMusicQualityPreference) {
+        preferredQuality = quality
+    }
+
     static func makeDefaultSession() -> URLSession {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 30
@@ -123,7 +129,7 @@ actor QQMusicDownloadService {
         try? await helper.resolveSongURL(
             songMid: track.songMid,
             mediaMid: track.mediaMid,
-            quality: nil
+            quality: preferredQuality?.ladderEntry
         )
     }
 
@@ -172,7 +178,7 @@ actor QQMusicDownloadService {
             resolution = try await helper.resolveSongURL(
                 songMid: songMid,
                 mediaMid: track.mediaMid,
-                quality: nil
+                quality: preferredQuality?.ladderEntry
             )
         } catch {
             record(.failed(error.localizedDescription), for: songMid, handler: progressHandler)
@@ -229,16 +235,12 @@ actor QQMusicDownloadService {
         return data
     }
 
+    /// Lyrics are fetched once per download and handed straight to the import
+    /// pipeline, which writes them into the library alongside the audio. There
+    /// is nothing worth caching separately: by the time lyrics are needed the
+    /// track is already a local file with its own lyric asset.
     private func fetchLyrics(for track: QQMusicOnlineTrack) async -> QQMusicLyricPayload? {
-        if let cachedData = await cacheStore?.lyrics(songMid: track.songMid),
-           let cached = try? JSONDecoder().decode(QQMusicLyricPayload.self, from: cachedData),
-           !(cached.lyric ?? "").isEmpty {
-            return cached
-        }
         let payload = try? await helper.fetchLyric(songMid: track.songMid, songId: track.songId)
-        if let payload, let encoded = try? JSONEncoder().encode(payload) {
-            await cacheStore?.storeLyrics(encoded, songMid: track.songMid)
-        }
         guard let payload, !(payload.lyric ?? "").isEmpty else { return nil }
         return payload
     }

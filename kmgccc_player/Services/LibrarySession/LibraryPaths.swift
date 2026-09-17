@@ -40,10 +40,6 @@ nonisolated struct LibraryPaths: Sendable, Equatable {
     var qqMusicArtworkCacheURL: URL {
         qqMusicRootURL.appendingPathComponent("Artwork", isDirectory: true)
     }
-    /// Cached lyrics fetched for downloaded tracks.
-    var qqMusicLyricsCacheURL: URL {
-        qqMusicRootURL.appendingPathComponent("Lyrics", isDirectory: true)
-    }
 
     var transactionsRootURL: URL { directory("Transactions") }
     var pendingTransactionsRootURL: URL {
@@ -231,7 +227,6 @@ nonisolated struct LibraryPaths: Sendable, Equatable {
             qqMusicRootURL,
             qqMusicCatalogCacheURL,
             qqMusicArtworkCacheURL,
-            qqMusicLyricsCacheURL,
         ]
     }
 

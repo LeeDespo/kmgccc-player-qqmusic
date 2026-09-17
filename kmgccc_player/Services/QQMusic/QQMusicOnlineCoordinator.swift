@@ -79,7 +79,11 @@ final class QQMusicOnlineCoordinator {
             guard let paths, cacheStore == nil else { return }
             let store = QQMusicCacheStore(paths: paths)
             cacheStore = store
-            Task { await downloader.attach(cacheStore: store) }
+            let quality = AppSettings.shared.qqMusicPreferredQuality
+            Task {
+                await downloader.attach(cacheStore: store)
+                await downloader.setPreferredQuality(quality)
+            }
         }
     }
     var playerViewModel: PlayerViewModel?
@@ -96,6 +100,16 @@ final class QQMusicOnlineCoordinator {
 
     /// Remaining online tracks for the current playback session, in order.
     private var sessionTracks: [QQMusicOnlineTrack] = []
+    /// Whether the session's list can be extended by paging (guess-you-like
+    /// only). Static lists such as a playlist have a fixed end.
+    private var sessionSupportsPaging = false
+    /// Every song mid already shown in the feed or queued in the session, so a
+    /// paging refresh can never repeat one. The upstream radio happily returns
+    /// tracks it has already given out.
+    private var seenFeedSongMids: Set<String> = []
+    /// Guards against overlapping paging refreshes (scroll + queue refill can
+    /// both fire near the end of the list).
+    private var isExtendingFeed = false
     /// Index of the next track to prefetch into the player queue.
     private var nextPrefetchIndex = 0
     /// Guard so two prefetch loops never run at once.
@@ -169,16 +183,55 @@ final class QQMusicOnlineCoordinator {
         do {
             if let cached = await cachedTracks(.recommendFeed, key: "default", force: force) {
                 recommendFeed = cached
+                seenFeedSongMids = Set(cached.map(\.songMid))
                 report(nil)
                 return
             }
             let fetched = try await helper.fetchRecommendFeed()
             await storeTracks(fetched, category: .recommendFeed, key: "default")
             recommendFeed = fetched
+            seenFeedSongMids = Set(fetched.map(\.songMid))
             report(nil)
         } catch {
             report("推荐加载失败：\(noteFailure(error))", isError: true)
             Log.warning("[QQMusicOnline] recommend feed failed: \(error)", category: .import)
+        }
+    }
+
+    /// Append another page of "guess you like" to the feed.
+    ///
+    /// Called both when the browse list is scrolled to the bottom and when the
+    /// playback queue is running out, so the list a user sees and the list
+    /// being played stay the same list. Tracks already shown are filtered out:
+    /// the upstream radio repeats songs across calls.
+    @discardableResult
+    func extendRecommendFeed() async -> [QQMusicOnlineTrack] {
+        guard !isExtendingFeed else { return [] }
+        if let wait = backoffRemaining() {
+            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
+            return []
+        }
+        isExtendingFeed = true
+        defer { isExtendingFeed = false }
+
+        do {
+            let fetched = try await helper.fetchRecommendFeed(rounds: 2)
+            let fresh = fetched.filter { !seenFeedSongMids.contains($0.songMid) }
+            guard !fresh.isEmpty else { return [] }
+            seenFeedSongMids.formUnion(fresh.map(\.songMid))
+            recommendFeed.append(contentsOf: fresh)
+
+            // Keep the playback session in step with what is on screen, so a
+            // track added by scrolling is also reachable when playing.
+            if !sessionTracks.isEmpty, sessionSupportsPaging {
+                sessionTracks.append(contentsOf: fresh)
+            }
+            report(nil)
+            return fresh
+        } catch {
+            report("加载更多失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] feed paging failed: \(error)", category: .import)
+            return []
         }
     }
 
@@ -387,7 +440,17 @@ final class QQMusicOnlineCoordinator {
     ///
     /// The tapped track is downloaded and started; the rest are downloaded in
     /// the background and appended, so playback advances without a stall.
-    func startPlayback(_ tracks: [QQMusicOnlineTrack], startingAt index: Int = 0) async {
+    /// Play an online list, starting at `index`.
+    ///
+    /// `pageable` marks the guess-you-like feed, whose list has no end: the
+    /// prefetch loop then refills the queue through `extendRecommendFeed` so
+    /// playback continues past the tracks currently on screen. A playlist or
+    /// ranking has a fixed end and is not refilled.
+    func startPlayback(
+        _ tracks: [QQMusicOnlineTrack],
+        startingAt index: Int = 0,
+        pageable: Bool = false
+    ) async {
         guard canDownload, let playerViewModel else {
             report("资料库尚未就绪", isError: true)
             return
@@ -398,8 +461,12 @@ final class QQMusicOnlineCoordinator {
         // A new session replaces the previous prefetch loop.
         prefetchTask?.cancel()
         sessionTracks = playable
+        sessionSupportsPaging = pageable
         sessionQueueSongMids = playable.map(\.songMid)
         nextPrefetchIndex = index + 1
+        // Everything on screen counts as seen, so a later refresh cannot
+        // re-queue a track the session already holds.
+        seenFeedSongMids.formUnion(playable.map(\.songMid))
 
         let seed = playable[index]
         guard let first = await materialize(seed) else { return }
@@ -462,15 +529,31 @@ final class QQMusicOnlineCoordinator {
     /// runs out, or the user plays something outside this session.
     private func runPrefetchLoop() async {
         guard let playerViewModel else { return }
-        while !Task.isCancelled, nextPrefetchIndex < sessionTracks.count {
+        while !Task.isCancelled {
+            // The list can grow while playing (guess-you-like paging), so the
+            // bound is re-read every iteration rather than hoisted.
+            guard nextPrefetchIndex < sessionTracks.count else {
+                guard sessionSupportsPaging else { return }
+                // Feed session is exhausted: pull another page so playback can
+                // continue instead of stopping at the end of the visible list.
+                let added = await extendRecommendFeed()
+                if added.isEmpty {
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                }
+                continue
+            }
+
             // The user moved to a different source; stop feeding this queue.
             guard let playingPosition = currentSessionPosition() else { return }
 
-            // Stay a few tracks ahead of playback without downloading the whole
-            // list up front: enough headroom that the next track is always
-            // ready, few enough that skipping ahead does not waste bandwidth.
-            if nextPrefetchIndex > playingPosition + Self.prefetchLookahead {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            // Download at most `prefetchDepth` tracks beyond the one playing.
+            // A deeper queue is not built on purpose: the whole point of the
+            // online source is to fetch what is about to be heard, not to
+            // mirror an entire playlist onto disk.
+            let depth = max(0, AppSettings.shared.qqMusicPrefetchDepth)
+            guard depth > 0 else { return }
+            if nextPrefetchIndex > playingPosition + depth {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
                 continue
             }
 
@@ -484,9 +567,6 @@ final class QQMusicOnlineCoordinator {
             playerViewModel.insertTracksAfterCurrent([imported])
         }
     }
-
-    /// How many tracks beyond the playing one may be downloaded ahead.
-    private static let prefetchLookahead = 3
 
     /// Index of the currently playing track within the session, or nil when the
     /// player is on something that is not part of this session.

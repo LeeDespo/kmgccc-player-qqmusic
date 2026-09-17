@@ -297,6 +297,10 @@ struct AppKitMainContentPaneRoot: View {
                     if let qqMusicOnlineCoordinator = appSession.qqMusicOnlineCoordinator {
                         QQMusicOnlineView()
                             .environment(qqMusicOnlineCoordinator)
+                            .environment(
+                                \.qqMusicArtworkLoader,
+                                QQMusicArtworkLoader(cache: qqMusicOnlineCoordinator.cacheStore)
+                            )
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             .id("appkit-main-qqmusic-online")
                     } else {
