@@ -2,79 +2,38 @@
 //  QQMusicWindowManager.swift
 //  kmgccc_player
 //
-//  Owns the standalone QQ Music window.
+//  Presentation state for the QQ Music window.
 //
-//  The online source is additive to the app, so it deliberately does not add a
-//  page to the app's own settings scene: an upstream change must never be able
-//  to affect the existing settings surface. This window reuses the app's visual
-//  language (theme store, glass buttons, settings row styles) without touching
-//  those views.
+//  The app presents its own settings as a SwiftUI `.sheet` — borderless, no
+//  window controls, close button drawn inside the content. Presenting this
+//  feature as a titled NSWindow made it look like a separate application, so
+//  this manager only tracks state and lets the sidebar host the sheet through
+//  the same mechanism the gear button uses.
 //
 
 import AppKit
 import SwiftUI
 
 @MainActor
-final class QQMusicWindowManager: NSObject, NSWindowDelegate {
+@Observable
+final class QQMusicWindowManager {
 
     static let shared = QQMusicWindowManager()
 
-    private var window: NSWindow?
+    /// Drives the sheet presented from `SidebarView`.
+    var isPresented = false
 
-    private override init() {
-        super.init()
-    }
-
-    var isPresented: Bool { window != nil }
-
-    /// Coordinator to hand the page, so it can report and clear the cache.
-    /// Assigned by the sidebar before `present()`.
+    /// Coordinator handed to the page so it can report and clear the cache.
     weak var coordinator: QQMusicOnlineCoordinator?
 
+    private init() {}
+
     func present() {
-        if let window {
-            window.makeKeyAndOrderFront(nil)
-            return
-        }
-
-        let root = QQMusicSettingsView(coordinator: coordinator)
-            .environment(AppSettings.shared)
-            .environmentObject(ThemeStore.shared)
-            .tint(ThemeStore.shared.accentColor)
-            .accentColor(ThemeStore.shared.accentColor)
-
-        let hosting = NSHostingController(rootView: root)
-        let window = NSWindow(contentViewController: hosting)
-        window.title = "QQ 音乐"
-        window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
-        window.setContentSize(NSSize(width: 620, height: 640))
-        window.minSize = NSSize(width: 540, height: 480)
-        window.isReleasedWhenClosed = false
-        window.delegate = self
-        window.center()
-        applyCurrentAppearance(to: window)
-
-        self.window = window
-        window.makeKeyAndOrderFront(nil)
+        guard !isPresented else { return }
+        isPresented = true
     }
 
     func dismiss() {
-        window?.close()
-        window = nil
-    }
-
-    private func applyCurrentAppearance(to window: NSWindow) {
-        let settings = AppSettings.shared
-        if settings.followSystemAppearance {
-            window.appearance = nil
-        } else {
-            window.appearance = NSAppearance(
-                named: settings.manualAppearance == .dark ? .darkAqua : .aqua
-            )
-        }
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        window = nil
+        isPresented = false
     }
 }

@@ -76,7 +76,13 @@ struct QQMusicOnlineView: View {
 
                 if isShowingTrackList, !currentTrackList.isEmpty {
                     Button {
-                        Task { await coordinator.startPlayback(currentTrackList, startingAt: 0) }
+                        Task {
+                            await coordinator.startPlayback(
+                                currentTrackList,
+                                startingAt: 0,
+                                pageable: isShowingRecommendFeed
+                            )
+                        }
                     } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "play.fill").font(.system(size: 10))
@@ -225,6 +231,14 @@ struct QQMusicOnlineView: View {
             || section == .recommend
     }
 
+    /// True when the recommend feed is the list on screen, which is the only
+    /// pageable (endless) list.
+    private var isShowingRecommendFeed: Bool {
+        coordinator.loadedPlaylistTitle.isEmpty
+            && coordinator.searchKeyword.isEmpty
+            && section == .recommend
+    }
+
     private var currentTrackList: [QQMusicOnlineTrack] {
         if !coordinator.loadedPlaylistTitle.isEmpty {
             return coordinator.playlistTracks
@@ -244,7 +258,7 @@ struct QQMusicOnlineView: View {
         } else {
             switch section {
             case .recommend:
-                trackList(coordinator.recommendFeed, loading: coordinator.isLoadingFeed)
+                trackList(coordinator.recommendFeed, loading: coordinator.isLoadingFeed, pageable: true)
             case .playlists:
                 playlistGrid
             case .toplists:
@@ -253,7 +267,11 @@ struct QQMusicOnlineView: View {
         }
     }
 
-    private func trackList(_ tracks: [QQMusicOnlineTrack], loading: Bool) -> some View {
+    private func trackList(
+        _ tracks: [QQMusicOnlineTrack],
+        loading: Bool,
+        pageable: Bool = false
+    ) -> some View {
         Group {
             if tracks.isEmpty {
                 if loading {
@@ -268,9 +286,31 @@ struct QQMusicOnlineView: View {
                             QQMusicOnlineTrackRow(
                                 track: track,
                                 onPlay: {
-                                    Task { await coordinator.startPlayback(tracks, startingAt: index) }
+                                    Task {
+                                        await coordinator.startPlayback(
+                                            tracks,
+                                            startingAt: index,
+                                            pageable: pageable
+                                        )
+                                    }
                                 }
                             )
+                            .onAppear {
+                                // Pull the next page as the end comes into view.
+                                guard pageable, index >= tracks.count - 3 else { return }
+                                Task { await coordinator.extendRecommendFeed() }
+                            }
+                        }
+
+                        if pageable {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("正在加载更多推荐…")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
                         }
                     }
                     .padding(.horizontal, 14)
@@ -415,16 +455,7 @@ private struct QQMusicOnlineTrackRow: View {
     }
 
     private var artwork: some View {
-        AsyncImage(url: track.imageURL.flatMap(URL.init(string:))) { phase in
-            switch phase {
-            case .success(let image):
-                image.resizable().aspectRatio(contentMode: .fill)
-            default:
-                Rectangle().fill(Color.primary.opacity(0.08))
-            }
-        }
-        .frame(width: 38, height: 38)
-        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+        QQMusicArtworkView(urlString: track.imageURL, size: 38, cornerRadius: 5)
     }
 
     @ViewBuilder
@@ -511,17 +542,12 @@ private struct QQMusicPlaylistCard: View {
     var body: some View {
         Button(action: onOpen) {
             VStack(alignment: .leading, spacing: 6) {
-                AsyncImage(url: playlist.coverURL.flatMap(URL.init(string:))) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image.resizable().aspectRatio(contentMode: .fill)
-                    default:
-                        Rectangle().fill(Color.primary.opacity(0.08))
-                    }
-                }
-                .frame(height: 132)
+                QQMusicArtworkView(
+                    urlString: playlist.coverURL,
+                    size: 132,
+                    cornerRadius: 8
+                )
                 .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
 
                 Text(playlist.title)
                     .font(.system(size: 12, weight: .medium))
