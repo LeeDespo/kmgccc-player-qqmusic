@@ -293,6 +293,15 @@ struct AppKitMainContentPaneRoot: View {
                     }
                     .ignoresSafeArea(.container, edges: .top)
                     .id("appkit-main-nowplaying")
+                case .qqMusicOnline:
+                    if let qqMusicOnlineCoordinator = appSession.qqMusicOnlineCoordinator {
+                        QQMusicOnlineView()
+                            .environment(qqMusicOnlineCoordinator)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            .id("appkit-main-qqmusic-online")
+                    } else {
+                        Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
               }
             }

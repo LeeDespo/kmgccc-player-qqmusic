@@ -11,14 +11,22 @@
 import Foundation
 
 /// Optional metadata overrides applied after file metadata is read and before
-/// duplicate detection/import. Used by context-aware imports from artist/album pages.
+/// duplicate detection/import. Used by context-aware imports from artist/album
+/// pages, and by online-source downloads whose cover and lyrics come from the
+/// service rather than from the audio file's own tags.
 nonisolated struct ImportMetadataOverride: Equatable, Sendable {
     var artist: String?
     var album: String?
+    /// Cover image to use instead of whatever the audio file embeds.
+    var artworkData: Data?
+    /// Lyric text (LRC or TTML) to use instead of the file's embedded lyrics.
+    var lyrics: String?
 
     var isEmpty: Bool {
         artist?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
             && album?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+            && artworkData == nil
+            && lyrics?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
     }
 }
 

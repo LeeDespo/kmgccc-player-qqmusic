@@ -405,6 +405,7 @@ struct SidebarView: View {
             // Bottom controls
             HStack(spacing: 8) {
                 settingsButton
+                qqMusicButton
                 appearanceSwitchButton
                 fullscreenButton
                 Spacer(minLength: 0)
@@ -585,6 +586,15 @@ struct SidebarView: View {
             ) {
                 uiState.clearHomeNavigationContext()
                 uiState.showPlaybackHistory()
+            }
+
+            sidebarNavigationRow(
+                title: "QQ 音乐",
+                systemImage: "globe.asia.australia",
+                selection: .qqMusicOnline
+            ) {
+                uiState.clearHomeNavigationContext()
+                uiState.showQQMusicOnline()
             }
         }
         .padding(.top, 4)
@@ -935,6 +945,23 @@ struct SidebarView: View {
         }
     }
 
+    /// Opens the QQ Music window. Deliberately separate from the app's settings
+    /// sheet: this source is additive, so it gets its own window rather than a
+    /// page inside the app's existing settings surface.
+    private var qqMusicButton: some View {
+        GlassIconButton(
+            systemImage: "globe.asia.australia",
+            size: GlassStyleTokens.headerControlHeight,
+            iconSize: 14,
+            isPrimary: false,
+            help: "QQ 音乐",
+            surfaceVariant: .sidebarBottom
+        ) {
+            QQMusicWindowManager.shared.coordinator = appSession.qqMusicOnlineCoordinator
+            QQMusicWindowManager.shared.present()
+        }
+    }
+
     private func openSettings() {
         FeatureTipPresentationCoordinator.shared.setSuspended(true)
         settingsRotateTrigger += 1
@@ -1069,6 +1096,9 @@ struct SidebarView: View {
             libraryVM.selectOrResetCurrentSelection(.folders)
         case .history:
             uiState.showPlaybackHistory()
+            return
+        case .qqMusicOnline:
+            uiState.showQQMusicOnline()
             return
         case .allPlaylists:
             uiState.pushSelectionInHomeContext(.allPlaylists, libraryVM: libraryVM)
@@ -1241,6 +1271,9 @@ struct SidebarView: View {
         if uiState.contentMode == .playbackHistory {
             return .history
         }
+        if uiState.contentMode == .qqMusicOnline {
+            return .qqMusicOnline
+        }
 
         // Use the explicit currentSelection from LibraryViewModel
         switch libraryVM.currentSelection {
@@ -1406,6 +1439,7 @@ private enum SidebarSelection: Hashable {
     case allSongs
     case folders
     case history
+    case qqMusicOnline
     case allPlaylists
     case allAlbums
     case allArtists
