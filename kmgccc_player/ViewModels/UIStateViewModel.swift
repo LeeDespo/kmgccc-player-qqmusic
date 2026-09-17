@@ -19,6 +19,10 @@ enum ContentMode: Equatable {
     case library
     case playbackHistory
     case nowPlaying
+    /// Online QQ Music browsing. A separate mode rather than a
+    /// `LibrarySelection` case: online rows are not library tracks, carry no
+    /// local file, and must not enter library sort or import flows.
+    case qqMusicOnline
 }
 
 enum SidebarNoticeStyle: Sendable {
@@ -386,6 +390,13 @@ final class UIStateViewModel {
         withAnimation(.easeInOut(duration: 0.3)) {
             playbackHistoryDate = date.map { Calendar.current.startOfDay(for: $0) }
             contentMode = .playbackHistory
+        }
+    }
+
+    func showQQMusicOnline() {
+        withAnimation(.easeInOut(duration: 0.3)) {
+            playbackHistoryDate = nil
+            contentMode = .qqMusicOnline
         }
     }
 

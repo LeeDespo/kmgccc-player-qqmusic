@@ -1222,14 +1222,25 @@ final class ImportPlanner {
             effectiveAlbum = preview.album
         }
 
+        // Cover/lyrics supplied by the caller (online-source downloads) take
+        // precedence: these files carry no embedded artwork, so the service's
+        // copy is the only one available.
+        let lyricOverride = metadataOverride.lyrics?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveLyrics: String?
+        if let lyricOverride, !lyricOverride.isEmpty {
+            effectiveLyrics = lyricOverride
+        } else {
+            effectiveLyrics = preview.lyrics
+        }
+
         return ImportPreview(
             title: preview.title,
             artist: effectiveArtist,
             album: effectiveAlbum,
             albumArtist: effectiveAlbumArtist,
             duration: preview.duration,
-            lyrics: preview.lyrics,
-            artworkData: preview.artworkData,
+            lyrics: effectiveLyrics,
+            artworkData: metadataOverride.artworkData ?? preview.artworkData,
             artistCredits: effectiveArtistCredits
         )
     }

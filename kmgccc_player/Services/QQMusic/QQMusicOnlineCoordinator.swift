@@ -1,0 +1,619 @@
+//
+//  QQMusicOnlineCoordinator.swift
+//  kmgccc_player
+//
+//  Bridges the online QQ Music catalog into the local library.
+//
+//  The catalog side (browsing, search, recommendations) is network work owned
+//  by `QQMusicHelperProcess`. The library side is main-actor state owned by the
+//  import pipeline. This coordinator is the only place the two meet: it
+//  downloads a track to staging, imports it, and — for a playback session —
+//  keeps the player queue fed so playback never has to stop and wait.
+//
+//  Playback model: the player consumes only real `Track` values backed by
+//  local files, so an online "play" is download-then-play. To make that feel
+//  like streaming, `startPlayback` downloads the requested track and then
+//  prefetches ahead in the background, appending each result to the queue.
+//  Playback then advances through the queue with the player's own logic.
+//
+
+import Foundation
+import Observation
+
+@Observable
+@MainActor
+final class QQMusicOnlineCoordinator {
+
+    // MARK: - Browsing state
+
+    private(set) var recommendFeed: [QQMusicOnlineTrack] = []
+    private(set) var recommendPlaylists: [QQMusicOnlinePlaylist] = []
+    private(set) var toplistGroups: [QQMusicToplistGroup] = []
+    private(set) var searchResults: [QQMusicOnlineTrack] = []
+    private(set) var playlistTracks: [QQMusicOnlineTrack] = []
+    private(set) var loadedPlaylistTitle: String = ""
+    private(set) var searchKeyword: String = ""
+
+    private(set) var isLoadingFeed = false
+    private(set) var isLoadingPlaylists = false
+    private(set) var isLoadingToplists = false
+    private(set) var isSearching = false
+    private(set) var isLoadingPlaylistTracks = false
+
+    /// Per-track download state, keyed by song mid, so rows can show progress.
+    private(set) var downloadPhases: [String: QQMusicDownloadPhase] = [:]
+    /// Song mids already in the library as a QQ Music download.
+    private(set) var importedSongMids: Set<String> = []
+
+    /// Non-blocking status line. Never used to blank out loaded content.
+    private(set) var statusMessage: String?
+    private(set) var statusIsError = false
+
+    /// Whether any browse request is currently in flight, for one spinner in
+    /// the header instead of one per section.
+    var isBusyLoading: Bool {
+        isLoadingFeed || isLoadingPlaylists || isLoadingToplists
+            || isSearching || isLoadingPlaylistTracks
+    }
+
+    /// Playback session state, so rows can show what is currently playing.
+    private(set) var activePlayingSongMid: String?
+    private(set) var sessionQueueSongMids: [String] = []
+
+    // MARK: - Dependencies
+
+    private let helper: QQMusicHelperProcess
+    private let downloader: QQMusicDownloadService
+
+    /// On-disk cache for catalogue payloads and artwork. Nil until a library
+    /// session supplies paths, which also disables caching rather than failing.
+    private(set) var cacheStore: QQMusicCacheStore?
+
+    /// Library root, exposed so the QQ Music window can report and reveal cache.
+    var libraryRootURL: URL? { paths?.rootURL }
+
+    /// Set once a library session exists; the coordinator cannot import without it.
+    var importService: FileImportService?
+    var paths: LibraryPaths? {
+        didSet {
+            guard let paths, cacheStore == nil else { return }
+            let store = QQMusicCacheStore(paths: paths)
+            cacheStore = store
+            Task { await downloader.attach(cacheStore: store) }
+        }
+    }
+    var playerViewModel: PlayerViewModel?
+    var libraryViewModel: LibraryViewModel?
+
+    /// Whether downloads can land in the current library. Downloaded audio only
+    /// exists as a managed file, so an in-place (referenced) library cannot host it.
+    var canDownload: Bool {
+        guard let importService, paths != nil else { return false }
+        return importService.supportsProducedAudioImport
+    }
+
+    // MARK: - Session internals
+
+    /// Remaining online tracks for the current playback session, in order.
+    private var sessionTracks: [QQMusicOnlineTrack] = []
+    /// Index of the next track to prefetch into the player queue.
+    private var nextPrefetchIndex = 0
+    /// Guard so two prefetch loops never run at once.
+    private var prefetchTask: Task<Void, Never>?
+    private var trackChangeObserver: Task<Void, Never>?
+    /// Backoff after upstream rate limiting, to stop hammering the API.
+    private var rateLimitedUntil: Date?
+
+    init(
+        helper: QQMusicHelperProcess = .shared,
+        downloader: QQMusicDownloadService = QQMusicDownloadService()
+    ) {
+        self.helper = helper
+        self.downloader = downloader
+    }
+
+    // MARK: - Status
+
+    private func report(_ message: String?, isError: Bool = false) {
+        statusMessage = message
+        statusIsError = isError
+    }
+
+    /// Whether an upstream failure looks like rate limiting, so we back off
+    /// instead of retrying immediately.
+    private func noteFailure(_ error: Error) -> String {
+        let text = String(describing: error)
+        if text.contains("Ratelimited") || text.contains("风控") || text.contains("安全验证") {
+            rateLimitedUntil = Date().addingTimeInterval(30)
+            return "访问过于频繁，已暂停请求 30 秒"
+        }
+        if text.contains("LoginExpired") {
+            return "该接口需要登录 QQ 音乐账号"
+        }
+        return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+
+    private func backoffRemaining() -> TimeInterval? {
+        guard let until = rateLimitedUntil else { return nil }
+        let remaining = until.timeIntervalSinceNow
+        if remaining <= 0 {
+            rateLimitedUntil = nil
+            return nil
+        }
+        return remaining
+    }
+
+    // MARK: - Browsing
+    //
+    // Every loader keeps whatever content is already on screen when a refresh
+    // fails. Clearing the list would look like the content vanished, which is
+    // exactly what a transient upstream rejection must not do.
+
+    func loadInitialContentIfNeeded() async {
+        guard recommendFeed.isEmpty, recommendPlaylists.isEmpty, toplistGroups.isEmpty else { return }
+        async let feed: Void = loadRecommendFeed()
+        async let playlists: Void = loadRecommendPlaylists()
+        async let toplists: Void = loadToplists()
+        _ = await (feed, playlists, toplists)
+    }
+
+    func loadRecommendFeed(force: Bool = false) async {
+        guard !isLoadingFeed else { return }
+        if !force, !recommendFeed.isEmpty { return }
+        if let wait = backoffRemaining() {
+            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
+            return
+        }
+        isLoadingFeed = true
+        defer { isLoadingFeed = false }
+        do {
+            if let cached = await cachedTracks(.recommendFeed, key: "default", force: force) {
+                recommendFeed = cached
+                report(nil)
+                return
+            }
+            let fetched = try await helper.fetchRecommendFeed()
+            await storeTracks(fetched, category: .recommendFeed, key: "default")
+            recommendFeed = fetched
+            report(nil)
+        } catch {
+            report("推荐加载失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] recommend feed failed: \(error)", category: .import)
+        }
+    }
+
+    // MARK: - Cache helpers
+
+    /// Read a cached track list, or nil when absent/expired/undecodable.
+    ///
+    /// A cache entry that no longer decodes is treated as a miss, so a payload
+    /// shape change cannot wedge a page on stale data.
+    private func cachedTracks(
+        _ category: QQMusicCacheCategory,
+        key: String,
+        force: Bool
+    ) async -> [QQMusicOnlineTrack]? {
+        guard !force, let store = cacheStore else { return nil }
+        guard let data = await store.catalog(category, key: key) else { return nil }
+        guard let tracks = try? JSONDecoder().decode([QQMusicOnlineTrack].self, from: data) else {
+            await store.invalidateCatalog(category, key: key)
+            return nil
+        }
+        return tracks.isEmpty ? nil : tracks
+    }
+
+    private func storeTracks(
+        _ tracks: [QQMusicOnlineTrack],
+        category: QQMusicCacheCategory,
+        key: String
+    ) async {
+        guard let store = cacheStore, !tracks.isEmpty else { return }
+        guard let data = try? JSONEncoder().encode(tracks) else { return }
+        await store.storeCatalog(data, category: category, key: key)
+    }
+
+    private func cachedPlaylists(
+        _ category: QQMusicCacheCategory,
+        key: String,
+        force: Bool
+    ) async -> [QQMusicOnlinePlaylist]? {
+        guard !force, let store = cacheStore else { return nil }
+        guard let data = await store.catalog(category, key: key) else { return nil }
+        guard let items = try? JSONDecoder().decode([QQMusicOnlinePlaylist].self, from: data) else {
+            await store.invalidateCatalog(category, key: key)
+            return nil
+        }
+        return items.isEmpty ? nil : items
+    }
+
+    private func storePlaylists(
+        _ playlists: [QQMusicOnlinePlaylist],
+        category: QQMusicCacheCategory,
+        key: String
+    ) async {
+        guard let store = cacheStore, !playlists.isEmpty else { return }
+        guard let data = try? JSONEncoder().encode(playlists) else { return }
+        await store.storeCatalog(data, category: category, key: key)
+    }
+
+    private func cachedToplists(_ key: String, force: Bool) async -> [QQMusicToplistGroup]? {
+        guard !force, let store = cacheStore else { return nil }
+        guard let data = await store.catalog(.toplists, key: key) else { return nil }
+        guard let groups = try? JSONDecoder().decode([QQMusicToplistGroup].self, from: data) else {
+            await store.invalidateCatalog(.toplists, key: key)
+            return nil
+        }
+        return groups.isEmpty ? nil : groups
+    }
+
+    func loadRecommendPlaylists(force: Bool = false) async {
+        guard !isLoadingPlaylists else { return }
+        if !force, !recommendPlaylists.isEmpty { return }
+        if let wait = backoffRemaining() {
+            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
+            return
+        }
+        isLoadingPlaylists = true
+        defer { isLoadingPlaylists = false }
+        do {
+            if let cached = await cachedPlaylists(.recommendPlaylists, key: "default", force: force) {
+                recommendPlaylists = cached
+                report(nil)
+                return
+            }
+            let fetched = try await helper.fetchRecommendPlaylists()
+            await storePlaylists(fetched, category: .recommendPlaylists, key: "default")
+            recommendPlaylists = fetched
+            report(nil)
+        } catch {
+            report("歌单加载失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] recommend playlists failed: \(error)", category: .import)
+        }
+    }
+
+    func loadToplists(force: Bool = false) async {
+        guard !isLoadingToplists else { return }
+        if !force, !toplistGroups.isEmpty { return }
+        if let wait = backoffRemaining() {
+            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
+            return
+        }
+        isLoadingToplists = true
+        defer { isLoadingToplists = false }
+        do {
+            if let cached = await cachedToplists("default", force: force) {
+                toplistGroups = cached
+                report(nil)
+                return
+            }
+            let fetched = try await helper.fetchToplistCategories()
+            if let store = cacheStore,
+               let data = try? JSONEncoder().encode(fetched) {
+                await store.storeCatalog(data, category: .toplists, key: "default")
+            }
+            toplistGroups = fetched
+            report(nil)
+        } catch {
+            report("排行榜加载失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] toplists failed: \(error)", category: .import)
+        }
+    }
+
+    func search(_ keyword: String) async {
+        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        searchKeyword = trimmed
+        guard !trimmed.isEmpty else {
+            searchResults = []
+            return
+        }
+        if let wait = backoffRemaining() {
+            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
+            return
+        }
+        isSearching = true
+        defer { isSearching = false }
+        do {
+            if let cached = await cachedTracks(.search, key: trimmed, force: false) {
+                searchResults = cached
+                report(nil)
+                return
+            }
+            let fetched = try await helper.searchSongs(keyword: trimmed, limit: 30)
+            await storeTracks(fetched, category: .search, key: trimmed)
+            searchResults = fetched
+            report(nil)
+        } catch {
+            // Keep the previous results; the new query simply did not land.
+            report("搜索失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] search failed: \(error)", category: .import)
+        }
+    }
+
+    func clearSearch() {
+        searchKeyword = ""
+        searchResults = []
+    }
+
+    func openPlaylist(id: Int, title: String) async {
+        await loadPlaylistTracks(cacheKey: "songlist-\(id)", title: title) {
+            try await self.helper.fetchPlaylistTracks(songlistId: id, limit: 100)
+        }
+    }
+
+    func openToplist(id: Int, title: String) async {
+        await loadPlaylistTracks(cacheKey: "toplist-\(id)", title: title) {
+            try await self.helper.fetchPlaylistTracks(topId: id, limit: 100)
+        }
+    }
+
+    private func loadPlaylistTracks(
+        cacheKey: String,
+        title: String,
+        fetch: @escaping () async throws -> [QQMusicOnlineTrack]
+    ) async {
+        if let wait = backoffRemaining() {
+            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
+            return
+        }
+        isLoadingPlaylistTracks = true
+        loadedPlaylistTitle = title
+        defer { isLoadingPlaylistTracks = false }
+        do {
+            if let cached = await cachedTracks(.playlistTracks, key: cacheKey, force: false) {
+                playlistTracks = cached
+                report(nil)
+                return
+            }
+            let fetched = try await fetch()
+            await storeTracks(fetched, category: .playlistTracks, key: cacheKey)
+            playlistTracks = fetched
+            report(nil)
+        } catch {
+            // Deliberately keep `playlistTracks` as-is. A failed open must not
+            // erase a list the user is already looking at.
+            report("曲目加载失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] playlist tracks failed: \(error)", category: .import)
+        }
+    }
+
+    func closePlaylist() {
+        playlistTracks = []
+        loadedPlaylistTitle = ""
+    }
+
+    // MARK: - Playback
+
+    /// Play an online list, starting at `index`, keeping the queue fed ahead.
+    ///
+    /// The tapped track is downloaded and started; the rest are downloaded in
+    /// the background and appended, so playback advances without a stall.
+    func startPlayback(_ tracks: [QQMusicOnlineTrack], startingAt index: Int = 0) async {
+        guard canDownload, let playerViewModel else {
+            report("资料库尚未就绪", isError: true)
+            return
+        }
+        let playable = tracks.filter { !$0.songMid.isEmpty }
+        guard playable.indices.contains(index) else { return }
+
+        // A new session replaces the previous prefetch loop.
+        prefetchTask?.cancel()
+        sessionTracks = playable
+        sessionQueueSongMids = playable.map(\.songMid)
+        nextPrefetchIndex = index + 1
+
+        let seed = playable[index]
+        guard let first = await materialize(seed) else { return }
+
+        // Start the tapped track, then let the queue grow behind it.
+        playerViewModel.playTracks([first], startingAt: 0)
+        activePlayingSongMid = seed.songMid
+        report("正在播放：\(seed.title)")
+
+        observeTrackChanges()
+        beginPrefetch()
+    }
+
+    /// Play a single online track, replacing the current queue.
+    func play(_ track: QQMusicOnlineTrack) async {
+        await startPlayback([track], startingAt: 0)
+    }
+
+    /// Stop feeding the queue and forget the online session.
+    func endSession() {
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        sessionTracks = []
+        sessionQueueSongMids = []
+        nextPrefetchIndex = 0
+        activePlayingSongMid = nil
+    }
+
+    /// Download `track` (or reuse an already-imported copy) and return its
+    /// library `Track`. Returns nil when the upstream withholds it.
+    ///
+    /// The imported `Track` comes straight from the import result rather than a
+    /// library re-lookup: the in-memory library snapshot is refreshed
+    /// asynchronously, so looking it up here would race and drop the track.
+    private func materialize(_ track: QQMusicOnlineTrack) async -> Track? {
+        if let existing = existingTrack(for: track.songMid) {
+            importedSongMids.insert(track.songMid)
+            return existing
+        }
+        let imported = await downloadAndImport(track)
+        return imported.first
+    }
+    /// Find an already-imported track for a song mid, so a re-tap reuses the
+    /// local copy instead of downloading it again.
+    private func existingTrack(for songMid: String) -> Track? {
+        libraryViewModel?.allTracks.first { $0.qqMusicSongMid == songMid }
+    }
+
+    // MARK: - Background prefetch
+
+    private func beginPrefetch() {
+        prefetchTask?.cancel()
+        prefetchTask = Task { [weak self] in
+            await self?.runPrefetchLoop()
+        }
+    }
+
+    /// Walk forward through the session, downloading each track and appending
+    /// it to the player queue. Exits when the session is replaced, the list
+    /// runs out, or the user plays something outside this session.
+    private func runPrefetchLoop() async {
+        guard let playerViewModel else { return }
+        while !Task.isCancelled, nextPrefetchIndex < sessionTracks.count {
+            // The user moved to a different source; stop feeding this queue.
+            guard let playingPosition = currentSessionPosition() else { return }
+
+            // Stay a few tracks ahead of playback without downloading the whole
+            // list up front: enough headroom that the next track is always
+            // ready, few enough that skipping ahead does not waste bandwidth.
+            if nextPrefetchIndex > playingPosition + Self.prefetchLookahead {
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                continue
+            }
+
+            let track = sessionTracks[nextPrefetchIndex]
+            nextPrefetchIndex += 1
+            guard let imported = await materialize(track) else {
+                // One unavailable track must not end the session.
+                continue
+            }
+            guard !Task.isCancelled else { return }
+            playerViewModel.insertTracksAfterCurrent([imported])
+        }
+    }
+
+    /// How many tracks beyond the playing one may be downloaded ahead.
+    private static let prefetchLookahead = 3
+
+    /// Index of the currently playing track within the session, or nil when the
+    /// player is on something that is not part of this session.
+    private func currentSessionPosition() -> Int? {
+        guard let mid = playerViewModel?.currentTrack?.qqMusicSongMid else { return nil }
+        return sessionTracks.firstIndex { $0.songMid == mid }
+    }
+
+    /// Re-prefetch when the player advances, so the queue stays ahead.
+    private func observeTrackChanges() {
+        guard trackChangeObserver == nil else { return }
+        trackChangeObserver = Task { [weak self] in
+            let changes = NotificationCenter.default.notifications(named: .playbackTrackDidChange)
+            for await _ in changes {
+                guard let self else { return }
+                await self.handleTrackChange()
+            }
+        }
+    }
+
+    private func handleTrackChange() async {
+        guard !sessionTracks.isEmpty else { return }
+        let mid = playerViewModel?.currentTrack?.qqMusicSongMid
+        activePlayingSongMid = mid
+        // The player moved on; make sure the next tracks are queued.
+        if let mid, sessionTracks.contains(where: { $0.songMid == mid }) {
+            if prefetchTask == nil || prefetchTask?.isCancelled == true {
+                beginPrefetch()
+            }
+        }
+    }
+
+    // MARK: - Download & import
+
+    func phase(for songMid: String) -> QQMusicDownloadPhase {
+        downloadPhases[songMid] ?? .idle
+    }
+
+    func isImported(_ songMid: String) -> Bool {
+        importedSongMids.contains(songMid) || existingTrack(for: songMid) != nil
+    }
+
+    func isPlaying(_ songMid: String) -> Bool {
+        activePlayingSongMid == songMid
+    }
+
+    /// Download `track` and import it into the library.
+    ///
+    /// Returns the imported tracks (empty on failure). `Track` is a SwiftData
+    /// model and therefore not `Sendable`, so the result must stay on the main
+    /// actor — callers must not pass it across a task boundary.
+    @discardableResult
+    func downloadAndImport(_ track: QQMusicOnlineTrack) async -> [Track] {
+        guard let importService, let paths else {
+            report("资料库尚未就绪", isError: true)
+            return []
+        }
+        guard !phase(for: track.songMid).isBusy else { return [] }
+
+        downloadPhases[track.songMid] = .resolving
+        defer {
+            if case .failed = downloadPhases[track.songMid] {} else {
+                downloadPhases[track.songMid] = importedSongMids.contains(track.songMid) ? .done : .idle
+            }
+        }
+
+        let staging: QQMusicStagedDownload
+        do {
+            staging = try await downloader.download(
+                track,
+                stagingDirectory: paths.importStagingRootURL
+                    .appendingPathComponent("qqmusic", isDirectory: true)
+            ) { [weak self] phase in
+                Task { @MainActor [weak self] in
+                    self?.downloadPhases[track.songMid] = phase
+                }
+            }
+        } catch {
+            let message = noteFailure(error)
+            downloadPhases[track.songMid] = .failed(message)
+            report("\(track.title)：\(message)", isError: true)
+            Log.warning("[QQMusicOnline] download failed \(track.songMid): \(error)", category: .import)
+            return []
+        }
+
+        let override = ImportMetadataOverride(
+            artist: nil,
+            album: nil,
+            artworkData: staging.artworkData,
+            lyrics: Self.combinedLyrics(staging)
+        )
+
+        let imported = await importService.importProducedAudio(
+            at: staging.audioURL,
+            metadataOverride: override,
+            origin: .onlineDownload
+        )
+        guard !imported.isEmpty else {
+            downloadPhases[track.songMid] = .failed("导入失败")
+            report("\(track.title)：导入资料库失败", isError: true)
+            try? FileManager.default.removeItem(at: staging.audioURL)
+            return []
+        }
+
+        // Record provenance so the row shows as already-added and the mid
+        // survives for future metadata refreshes.
+        await importService.applyProvenance(
+            OnlineImportProvenance(source: "qqmusic", songMid: track.songMid),
+            to: imported
+        )
+
+        importedSongMids.insert(track.songMid)
+        downloadPhases[track.songMid] = .done
+        try? FileManager.default.removeItem(at: staging.audioURL)
+        return imported
+    }
+
+    /// Merge the QQ lyric and its translation into one LRC block.
+    ///
+    /// The player's lyric pipeline understands LRC, and keeping both languages
+    /// in one document means the existing TTML conversion handles them without
+    /// new plumbing.
+    private static func combinedLyrics(_ staging: QQMusicStagedDownload) -> String? {
+        guard let lyric = staging.lyricText, !lyric.isEmpty else { return nil }
+        guard let translation = staging.translatedLyricText, !translation.isEmpty else {
+            return lyric
+        }
+        return lyric + "\n" + translation
+    }
+}

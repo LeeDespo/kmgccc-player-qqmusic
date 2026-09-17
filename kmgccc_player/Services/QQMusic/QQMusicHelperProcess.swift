@@ -104,6 +104,136 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
     let changed: Bool
 }
 
+// MARK: - Online catalog payloads
+
+/// One song from an online QQ Music browse surface (search, radio, playlist).
+///
+/// This is a *catalog* representation, deliberately separate from `Track`:
+/// a catalog row has no local file, no bookmark and no locator. It becomes a
+/// `Track` only after the audio has been downloaded into the library.
+nonisolated struct QQMusicOnlineTrack: Codable, Equatable, Sendable, Identifiable {
+    var songId: Int?
+    var songMid: String
+    var mediaMid: String?
+    var title: String
+    var artist: String
+    var album: String?
+    var albumMid: String?
+    var imageURL: String?
+    var duration: Int?
+    /// `0` means the CDN is expected to grant a playback url. `1` marks a
+    /// gated track, which is the signal the UI uses to grey a row out instead
+    /// of letting the user tap into a guaranteed failure.
+    var payPlay: Int?
+    var songType: Int?
+    var size320: Int?
+    var sizeFlac: Int?
+    var size128: Int?
+    var singerMid: String?
+
+    var id: String { songMid }
+
+    /// Heuristic gate used to pre-disable rows; the authoritative answer still
+    /// comes from `resolveSongURL`.
+    var isExpectedPlayable: Bool { (payPlay ?? 1) == 0 }
+}
+
+nonisolated struct QQMusicOnlinePlaylist: Codable, Equatable, Sendable, Identifiable {
+    var id: Int
+    var title: String
+    var coverURL: String?
+    var creator: String?
+    var songCount: Int?
+    var playCount: Int?
+}
+
+nonisolated struct QQMusicToplistGroup: Codable, Equatable, Sendable {
+    var id: Int?
+    var name: String
+    var toplists: [QQMusicToplist]
+}
+
+nonisolated struct QQMusicToplist: Codable, Equatable, Sendable, Identifiable {
+    var id: Int
+    var name: String
+}
+
+nonisolated struct QQMusicLyricPayload: Codable, Equatable, Sendable {
+    var lyric: String?
+    var translation: String?
+    var romanization: String?
+}
+
+/// Outcome of asking the upstream for a playback url.
+nonisolated struct QQMusicStreamResolution: Codable, Equatable, Sendable {
+    var songMid: String
+    var url: String?
+    var quality: String?
+    var extensionName: String?
+    var filename: String?
+    var expiration: Int?
+    var playable: Bool
+    /// `paid_required` / `device_restricted` / `url_unavailable` when blocked.
+    var restriction: String?
+    var tried: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case songMid, url, quality, filename, expiration, playable, restriction, tried
+        case extensionName = "extension"
+    }
+}
+
+/// Account state reported by the helper.
+nonisolated struct QQMusicLoginStatus: Codable, Equatable, Sendable {
+    var loggedIn: Bool
+    var musicId: Int?
+    var nickname: String?
+    var vipType: Int?
+    var expired: Bool?
+    /// QR poll event: `SCAN` / `CONF` / `DONE` / `TIMEOUT` / `REFUSE`.
+    var event: String?
+    /// Whether a playback ticket (`qm_keyst`) is present. Without it the
+    /// upstream answers `104003` even for tracks the account may play.
+    var hasPlaybackKey: Bool?
+
+    var isVip: Bool { (vipType ?? 0) > 0 }
+}
+
+/// A login QR code to display, plus the values needed to poll it.
+nonisolated struct QQMusicLoginQRCode: Codable, Equatable, Sendable {
+    var identifier: String
+    var loginType: String
+    var mimetype: String
+    var imageBase64: String
+}
+
+/// The helper's own version and capabilities, so the app can stay compatible
+/// with builds it did not ship.
+nonisolated struct QQMusicHelperInfo: Codable, Equatable, Sendable {
+    var helperVersion: String
+    var protocolVersion: Int
+    var libraryVersion: String
+    var methods: [String]
+    var credentialDir: Bool
+
+    func supports(_ method: String) -> Bool { methods.contains(method) }
+}
+
+/// Which QR login flow to start.
+nonisolated enum QQMusicLoginType: String, Sendable, CaseIterable {
+    case qq
+    case wx
+    case mobile
+
+    var displayName: String {
+        switch self {
+        case .qq: return "QQ"
+        case .wx: return "微信"
+        case .mobile: return "手机 QQ"
+        }
+    }
+}
+
 nonisolated enum MetadataDetailApplicator {
     static func applyMissingFields(
         _ detail: ArtistMetadataDetail,
@@ -627,6 +757,14 @@ actor QQMusicHelperProcess {
         let ok: Bool
         let candidates: [QQMusicArtworkCandidate]?
         let detail: QQMusicMetadataDetail?
+        let tracks: [QQMusicOnlineTrack]?
+        let playlists: [QQMusicOnlinePlaylist]?
+        let toplistGroups: [QQMusicToplistGroup]?
+        let lyric: QQMusicLyricPayload?
+        let stream: QQMusicStreamResolution?
+        let login: QQMusicLoginStatus?
+        let qrcode: QQMusicLoginQRCode?
+        let helper: QQMusicHelperInfo?
         let error: String?
     }
 
@@ -668,6 +806,55 @@ actor QQMusicHelperProcess {
         let duration: Int?
     }
 
+    private struct SearchSongsParams: Encodable, Sendable {
+        let keyword: String
+        let limit: Int
+        let page: Int
+    }
+
+    private struct RecommendFeedParams: Encodable, Sendable {
+        let rounds: Int
+    }
+
+    private struct RadarParams: Encodable, Sendable {
+        let page: Int
+    }
+
+    private struct RecommendPlaylistsParams: Encodable, Sendable {
+        let page: Int
+        let limit: Int
+    }
+
+    private struct PlaylistTracksParams: Encodable, Sendable {
+        let songlistId: Int?
+        let topId: Int?
+        let limit: Int
+        let page: Int
+    }
+
+    private struct LyricParams: Encodable, Sendable {
+        let songMid: String
+        let songId: Int?
+        let translation: Bool
+    }
+
+    private struct ResolveSongURLParams: Encodable, Sendable {
+        let songMid: String
+        let mediaMid: String?
+        let quality: String?
+    }
+
+    private struct StartLoginParams: Encodable, Sendable {
+        let loginType: String
+    }
+
+    private struct PollLoginParams: Encodable, Sendable {
+        let identifier: String
+        let imageBase64: String
+        let loginType: String
+        let mimetype: String
+    }
+
     private let requestTimeout: TimeInterval = 15
     private let idleTimeout: TimeInterval = 60
     private let failureWindow: TimeInterval = 120
@@ -679,7 +866,7 @@ actor QQMusicHelperProcess {
     private var stdinHandle: FileHandle?
     private var stdoutPipe: Pipe?
     private var stderrPipe: Pipe?
-    private var stdoutBuffer = ""
+    private var stdoutBuffer = Data()
     private var recentStderr = ""
     private var pendingRequests: [String: PendingRequest] = [:]
     private var idleShutdownTask: Task<Void, Never>?
@@ -774,6 +961,234 @@ actor QQMusicHelperProcess {
                 duration: duration
             )
         )
+    }
+
+    // MARK: - Online catalog
+
+    /// Send one request and return the raw envelope.
+    ///
+    /// The existing `request`/`requestDetail` helpers each re-implement the
+    /// circuit-breaker, launch, dispatch and error-handling steps for their own
+    /// payload type. Online catalog calls return several different shapes, so
+    /// they share this one transport and pick their payload out of the envelope.
+    private func send<Params: Encodable & Sendable>(
+        method: String,
+        params: Params
+    ) async throws -> QQMusicHelperResponse {
+        try checkCircuitBreaker()
+        try await ensureRunning()
+
+        let id = UUID().uuidString
+        let startedAt = Date()
+        Log.info(
+            "[QQMusicHelperProcess] request id=\(id) method=\(method) query=\(querySummary(params))",
+            category: .import
+        )
+
+        let response: QQMusicHelperResponse
+        do {
+            response = try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    self.enqueueRequest(
+                        id: id,
+                        method: method,
+                        params: params,
+                        continuation: continuation
+                    )
+                }
+            } onCancel: {
+                Task {
+                    await self.failPendingRequest(id: id, error: QQMusicHelperError.cancelled)
+                }
+            }
+        } catch {
+            Log.warning(
+                "[QQMusicHelperProcess] request failed id=\(id) method=\(method) reason=\(error)",
+                category: .import
+            )
+            throw error
+        }
+
+        guard response.ok else {
+            let message = response.error ?? "unknown helper error"
+            recordFailure(reason: message)
+            Log.warning(
+                "[QQMusicHelperProcess] request failed id=\(id) method=\(method) reason=\(message)",
+                category: .import
+            )
+            throw QQMusicHelperError.requestFailed(message)
+        }
+
+        recordSuccess()
+        let durationMs = Int(Date().timeIntervalSince(startedAt) * 1_000)
+        Log.info(
+            "[QQMusicHelperProcess] response id=\(id) method=\(method) durationMs=\(durationMs)",
+            category: .import
+        )
+        return response
+    }
+
+    func searchSongs(keyword: String, limit: Int = 20, page: Int = 1) async throws -> [QQMusicOnlineTrack] {
+        let response = try await send(
+            method: "search_songs",
+            params: SearchSongsParams(keyword: keyword, limit: limit, page: page)
+        )
+        return response.tracks ?? []
+    }
+
+    /// "猜你喜欢" radio. The upstream returns ~5 tracks per round, so the helper
+    /// loops to assemble a usable queue.
+    func fetchRecommendFeed(rounds: Int = 4) async throws -> [QQMusicOnlineTrack] {
+        let response = try await send(
+            method: "fetch_recommend_feed",
+            params: RecommendFeedParams(rounds: rounds)
+        )
+        return response.tracks ?? []
+    }
+
+    func fetchRadar(page: Int = 1) async throws -> [QQMusicOnlineTrack] {
+        let response = try await send(method: "fetch_radar", params: RadarParams(page: page))
+        return response.tracks ?? []
+    }
+
+    func fetchRecommendPlaylists(page: Int = 1, limit: Int = 20) async throws -> [QQMusicOnlinePlaylist] {
+        let response = try await send(
+            method: "fetch_recommend_playlists",
+            params: RecommendPlaylistsParams(page: page, limit: limit)
+        )
+        return response.playlists ?? []
+    }
+
+    func fetchToplistCategories() async throws -> [QQMusicToplistGroup] {
+        let response = try await send(
+            method: "fetch_toplist_categories",
+            params: EmptyParams()
+        )
+        return response.toplistGroups ?? []
+    }
+
+    /// Tracks of a playlist (`songlistId`) or a ranking (`topId`).
+    func fetchPlaylistTracks(
+        songlistId: Int? = nil,
+        topId: Int? = nil,
+        limit: Int = 50,
+        page: Int = 1
+    ) async throws -> [QQMusicOnlineTrack] {
+        let response = try await send(
+            method: "fetch_playlist_tracks",
+            params: PlaylistTracksParams(
+                songlistId: songlistId,
+                topId: topId,
+                limit: limit,
+                page: page
+            )
+        )
+        return response.tracks ?? []
+    }
+
+    func fetchLyric(
+        songMid: String,
+        songId: Int? = nil,
+        translation: Bool = true
+    ) async throws -> QQMusicLyricPayload {
+        let response = try await send(
+            method: "fetch_lyric",
+            params: LyricParams(songMid: songMid, songId: songId, translation: translation)
+        )
+        return response.lyric ?? QQMusicLyricPayload()
+    }
+
+    /// Ask for the best playable url. Returns `playable == false` (rather than
+    /// throwing) when the upstream withholds the track, so callers can show a
+    /// precise reason instead of a generic failure.
+    func resolveSongURL(
+        songMid: String,
+        mediaMid: String? = nil,
+        quality: String? = nil
+    ) async throws -> QQMusicStreamResolution {
+        let response = try await send(
+            method: "resolve_song_url",
+            params: ResolveSongURLParams(
+                songMid: songMid,
+                mediaMid: trimmedOptional(mediaMid),
+                quality: trimmedOptional(quality)
+            )
+        )
+        guard let stream = response.stream else {
+            throw QQMusicHelperError.requestFailed("missing stream payload")
+        }
+        return stream
+    }
+
+    private struct EmptyParams: Encodable, Sendable {}
+
+    // MARK: - Account
+
+    /// Query the helper's own version and capabilities.
+    func helperInfo() async throws -> QQMusicHelperInfo {
+        let response = try await send(method: "get_helper_info", params: EmptyParams())
+        guard let info = response.helper else {
+            throw QQMusicHelperError.requestFailed("missing helper info")
+        }
+        return info
+    }
+
+    /// Whether a usable credential is stored, refreshing it if it went stale.
+    func loginStatus() async throws -> QQMusicLoginStatus {
+        let response = try await send(method: "get_login_status", params: EmptyParams())
+        return response.login ?? QQMusicLoginStatus(loggedIn: false)
+    }
+
+    /// Create a login QR code for the given flow.
+    func startLogin(type: QQMusicLoginType) async throws -> QQMusicLoginQRCode {
+        let response = try await send(
+            method: "start_login",
+            params: StartLoginParams(loginType: type.rawValue)
+        )
+        guard let qr = response.qrcode else {
+            throw QQMusicHelperError.requestFailed("missing qrcode payload")
+        }
+        return qr
+    }
+
+    /// Poll a login QR code once. Returns `loggedIn == true` once accepted.
+    func pollLogin(_ qr: QQMusicLoginQRCode) async throws -> QQMusicLoginStatus {
+        let response = try await send(
+            method: "poll_login",
+            params: PollLoginParams(
+                identifier: qr.identifier,
+                imageBase64: qr.imageBase64,
+                loginType: qr.loginType,
+                mimetype: qr.mimetype
+            )
+        )
+        return response.login ?? QQMusicLoginStatus(loggedIn: false)
+    }
+
+    /// Forget the stored credential.
+    func logout() async throws -> QQMusicLoginStatus {
+        let response = try await send(method: "logout", params: EmptyParams())
+        return response.login ?? QQMusicLoginStatus(loggedIn: false)
+    }
+
+    /// Build a credential from cookies captured by the web login window.
+    ///
+    /// The upstream authenticates from `uin` + `qm_keyst`, which is exactly the
+    /// pair the login page sets, so this is equivalent to completing the QR
+    /// flow — including the playback ticket VIP url resolution needs.
+    func importCookies(_ cookies: [String: String]) async throws -> QQMusicLoginStatus {
+        let response = try await send(
+            method: "import_cookies",
+            params: ImportCookiesParams(cookies: cookies)
+        )
+        guard let status = response.login else {
+            throw QQMusicHelperError.requestFailed("missing login payload")
+        }
+        return status
+    }
+
+    private struct ImportCookiesParams: Encodable, Sendable {
+        let cookies: [String: String]
     }
 
     func terminate() {
@@ -968,9 +1383,11 @@ actor QQMusicHelperProcess {
                 try? handle.close()
                 return
             }
-            guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { return }
+            // Pass raw bytes: this handler delivers arbitrary chunks, and a
+            // chunk boundary can fall inside a multi-byte character (every CJK
+            // track title). Decoding per chunk here would corrupt the stream.
             Task {
-                await self?.handleStdout(text)
+                await self?.handleStdout(data)
             }
         }
 
@@ -981,7 +1398,9 @@ actor QQMusicHelperProcess {
                 try? handle.close()
                 return
             }
-            guard let text = String(data: data, encoding: .utf8), !text.isEmpty else { return }
+            // Diagnostics only, so a lossy decode is acceptable here.
+            let text = String(decoding: data, as: UTF8.self)
+            guard !text.isEmpty else { return }
             Task {
                 await self?.appendStderr(text)
             }
@@ -1006,20 +1425,41 @@ actor QQMusicHelperProcess {
         self.stdinHandle = stdinPipe.fileHandleForWriting
         self.stdoutPipe = stdoutPipe
         self.stderrPipe = stderrPipe
-        stdoutBuffer = ""
+        stdoutBuffer = Data()
         recentStderr = ""
         markActivity()
         Log.info("[QQMusicHelperProcess] started path=\(candidate.executableURL.path)", category: .import)
     }
 
-    private func handleStdout(_ text: String) {
-        stdoutBuffer.append(text)
-        while let newlineRange = stdoutBuffer.range(of: "\n") {
-            let line = String(stdoutBuffer[..<newlineRange.lowerBound])
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            stdoutBuffer.removeSubrange(...newlineRange.lowerBound)
-            guard !line.isEmpty else { continue }
-            handleResponseLine(line)
+    private func handleStdout(_ data: Data) {
+        stdoutBuffer.append(data)
+        drainStdoutLines()
+    }
+
+    /// Split completed lines out of the byte buffer.
+    ///
+    /// Buffering raw bytes rather than a `String` matters: `readabilityHandler`
+    /// delivers arbitrary chunks, so a multi-byte UTF-8 character (every CJK
+    /// track title) can straddle a chunk boundary. Decoding each chunk on its
+    /// own would yield nil and silently drop the data; scanning for `0x0A` in
+    /// bytes and decoding only whole lines cannot split a character.
+    private func drainStdoutLines() {
+        while let newlineIndex = stdoutBuffer.firstIndex(of: 0x0A) {
+            let lineData = stdoutBuffer[stdoutBuffer.startIndex..<newlineIndex]
+            stdoutBuffer.removeSubrange(stdoutBuffer.startIndex...newlineIndex)
+            guard let line = String(data: lineData, encoding: .utf8) else {
+                // A line that is not valid UTF-8 is a protocol violation, not a
+                // chunk boundary; report it rather than dropping it silently.
+                recordFailure(reason: "JSON IPC invalid UTF-8 line")
+                Log.warning(
+                    "[QQMusicHelperProcess] JSON IPC invalid UTF-8 line bytes=\(lineData.count)",
+                    category: .import
+                )
+                continue
+            }
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            handleResponseLine(trimmed)
         }
     }
 
@@ -1091,7 +1531,7 @@ actor QQMusicHelperProcess {
         stdinHandle = nil
         stdoutPipe = nil
         stderrPipe = nil
-        stdoutBuffer = ""
+        stdoutBuffer = Data()
     }
 
     private func markActivity() {
@@ -1163,30 +1603,47 @@ actor QQMusicHelperProcess {
     }
 
     private func findLaunchCandidate() -> LaunchCandidate? {
-        let binaryURL = bundledBinaryURL()
-        Log.info("[QQMusicHelperProcess] binary path=\(binaryURL.path)", category: .import)
+        // Prefer a user-installed helper so it can be updated independently of
+        // the app; fall back to the bundled copy.
+        let external = Self.externalHelperDirectory
+            .appendingPathComponent("qqmusic-helper", isDirectory: false)
+        let candidates = [external, bundledBinaryURL()]
 
-        var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: binaryURL.path, isDirectory: &isDirectory),
-              !isDirectory.boolValue
-        else {
-            lastLaunchDiagnostics = "binary missing: \(binaryURL.path)"
-            Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
-            return nil
+        for binaryURL in candidates {
+            Log.info("[QQMusicHelperProcess] helper candidate path=\(binaryURL.path)", category: .import)
+
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: binaryURL.path, isDirectory: &isDirectory),
+                  !isDirectory.boolValue
+            else {
+                continue
+            }
+            guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else {
+                lastLaunchDiagnostics = "helper not executable: \(binaryURL.path)"
+                Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
+                continue
+            }
+
+            lastLaunchDiagnostics = ""
+            // Point the helper at a writable, app-owned directory so the login
+            // ticket survives the helper's 60s idle shutdown.
+            try? FileManager.default.createDirectory(
+                at: Self.credentialDirectory,
+                withIntermediateDirectories: true
+            )
+            var environment = ProcessInfo.processInfo.environment
+            environment["KMGCCC_QQMUSIC_CREDENTIAL_DIR"] = Self.credentialDirectory.path
+
+            return LaunchCandidate(
+                executableURL: binaryURL,
+                currentDirectoryURL: binaryURL.deletingLastPathComponent(),
+                environment: environment
+            )
         }
 
-        guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else {
-            lastLaunchDiagnostics = "binary not executable: \(binaryURL.path)"
-            Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
-            return nil
-        }
-
-        lastLaunchDiagnostics = ""
-        return LaunchCandidate(
-            executableURL: binaryURL,
-            currentDirectoryURL: binaryURL.deletingLastPathComponent(),
-            environment: ProcessInfo.processInfo.environment
-        )
+        lastLaunchDiagnostics = "helper binary missing (checked external and bundled paths)"
+        Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
+        return nil
     }
 
     private func bundledBinaryURL() -> URL {
@@ -1196,6 +1653,30 @@ actor QQMusicHelperProcess {
             .appendingPathComponent("Tools", isDirectory: true)
             .appendingPathComponent("qqmusic-helper", isDirectory: true)
             .appendingPathComponent("qqmusic-helper", isDirectory: false)
+    }
+
+    /// Directory holding a user-installed helper, if any.
+    ///
+    /// The QQ Music endpoints are reverse-engineered and change without notice,
+    /// so the helper is versioned independently of the app. A newer build
+    /// dropped here is picked up on the next launch without rebuilding the app;
+    /// the bundled copy stays as the fallback so the feature always works out
+    /// of the box.
+    nonisolated static var externalHelperDirectory: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent("Library/Application Support", isDirectory: true)
+        return base
+            .appendingPathComponent("kmgccc.player", isDirectory: true)
+            .appendingPathComponent("QQMusicHelper", isDirectory: true)
+    }
+
+    /// Root for the persisted QQ Music credential.
+    ///
+    /// Passed to the helper as `KMGCCC_QQMUSIC_CREDENTIAL_DIR` so the login
+    /// ticket survives helper restarts (the helper exits after 60s idle).
+    nonisolated static var credentialDirectory: URL {
+        externalHelperDirectory.appendingPathComponent("Credential", isDirectory: true)
     }
 
     private func querySummary<Params: Encodable>(_ params: Params) -> String {

@@ -25,19 +25,79 @@ from urllib.parse import urlparse, urlunparse
 
 try:
     from qqmusic_api import Client
+    from qqmusic_api.models.request import Credential
+    from qqmusic_api.modules.login import QRLoginType
     from qqmusic_api.modules.search import SearchType
     from qqmusic_api.modules.singer import TabType
+    from qqmusic_api.modules.song import SongFileInfo, SongFileType
 
     IMPORT_ERROR: str | None = None
 except Exception as exc:  # pragma: no cover - exercised in unbundled dev setups.
     Client = None  # type: ignore[assignment]
+    Credential = None  # type: ignore[assignment]
+    QRLoginType = None  # type: ignore[assignment]
     SearchType = None  # type: ignore[assignment]
     TabType = None  # type: ignore[assignment]
+    SongFileInfo = None  # type: ignore[assignment]
+    SongFileType = None  # type: ignore[assignment]
     IMPORT_ERROR = f"{type(exc).__name__}: {exc}"
 
 
 SOURCE = "qqmusic"
 MAX_IMAGE_SIZE = 800
+
+# Bumped when the request/response shapes below change incompatibly. The host
+# refuses to talk to a helper whose protocol major it does not understand, so a
+# newer helper build cannot silently mis-parse.
+HELPER_VERSION = "2.0.0"
+PROTOCOL_VERSION = 2
+
+# Advertised by `get_helper_info` and checked by the dispatcher, so a host can
+# discover what an independently-updated helper supports.
+KNOWN_METHODS: tuple[str, ...] = (
+    "get_helper_info",
+    "get_login_status",
+    "start_login",
+    "poll_login",
+    "logout",
+    "import_cookies",
+    "search_songs",
+    "fetch_recommend_feed",
+    "fetch_radar",
+    "fetch_recommend_playlists",
+    "fetch_toplist_categories",
+    "fetch_playlist_tracks",
+    "fetch_lyric",
+    "resolve_song_url",
+    "search_artist_artwork",
+    "search_track_artwork",
+    "search_album_artwork",
+    "fetch_artist_detail",
+    "fetch_album_detail",
+    "fetch_song_detail",
+)
+
+# Playback URL host. `get_song_urls` returns a host-relative `purl`; the CDN
+# host has to be prefixed before the URL is fetchable.
+QQMUSIC_STREAM_CDN = "https://isure.stream.qqmusic.qq.com/"
+
+# Quality tiers probed for a track, best first. Anonymous sessions are granted
+# only the standard tier, so the ladder exists to discover what a logged-in
+# session can actually fetch rather than to assume the best tier is authorized.
+# Prefixes mirror the upstream `SongFileType` values.
+QUALITY_LADDER: tuple[tuple[str, str, str], ...] = (
+    ("flac", "F000", ".flac"),
+    ("320", "M800", ".mp3"),
+    ("128", "M500", ".mp3"),
+    ("aac", "C400", ".m4a"),
+)
+
+# Upstream per-file result codes, see `UrlinfoItem.result`.
+RESULT_OK = 0
+RESULT_NO_PERMISSION = 104003
+RESULT_VKEY_FAILED = 104004
+RESULT_DEVICE_RESTRICTED = 104013
+
 QQMUSIC_HTTPS_IMAGE_HOSTS = {
     "y.gtimg.cn",
     "qpic.y.qq.com",
@@ -49,6 +109,196 @@ QQMUSIC_HTTPS_IMAGE_HOSTS = {
 
 def _log(message: str) -> None:
     print(f"[QQMusicHelper] {message}", file=sys.stderr, flush=True)
+
+
+# MARK: - Credential store
+#
+# Anonymous sessions get rate limited ("触发风控") after a handful of requests,
+# so every catalogue call runs with whatever credential is on disk. The
+# credential file is plain JSON in a directory the host passes in via
+# KMGCCC_QQMUSIC_CREDENTIAL_DIR; the helper never writes outside it.
+
+CREDENTIAL_ENV = "KMGCCC_QQMUSIC_CREDENTIAL_DIR"
+CREDENTIAL_FILE_NAME = "qqmusic-credential.json"
+
+_credential_cache: Any = None
+_credential_loaded = False
+
+
+def _credential_path() -> Any:
+    import os
+
+    directory = os.environ.get(CREDENTIAL_ENV, "").strip()
+    if not directory:
+        return None
+    from pathlib import Path
+
+    path = Path(directory)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except Exception as exc:
+        _log(f"credential dir unusable dir={directory} reason={type(exc).__name__}: {exc}")
+        return None
+    return path / CREDENTIAL_FILE_NAME
+
+
+def load_credential() -> Any:
+    """Return the persisted credential, or None when not logged in."""
+    global _credential_cache, _credential_loaded
+    if _credential_loaded:
+        return _credential_cache
+    _credential_loaded = True
+    _credential_cache = None
+
+    if Credential is None:
+        return None
+    path = _credential_path()
+    if path is None or not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        _credential_cache = Credential(**payload)
+        _log(f"credential loaded musicid={_credential_cache.musicid}")
+    except Exception as exc:
+        _log(f"credential load failed reason={type(exc).__name__}: {exc}")
+        _credential_cache = None
+    return _credential_cache
+
+
+def save_credential(credential: Any) -> None:
+    global _credential_cache, _credential_loaded
+    _credential_cache = credential
+    _credential_loaded = True
+    path = _credential_path()
+    if path is None:
+        _log("credential not persisted: no credential directory configured")
+        return
+    try:
+        path.write_text(
+            json.dumps(credential.model_dump(), ensure_ascii=False),
+            encoding="utf-8",
+        )
+        try:
+            path.chmod(0o600)
+        except Exception:
+            pass
+        _log(f"credential saved musicid={credential.musicid}")
+    except Exception as exc:
+        _log(f"credential save failed reason={type(exc).__name__}: {exc}")
+
+
+def clear_credential() -> None:
+    global _credential_cache, _credential_loaded
+    _credential_cache = None
+    _credential_loaded = True
+    path = _credential_path()
+    if path is not None and path.exists():
+        try:
+            path.unlink()
+        except Exception as exc:
+            _log(f"credential delete failed reason={type(exc).__name__}: {exc}")
+    _log("credential cleared")
+
+
+# Cookie names the web login page sets, in the order they are preferred. The
+# library injects exactly these two (`uin` + `qm_keyst`) when it builds a
+# request, so a cookie captured from the login window is interchangeable with a
+# credential produced by the QR flow — including `qm_keyst`, which is also the
+# playback ticket that VIP url resolution requires.
+_UIN_COOKIE_NAMES = ("uin", "qqmusic_uin", "wxuin", "p_uin")
+_MUSIC_KEY_COOKIE_NAMES = (
+    "qm_keyst",
+    "qqmusic_key",
+    "music_key",
+    "p_skey",
+    "skey",
+    "wxskey",
+)
+
+
+def _pick_cookie(cookies: dict[str, str], names: tuple[str, ...]) -> str:
+    for name in names:
+        value = str(cookies.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _normalize_uin(raw: str) -> str:
+    """Strip the `o` prefix QQ uses on some uin cookies."""
+    text = raw.strip()
+    if text.startswith("o") and text[1:].isdigit():
+        return text[1:]
+    return text
+
+
+def import_cookies(params: dict[str, Any]) -> dict[str, Any]:
+    """Build a credential from cookies captured by a web login window.
+
+    The upstream library authenticates from `uin` + `qm_keyst` (it derives
+    `g_tk = hash33(musickey)`), which is exactly the pair the QQ Music login
+    page sets. Accepts either a raw `Cookie:` header string or a name/value map
+    so the caller can hand over whatever the web view produced.
+    """
+    _require_dependency()
+    raw_cookies = params.get("cookies")
+    if isinstance(raw_cookies, str):
+        parsed: dict[str, str] = {}
+        for part in raw_cookies.split(";"):
+            if "=" not in part:
+                continue
+            name, _, value = part.partition("=")
+            parsed[name.strip()] = value.strip()
+        cookies = parsed
+    elif isinstance(raw_cookies, dict):
+        cookies = {str(k): str(v) for k, v in raw_cookies.items()}
+    else:
+        raise ValueError("cookies must be a Cookie header string or an object")
+
+    uin = _normalize_uin(_pick_cookie(cookies, _UIN_COOKIE_NAMES))
+    music_key = _pick_cookie(cookies, _MUSIC_KEY_COOKIE_NAMES)
+    if not uin or not music_key:
+        missing = []
+        if not uin:
+            missing.append("uin")
+        if not music_key:
+            missing.append("qm_keyst")
+        raise ValueError(f"cookie 缺少必要字段: {', '.join(missing)}")
+
+    credential = build_credential_from_cookies(uin=uin, music_key=music_key)
+    save_credential(credential)
+    summary = _credential_summary(credential)
+    summary["event"] = "COOKIE"
+    summary["hasPlaybackKey"] = bool(music_key)
+    return summary
+
+
+def build_credential_from_cookies(uin: str, music_key: str) -> Any:
+    """Assemble a Credential that authenticates the same way a login would."""
+    musicid = int(uin) if uin.isdigit() else 0
+    return Credential(
+        musicid=musicid,
+        str_musicid=uin,
+        musickey=music_key,
+        login_type=1,
+    )
+
+
+def _new_client() -> Any:
+    """Build a client bound to the persisted credential, if any."""
+    if Client is None:
+        return None
+    credential = load_credential()
+    if credential is None:
+        return Client()
+    return Client(credential=credential)
+
+
+def _credential_client(credential: Any) -> Any:
+    """Build a client for an explicit credential, falling back to the stored one."""
+    if Client is None:
+        return None
+    return Client(credential=credential or load_credential())
 
 
 def _dependency_diagnostics() -> str:
@@ -389,7 +639,7 @@ async def _search_by_type(
 ) -> list[dict[str, Any]]:
     if Client is None:
         return []
-    async with Client() as client:
+    async with _new_client() as client:
         result = await client.execute(
             client.search.search_by_type(
                 keyword=keyword,
@@ -405,7 +655,7 @@ async def _search_by_type(
 async def _execute_client_request(request_builder: Any) -> Any:
     if Client is None:
         return {}
-    async with Client() as client:
+    async with _new_client() as client:
         result = await client.execute(request_builder(client))
     return _to_plain(result)
 
@@ -730,6 +980,501 @@ async def fetch_song_detail(params: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _track_payload(item: Any) -> dict[str, Any]:
+    """Normalize one upstream song object into a browsable track payload.
+
+    Search results, radio, radar, playlists and toplists all describe a song
+    with the same core fields, but wrapper depth differs (playlist entries nest
+    the song under `track`, search results do not). Callers use this instead of
+    each re-deriving the shape.
+    """
+    if not isinstance(item, dict):
+        return {}
+    track = _first_dict(item, ("track", "song", "songInfo")) or item
+    file_info = _first_dict(track, ("file", "fileInfo"))
+    pay = _first_dict(track, ("pay", "payInfo"))
+    album = _first_dict(track, ("album", "albumInfo"))
+    album_mid = _album_mid(track)
+    song_mid = _song_mid(track)
+    media_mid = _first_text(file_info, ("media_mid", "mediaMid")) or _first_text(
+        track, ("media_mid", "mediaMid")
+    )
+    # `pay_play == 1` means the track is gated; it is the same signal that
+    # predicts whether the CDN grants a playback url, so surface it directly.
+    pay_play = _first_int(pay, ("pay_play", "payPlay"))
+    return {
+        "source": SOURCE,
+        "songId": _first_int(track, ("id", "songId", "songid")),
+        "songMid": song_mid,
+        "mediaMid": media_mid,
+        "title": _song_title(track),
+        "artist": _singers_text(track),
+        "album": _album_name(track),
+        "albumMid": album_mid,
+        "imageURL": _sanitize_image_url(_album_cover_url(album_mid)),
+        "duration": _first_int(track, ("interval", "duration", "durationSec")),
+        "payPlay": pay_play,
+        "songType": _first_int(track, ("type", "songType")),
+        "size320": _first_int(file_info, ("size_320mp3", "size320mp3")),
+        "sizeFlac": _first_int(file_info, ("size_flac", "sizeFlac")),
+        "size128": _first_int(file_info, ("size_128mp3", "size128mp3")),
+        "singerMid": _singer_mid(track),
+        "albumName": _album_name(album) or _album_name(track),
+    }
+
+
+def _tracks_payload(items: Any) -> list[dict[str, Any]]:
+    if not isinstance(items, list):
+        return []
+    payloads = [_track_payload(item) for item in items]
+    return [item for item in payloads if item.get("songMid")]
+
+
+def _songlist_payload(item: Any) -> dict[str, Any]:
+    """Normalize a playlist summary (recommend feed / user playlist)."""
+    if not isinstance(item, dict):
+        return {}
+    plain = _to_plain(item)
+    # Recommend feed nests `{Playlist: {basic: {...}}}`; other endpoints are flat.
+    playlist = _first_dict(plain, ("Playlist", "playlist"))
+    basic = _first_dict(playlist, ("basic",)) or playlist or plain
+    cover = _first_dict(basic, ("cover",))
+    creator = _first_dict(basic, ("creator", "user"))
+    diss_id = _first_int(basic, ("dissid", "tid", "id", "songlistId"))
+    return {
+        "source": SOURCE,
+        "id": diss_id,
+        "title": _first_text(basic, ("title", "name", "dissname")),
+        "coverURL": _sanitize_image_url(
+            _first_text(cover, ("medium_url", "mediumUrl", "big_url", "default_url"))
+            or _first_text(basic, ("picurl", "picUrl", "imgurl"))
+        ),
+        "creator": _first_text(creator, ("nick", "name", "nickname")),
+        "songCount": _first_int(basic, ("song_cnt", "songCnt", "songnum", "song_num")),
+        "playCount": _first_int(basic, ("play_cnt", "playCnt", "listennum")),
+    }
+
+
+def _quality_for_file_type(file_type: Any) -> str:
+    """Map an upstream `SongFileType` back to our ladder label."""
+    raw = str(getattr(file_type, "s", "") or "")
+    for label, prefix, _ext in QUALITY_LADDER:
+        if prefix == raw:
+            return label
+    return ""
+
+
+async def _get_song_urls(
+    song_mid: str,
+    file_type: Any,
+    media_mid: str = "",
+    credential: Any = None,
+) -> dict[str, Any]:
+    """Fetch the playback url for one (mid, tier) pair.
+
+    Returns the raw upstream envelope so the caller can read both `data` and
+    `expiration`.
+    """
+    if Client is None or SongFileInfo is None:
+        return {}
+    info = SongFileInfo(mid=song_mid, media_mid=media_mid or None, file_type=file_type)
+    async with _credential_client(credential) as client:
+        result = await client.execute(client.song.get_song_urls([info], file_type=file_type))
+    plain = _to_plain(result)
+    return plain if isinstance(plain, dict) else {}
+
+
+def _url_entry(envelope: dict[str, Any]) -> dict[str, Any]:
+    items = envelope.get("data")
+    if isinstance(items, list) and items and isinstance(items[0], dict):
+        return items[0]
+    return {}
+
+
+async def resolve_song_url(params: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the best playable url for one track.
+
+    Probes the quality ladder from `params["quality"]` downward and returns the
+    first tier the upstream grants. Anonymous sessions are only granted the
+    standard tier, so a blocked top tier is an expected outcome rather than an
+    error: the response reports what was available so the caller can decide
+    whether to prompt for login.
+    """
+    _require_dependency()
+    song_mid = str(params.get("songMid") or "").strip()
+    if not song_mid:
+        raise ValueError("songMid is required")
+    media_mid = str(params.get("mediaMid") or "").strip()
+    requested = str(params.get("quality") or "").strip().lower()
+
+    ladder = list(QUALITY_LADDER)
+    if requested:
+        preferred = [entry for entry in ladder if entry[0] == requested]
+        if not preferred:
+            raise ValueError(f"unknown quality: {requested}")
+        # Try the requested tier first, then everything below it.
+        ladder = ladder[: ladder.index(preferred[0]) + 1]
+
+    tried: list[str] = []
+    for label, prefix, extension in ladder:
+        envelope = await _get_song_urls(song_mid, SongFileType((prefix, extension)), media_mid)
+        if not envelope:
+            tried.append(f"{label}:no-result")
+            continue
+        entry = _url_entry(envelope)
+        purl = str(entry.get("purl") or "").strip()
+        result_code = _first_int(entry, ("result",))
+        if purl:
+            return {
+                "source": SOURCE,
+                "songMid": song_mid,
+                "mediaMid": media_mid,
+                "url": QQMUSIC_STREAM_CDN + purl.lstrip("/"),
+                "quality": label,
+                "extension": extension.lstrip("."),
+                "filename": _first_text(entry, ("filename",)),
+                "expiration": _first_int(envelope, ("expiration",)) or 7200,
+                "playable": True,
+                "tried": tried,
+            }
+        tried.append(f"{label}:{result_code}")
+
+    return {
+        "source": SOURCE,
+        "songMid": song_mid,
+        "mediaMid": media_mid,
+        "url": "",
+        "quality": "",
+        "playable": False,
+        "restriction": _classify_restriction(tried),
+        "tried": tried,
+    }
+
+
+def _tracks_response(
+    request_id: str | None,
+    method: str,
+    tracks: list[dict[str, Any]],
+    started_at: float,
+) -> dict[str, Any]:
+    duration_ms = int((time.monotonic() - started_at) * 1000)
+    playable = sum(1 for item in tracks if item.get("payPlay") == 0)
+    _log(
+        f"response id={request_id} method={method} "
+        f"tracks={len(tracks)} free={playable} durationMs={duration_ms}"
+    )
+    return {"id": request_id, "ok": True, "tracks": tracks}
+
+
+def _classify_restriction(tried: list[str]) -> str:
+    """Turn accumulated per-tier result codes into one user-facing reason."""
+    codes = {
+        int(entry.rsplit(":", 1)[1])
+        for entry in tried
+        if entry.rsplit(":", 1)[-1].isdigit()
+    }
+    if RESULT_NO_PERMISSION in codes:
+        return "paid_required"
+    if RESULT_DEVICE_RESTRICTED in codes:
+        return "device_restricted"
+    if RESULT_VKEY_FAILED in codes:
+        return "url_unavailable"
+    return "url_unavailable"
+
+
+async def search_songs(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Keyword search returning full track payloads."""
+    _require_dependency()
+    keyword = str(params.get("keyword") or "").strip()
+    if not keyword:
+        return []
+    limit = max(1, min(_first_int(params, ("limit",)) or 20, 50))
+    page = max(1, _first_int(params, ("page",)) or 1)
+    results = await _search_by_type(keyword, SearchType.SONG, ("song", "songs", "list"), limit)
+    return _tracks_payload(results[:limit])
+
+
+async def fetch_recommend_feed(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Guess-you-like radio ("猜你喜欢"). Upstream yields ~5 tracks per call."""
+    _require_dependency()
+    rounds = max(1, min(_first_int(params, ("rounds",)) or 4, 6))
+    songs: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for _ in range(rounds):
+        plain = _to_plain(
+            await _execute_client_request(lambda client: client.recommend.get_guess_recommend())
+        )
+        batch = _items_from_search_result(plain, ("songs", "Tracks", "tracks"))
+        if not batch:
+            break
+        for item in _tracks_payload(batch):
+            if item["songMid"] in seen:
+                continue
+            seen.add(item["songMid"])
+            songs.append(item)
+        if len(songs) >= 20:
+            break
+    return songs
+
+
+async def fetch_radar(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Personal radar ("雷达推荐"). Requires login upstream; empty otherwise."""
+    _require_dependency()
+    page = max(1, _first_int(params, ("page",)) or 1)
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.recommend.get_radar_recommend(page=page)
+        )
+    )
+    return _tracks_payload(_items_from_search_result(plain, ("songs", "vecSong", "VecSongs")))
+
+
+async def fetch_recommend_playlists(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Recommended playlists ("歌单推荐"), cursor-paginated by page."""
+    _require_dependency()
+    page = max(1, _first_int(params, ("page",)) or 1)
+    num = max(1, min(_first_int(params, ("limit",)) or 20, 50))
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.recommend.get_recommend_songlist(page=page, num=num)
+        )
+    )
+    items = _items_from_search_result(plain, ("songlists", "List", "list"))
+    if not items:
+        # Some upstream shapes bury the feed one level deeper.
+        items = _items_from_search_result(
+            _first_dict(plain, ("data", "feed")), ("songlists", "List", "list")
+        )
+    payloads = [_songlist_payload(item) for item in items]
+    return [item for item in payloads if item.get("id")]
+
+
+async def fetch_toplist_categories(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Ranking groups ("排行榜") with their member toplists."""
+    _require_dependency()
+    plain = _to_plain(await _execute_client_request(lambda client: client.top.get_category()))
+    groups = _items_from_search_result(plain, ("group", "groups"))
+    payloads: list[dict[str, Any]] = []
+    for group in groups:
+        toplists = _items_from_search_result(group, ("toplist", "toplists"))
+        payloads.append(
+            {
+                "source": SOURCE,
+                "id": _first_int(group, ("id",)),
+                "name": _first_text(group, ("name", "title")),
+                "toplists": [
+                    {
+                        "source": SOURCE,
+                        "id": _first_int(entry, ("id", "topId")),
+                        "name": _first_text(entry, ("name", "title")),
+                    }
+                    for entry in toplists
+                    if _first_int(entry, ("id", "topId"))
+                ],
+            }
+        )
+    return [group for group in payloads if group.get("toplists")]
+
+
+async def fetch_playlist_tracks(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Tracks of a playlist (`songlistId`) or a toplist (`topId`)."""
+    _require_dependency()
+    songlist_id = _first_int(params, ("songlistId", "id"))
+    top_id = _first_int(params, ("topId",))
+    limit = max(1, min(_first_int(params, ("limit",)) or 50, 100))
+    if top_id:
+        plain = _to_plain(
+            await _execute_client_request(lambda client: client.top.get_detail(top_id=top_id, num=limit))
+        )
+        return _tracks_payload(_items_from_search_result(plain, ("song", "songs", "songlist")))
+    if not songlist_id:
+        raise ValueError("songlistId or topId is required")
+    # The upstream caps a page at 100; the caller pages explicitly.
+    page = max(1, _first_int(params, ("page",)) or 1)
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.songlist.get_detail(
+                songlist_id=songlist_id, num=limit, page=page, onlysong=False
+            )
+        )
+    )
+    return _tracks_payload(_items_from_search_result(plain, ("songs", "songlist", "list")))
+
+
+async def fetch_lyric(params: dict[str, Any]) -> dict[str, Any]:
+    """Lyrics for a track. Returns LRC text plus the translated track if any."""
+    _require_dependency()
+    value: Any = _first_int(params, ("songId",)) or str(params.get("songMid") or "").strip()
+    if not value:
+        raise ValueError("songId or songMid is required")
+    want_translation = bool(params.get("translation", True))
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.lyric.get_lyric(value, trans=want_translation)
+        )
+    )
+    return {
+        "source": SOURCE,
+        "lyric": _first_text(plain, ("lyric", "lrc")),
+        "translation": _first_text(plain, ("trans", "tlyric")),
+        "romanization": _first_text(plain, ("roma", "romalrc")),
+    }
+
+
+def _credential_summary(credential: Any) -> dict[str, Any]:
+    return {
+        "loggedIn": credential is not None,
+        "musicId": _first_int(credential, ("musicid",)) if credential is not None else None,
+        "nickname": _first_text(credential, ("nickname", "nick")) if credential is not None else "",
+        "vipType": _first_int(credential, ("vip_type", "vipType")) if credential is not None else None,
+    }
+
+
+async def get_login_status(params: dict[str, Any]) -> dict[str, Any]:
+    """Report whether a usable credential is on disk, refreshing it if stale."""
+    _require_dependency()
+    credential = load_credential()
+    if credential is None:
+        return {"loggedIn": False}
+
+    expired = False
+    try:
+        expired = bool(await _execute_with_credential(lambda c: c.login.check_expired()))
+    except Exception as exc:
+        _log(f"login status check failed reason={type(exc).__name__}: {exc}")
+
+    if expired:
+        try:
+            refreshed = await _execute_with_credential(lambda c: c.login.refresh_credential())
+            if refreshed is not None:
+                save_credential(refreshed)
+                credential = refreshed
+                expired = False
+        except Exception as exc:
+            _log(f"credential refresh failed reason={type(exc).__name__}: {exc}")
+
+    summary = _credential_summary(credential)
+    summary["expired"] = expired
+    return summary
+
+
+async def _execute_with_credential(builder: Any) -> Any:
+    """Run a client call against the stored credential."""
+    if Client is None:
+        return None
+    credential = load_credential()
+    async with Client(credential=credential) as client:
+        return _to_plain(await client.execute(builder(client)))
+
+
+async def start_login(params: dict[str, Any]) -> dict[str, Any]:
+    """Create a login QR code.
+
+    Returns the QR image as base64 PNG plus the identifier the caller must echo
+    back when polling, so no login state has to survive between requests.
+    """
+    _require_dependency()
+    import base64
+
+    login_type = str(params.get("loginType") or "qq").strip().lower()
+    mapping = {"qq": "QQ", "wx": "WX", "mobile": "MOBILE"}
+    member = mapping.get(login_type)
+    if member is None:
+        raise ValueError(f"unknown loginType: {login_type}")
+
+    async with _new_client() as client:
+        qr = await client.login.get_qrcode(getattr(QRLoginType, member))
+
+    raw = qr.data
+    image_bytes = base64.b64decode(raw) if isinstance(raw, str) else bytes(raw)
+    return {
+        "identifier": str(qr.identifier),
+        "loginType": login_type,
+        "mimetype": str(getattr(qr, "mimetype", "image/png")),
+        "imageBase64": base64.b64encode(image_bytes).decode("ascii"),
+    }
+
+
+async def poll_login(params: dict[str, Any]) -> dict[str, Any]:
+    """Check one login QR code scan.
+
+    The QR object is reconstructed from the identifier and image the caller
+    holds, so this stays stateless across helper restarts.
+    """
+    _require_dependency()
+    import base64
+
+    identifier = str(params.get("identifier") or "").strip()
+    image_base64 = str(params.get("imageBase64") or "").strip()
+    login_type = str(params.get("loginType") or "qq").strip().lower()
+    if not identifier:
+        raise ValueError("identifier is required")
+
+    mapping = {"qq": "QQ", "wx": "WX", "mobile": "MOBILE"}
+    member = mapping.get(login_type)
+    if member is None:
+        raise ValueError(f"unknown loginType: {login_type}")
+
+    from qqmusic_api.models.login import QR
+
+    qr = QR(
+        data=base64.b64decode(image_base64) if image_base64 else b"",
+        qr_type=getattr(QRLoginType, member),
+        mimetype=str(params.get("mimetype") or "image/png"),
+        identifier=identifier,
+    )
+
+    async with _new_client() as client:
+        result = await client.login.check_qrcode(qr)
+
+    event = getattr(result, "event", None)
+    event_name = getattr(event, "name", str(event))
+    credential = getattr(result, "credential", None)
+    if event_name == "DONE" and credential is not None:
+        save_credential(credential)
+        summary = _credential_summary(credential)
+        summary["event"] = event_name
+        return summary
+    return {"event": event_name, "loggedIn": False}
+
+
+async def logout(params: dict[str, Any]) -> dict[str, Any]:
+    """Forget the stored credential."""
+    _require_dependency()
+    try:
+        async with _new_client() as client:
+            await client.login.logout()
+    except Exception as exc:
+        # The local file is the source of truth; a failed upstream logout must
+        # not leave the user still logged in locally.
+        _log(f"upstream logout failed reason={type(exc).__name__}: {exc}")
+    clear_credential()
+    return {"loggedIn": False}
+
+
+async def get_helper_info(params: dict[str, Any]) -> dict[str, Any]:
+    """Report the helper's own version and capability list.
+
+    The host uses this to stay compatible with helper builds it did not ship,
+    so a newer helper can advertise methods the app does not know about yet.
+    """
+    return {
+        "helperVersion": HELPER_VERSION,
+        "protocolVersion": PROTOCOL_VERSION,
+        "libraryVersion": _qqmusic_library_version(),
+        "methods": sorted(KNOWN_METHODS),
+        "credentialDir": bool(_credential_path()),
+    }
+
+
+def _qqmusic_library_version() -> str:
+    try:
+        module = importlib.import_module("qqmusic_api")
+        return str(getattr(module, "__version__", "") or "")
+    except Exception:
+        return ""
+
+
 async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     request_id = request.get("id")
     method = request.get("method")
@@ -769,6 +1514,69 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
             f"detail=1 confidence={float(detail.get('confidence') or 0):.2f} durationMs={duration_ms}"
         )
         return {"id": request_id, "ok": True, "detail": detail}
+    elif method == "search_songs":
+        tracks = await search_songs(params)
+        return _tracks_response(request_id, method, tracks, started_at)
+    elif method == "fetch_recommend_feed":
+        tracks = await fetch_recommend_feed(params)
+        return _tracks_response(request_id, method, tracks, started_at)
+    elif method == "fetch_radar":
+        tracks = await fetch_radar(params)
+        return _tracks_response(request_id, method, tracks, started_at)
+    elif method == "fetch_playlist_tracks":
+        tracks = await fetch_playlist_tracks(params)
+        return _tracks_response(request_id, method, tracks, started_at)
+    elif method == "fetch_recommend_playlists":
+        playlists = await fetch_recommend_playlists(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(
+            f"response id={request_id} method={method} "
+            f"playlists={len(playlists)} durationMs={duration_ms}"
+        )
+        return {"id": request_id, "ok": True, "playlists": playlists}
+    elif method == "fetch_toplist_categories":
+        groups = await fetch_toplist_categories(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(f"response id={request_id} method={method} groups={len(groups)} durationMs={duration_ms}")
+        return {"id": request_id, "ok": True, "toplistGroups": groups}
+    elif method == "fetch_lyric":
+        lyric = await fetch_lyric(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(
+            f"response id={request_id} method={method} "
+            f"lyricLen={len(lyric.get('lyric') or '')} durationMs={duration_ms}"
+        )
+        return {"id": request_id, "ok": True, "lyric": lyric}
+    elif method == "resolve_song_url":
+        stream = await resolve_song_url(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(
+            f"response id={request_id} method={method} "
+            f"playable={bool(stream.get('playable'))} quality={stream.get('quality') or '-'} "
+            f"durationMs={duration_ms}"
+        )
+        return {"id": request_id, "ok": True, "stream": stream}
+    elif method == "get_helper_info":
+        info = await get_helper_info(params)
+        return {"id": request_id, "ok": True, "helper": info}
+    elif method == "get_login_status":
+        status = await get_login_status(params)
+        return {"id": request_id, "ok": True, "login": status}
+    elif method == "start_login":
+        qr = await start_login(params)
+        _log(f"response id={request_id} method={method} loginType={qr.get('loginType')}")
+        return {"id": request_id, "ok": True, "qrcode": qr}
+    elif method == "poll_login":
+        status = await poll_login(params)
+        _log(f"response id={request_id} method={method} event={status.get('event')}")
+        return {"id": request_id, "ok": True, "login": status}
+    elif method == "logout":
+        status = await logout(params)
+        return {"id": request_id, "ok": True, "login": status}
+    elif method == "import_cookies":
+        status = import_cookies(params)
+        _log(f"response id={request_id} method={method} loggedIn={status.get('loggedIn')}")
+        return {"id": request_id, "ok": True, "login": status}
     else:
         raise ValueError(f"unsupported method: {method}")
 

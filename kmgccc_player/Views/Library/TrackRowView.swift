@@ -580,7 +580,7 @@ struct TrackRowView<MenuContent: View>: View {
     }
 }
 
-private struct TrackRowSelectionBackgroundShape: Shape {
+private nonisolated struct TrackRowSelectionBackgroundShape: Shape {
     let continuity: TrackRowSelectionContinuity
     let cornerRadius: CGFloat
 

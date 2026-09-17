@@ -19,6 +19,9 @@ final class LibrarySession: LibrarySessionLifecycle {
     let libraryViewModel: LibraryViewModel
     let importEnrichmentService: ImportEnrichmentService
     let fileImportService: FileImportService
+    /// Online QQ Music browsing plus download-into-library. Session-scoped so a
+    /// download always lands in the library that is currently open.
+    let qqMusicOnlineCoordinator: QQMusicOnlineCoordinator
     let storageBackend: any LibraryStorageBackend
     let referencedSourceStore: ReferencedSourceStore?
     let referencedSourceScope: ReferencedSourceScope?
@@ -98,6 +101,15 @@ final class LibrarySession: LibrarySessionLifecycle {
         self.playbackCoordinator = playbackCoordinator
         self.lyricsViewModel = lyricsViewModel
         self.ledMeterProvider = ledMeterProvider
+
+        // Constructed here rather than injected so the online source always
+        // targets this session's library, player and staging root.
+        let onlineCoordinator = QQMusicOnlineCoordinator()
+        onlineCoordinator.importService = fileImportService
+        onlineCoordinator.paths = context.paths
+        onlineCoordinator.playerViewModel = playerViewModel
+        onlineCoordinator.libraryViewModel = libraryViewModel
+        self.qqMusicOnlineCoordinator = onlineCoordinator
     }
 
     func load() async throws {

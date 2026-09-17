@@ -55,6 +55,12 @@ final class AppSessionHost: ObservableObject {
         activeLibraryBinding.activeSession?.cacheServices
     }
 
+    /// Online QQ Music browsing and download. Nil until a library session is
+    /// active, because a download has nowhere to land without one.
+    var qqMusicOnlineCoordinator: QQMusicOnlineCoordinator? {
+        activeLibraryBinding.activeSession?.qqMusicOnlineCoordinator
+    }
+
     var homeVM: HomeViewModel {
         activeLibraryBinding.activeSession?.homeViewModel ?? placeholderHomeViewModel
     }
