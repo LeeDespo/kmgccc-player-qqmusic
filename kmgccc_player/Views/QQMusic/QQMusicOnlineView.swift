@@ -109,54 +109,71 @@ struct QQMusicOnlineView: View {
             }
 
             if coordinator.loadedPlaylistTitle.isEmpty {
-                HStack(spacing: 8) {
-                    SlidingSelector(
-                        segments: Section.allCases,
-                        selection: Binding(
-                            get: { section },
-                            set: { newValue in
-                                section = newValue
-                                Task {
-                                    await coordinator.loadInitialContentIfNeeded()
-                                    if newValue == .newSongs {
-                                        await coordinator.loadNewSongs(region: coordinator.newSongsRegion)
-                                    }
+                // The selector takes the full available width: a fixed width
+                // clipped the segments once there were five of them (each has a
+                // minimum), which cut the first one off rather than shrinking.
+                SlidingSelector(
+                    segments: Section.allCases,
+                    selection: Binding(
+                        get: { section },
+                        set: { newValue in
+                            section = newValue
+                            Task {
+                                await coordinator.loadInitialContentIfNeeded()
+                                if newValue == .newSongs {
+                                    await coordinator.loadNewSongs(region: coordinator.newSongsRegion)
                                 }
                             }
-                        ),
-                        animation: .spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.08),
-                        hSpacing: 0,
-                        background: { Color.clear },
-                        knob: {
-                            Capsule(style: .continuous)
-                                .fill(themeStore.accentColor.opacity(0.22))
-                        },
-                        content: { item, isSelected in
-                            Text(item.title)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(isSelected ? Color.primary : Color.secondary)
-                                .frame(minWidth: 74, maxWidth: .infinity)
-                                .frame(height: 24)
-                                .contentShape(Rectangle())
                         }
-                    )
-                    .frame(width: 260, height: 30)
-
-                    Spacer()
-
-                    if section == .newSongs {
-                        regionPicker
+                    ),
+                    animation: .spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.08),
+                    hSpacing: 0,
+                    background: { Color.clear },
+                    knob: {
+                        Capsule(style: .continuous)
+                            .fill(themeStore.accentColor.opacity(0.22))
+                    },
+                    content: { item, isSelected in
+                        Text(item.title)
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .foregroundStyle(isSelected ? Color.primary : Color.secondary)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 24)
+                            .contentShape(Rectangle())
                     }
-                    if section == .playlistSearch {
-                        playlistSearchField
+                )
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
+
+                // Controls that belong to a single section live on their own
+                // row so they cannot squeeze the selector.
+                if showsSectionControls {
+                    HStack(spacing: 8) {
+                        if section == .newSongs {
+                            regionPicker
+                        }
+                        if section == .playlistSearch {
+                            playlistSearchField
+                        }
+                        Spacer()
                     }
+                }
+
+                HStack(spacing: 8) {
                     searchField
+                    Spacer()
                 }
             }
         }
         .padding(.horizontal, 20)
         .padding(.top, 14)
         .padding(.bottom, 10)
+    }
+
+    private var showsSectionControls: Bool {
+        section == .newSongs || section == .playlistSearch
     }
 
     /// Region filter for the new-song radio.
@@ -173,7 +190,7 @@ struct QQMusicOnlineView: View {
         }
         .labelsHidden()
         .pickerStyle(.menu)
-        .frame(width: 96)
+        .frame(width: 110)
     }
 
     /// Keyword field for finding playlists by mood or genre.
@@ -206,7 +223,7 @@ struct QQMusicOnlineView: View {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.primary.opacity(0.07))
         )
-        .frame(width: 200)
+        .frame(maxWidth: 320)
     }
 
     private var searchField: some View {
@@ -238,7 +255,7 @@ struct QQMusicOnlineView: View {
             RoundedRectangle(cornerRadius: 7, style: .continuous)
                 .fill(Color.primary.opacity(0.07))
         )
-        .frame(width: 240)
+        .frame(maxWidth: 320)
     }
 
     // MARK: - Status banner
