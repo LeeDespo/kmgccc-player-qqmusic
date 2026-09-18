@@ -27,10 +27,11 @@ final class QQMusicOnlineCoordinator {
     // MARK: - Browsing state
 
     private(set) var recommendFeed: [QQMusicOnlineTrack] = []
-    private(set) var recommendPlaylists: [QQMusicOnlinePlaylist] = []
     private(set) var toplistGroups: [QQMusicToplistGroup] = []
     private(set) var searchResults: [QQMusicOnlineTrack] = []
     private(set) var playlistTracks: [QQMusicOnlineTrack] = []
+    /// Station currently open, so "load more" continues its rotation.
+    private(set) var activeRadioStationID: Int?
     /// New-song radio for the selected region.
     private(set) var newSongs: [QQMusicOnlineTrack] = []
     private(set) var newSongsRegion: QQMusicNewSongRegion = .latest
@@ -43,6 +44,17 @@ final class QQMusicOnlineCoordinator {
     private(set) var likedSongsPage = 0
     private(set) var likedAlbums: [QQMusicOnlineAlbum] = []
     private(set) var userPlaylists: [QQMusicOnlinePlaylist] = []
+    // Radio stations
+    private(set) var radioGroups: [QQMusicRadioGroup] = []
+    private(set) var radioStationTitle = ""
+    private(set) var isLoadingRadioStations = false
+    private(set) var isLoadingRadioTracks = false
+
+    // Artist search
+    private(set) var searchedArtists: [QQMusicOnlineArtist] = []
+    private(set) var isSearchingArtists = false
+    private(set) var artistSearchKeyword = ""
+
     private(set) var isLoadingLikedSongs = false
     private(set) var isLoadingLikedAlbums = false
     private(set) var isLoadingUserPlaylists = false
@@ -199,11 +211,10 @@ final class QQMusicOnlineCoordinator {
     // exactly what a transient upstream rejection must not do.
 
     func loadInitialContentIfNeeded() async {
-        guard recommendFeed.isEmpty, recommendPlaylists.isEmpty, toplistGroups.isEmpty else { return }
+        guard recommendFeed.isEmpty, toplistGroups.isEmpty else { return }
         async let feed: Void = loadRecommendFeed()
-        async let playlists: Void = loadRecommendPlaylists()
         async let toplists: Void = loadToplists()
-        _ = await (feed, playlists, toplists)
+        _ = await (feed, toplists)
     }
 
     func loadRecommendFeed(force: Bool = false) async {
@@ -533,6 +544,140 @@ final class QQMusicOnlineCoordinator {
             || text.contains("LoginExpired")
     }
 
+    // MARK: - Radio
+
+    /// Load the grouped station list.
+    func loadRadioStations(force: Bool = false) async {
+        guard !isLoadingRadioStations else { return }
+        if !force, !radioGroups.isEmpty { return }
+        if let wait = backoffRemaining() {
+            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
+            return
+        }
+        isLoadingRadioStations = true
+        defer { isLoadingRadioStations = false }
+        do {
+            if !force, let store = cacheStore,
+               let data = await store.catalog(.radioStations, key: "default"),
+               let cached = try? JSONDecoder().decode([QQMusicRadioGroup].self, from: data),
+               !cached.isEmpty {
+                radioGroups = cached
+                report(nil)
+                return
+            }
+            let groups = try await helper.fetchRadioStations()
+            if let store = cacheStore, let data = try? JSONEncoder().encode(groups) {
+                await store.storeCatalog(data, category: .radioStations, key: "default")
+            }
+            radioGroups = groups
+            report(nil)
+        } catch {
+            report("电台加载失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] radio stations failed: \(error)", category: .import)
+        }
+    }
+
+    /// Open a station and load its first batch of tracks.
+    func openRadioStation(_ station: QQMusicRadioStation) async {
+        isLoadingRadioTracks = true
+        radioStationTitle = station.title
+        defer { isLoadingRadioTracks = false }
+        do {
+            playlistTracks = try await helper.fetchRadioTracks(stationID: station.id, limit: 30, firstPlay: true)
+            activeRadioStationID = station.id
+            report(nil)
+        } catch {
+            playlistTracks = []
+            report("电台曲目加载失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] radio tracks failed: \(error)", category: .import)
+        }
+    }
+
+    /// Continue the current station's rotation.
+    ///
+    /// A radio is endless rather than paged, so this appends the next batch
+    /// without restarting, de-duplicating against what is already listed.
+    func loadMoreRadioTracks() async {
+        guard let stationID = activeRadioStationID, !isLoadingRadioTracks else { return }
+        isLoadingRadioTracks = true
+        defer { isLoadingRadioTracks = false }
+        do {
+            let tracks = try await helper.fetchRadioTracks(stationID: stationID, limit: 20, firstPlay: false)
+            let known = Set(playlistTracks.map(\.songMid))
+            let fresh = tracks.filter { !known.contains($0.songMid) }
+            guard !fresh.isEmpty else { return }
+            playlistTracks.append(contentsOf: fresh)
+        } catch {
+            report("加载更多失败：\(noteFailure(error))", isError: true)
+        }
+    }
+
+    func closeRadioStation() {
+        playlistTracks = []
+        radioStationTitle = ""
+        activeRadioStationID = nil
+    }
+
+    // MARK: - Artist search & detail
+
+    func searchArtists(_ keyword: String) async {
+        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        artistSearchKeyword = trimmed
+        guard !trimmed.isEmpty else {
+            searchedArtists = []
+            return
+        }
+        if let wait = backoffRemaining() {
+            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
+            return
+        }
+        isSearchingArtists = true
+        defer { isSearchingArtists = false }
+        do {
+            if let store = cacheStore,
+               let data = await store.catalog(.artistSearch, key: trimmed),
+               let cached = try? JSONDecoder().decode([QQMusicOnlineArtist].self, from: data),
+               !cached.isEmpty {
+                searchedArtists = cached
+                report(nil)
+                return
+            }
+            let artists = try await helper.searchArtists(keyword: trimmed, limit: 30)
+            if let store = cacheStore, let data = try? JSONEncoder().encode(artists) {
+                await store.storeCatalog(data, category: .artistSearch, key: trimmed)
+            }
+            searchedArtists = artists
+            report(nil)
+        } catch {
+            report("歌手搜索失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] artist search failed: \(error)", category: .import)
+        }
+    }
+
+    func clearArtistSearch() {
+        artistSearchKeyword = ""
+        searchedArtists = []
+    }
+
+    /// Sort order for an artist's songs. The upstream ignores ordering
+    /// parameters, so `latest` is computed from album release dates.
+    nonisolated enum ArtistSongSort: String, Sendable {
+        case hot
+        case latest
+    }
+
+    func artistSongs(singerMid: String, sort: ArtistSongSort) async throws -> [QQMusicOnlineTrack] {
+        try await helper.fetchArtistSongs(singerMid: singerMid, limit: 100, page: 1, sort: sort.rawValue)
+    }
+
+    func artistAlbums(singerMid: String) async throws -> [QQMusicOnlineAlbum] {
+        try await helper.fetchArtistAlbums(singerMid: singerMid, limit: 100, page: 1)
+    }
+
+    func albumTracks(albumID: Int) async throws -> [QQMusicOnlineTrack] {
+        try await helper.fetchAlbumTracks(albumID: albumID, limit: 200)
+    }
+
     // MARK: - Like / unlike
 
     /// Whether the given library track is in the account's favorites.
@@ -673,31 +818,6 @@ final class QQMusicOnlineCoordinator {
             return nil
         }
         return groups.isEmpty ? nil : groups
-    }
-
-    func loadRecommendPlaylists(force: Bool = false) async {
-        guard !isLoadingPlaylists else { return }
-        if !force, !recommendPlaylists.isEmpty { return }
-        if let wait = backoffRemaining() {
-            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
-            return
-        }
-        isLoadingPlaylists = true
-        defer { isLoadingPlaylists = false }
-        do {
-            if let cached = await cachedPlaylists(.recommendPlaylists, key: "default", force: force) {
-                recommendPlaylists = cached
-                report(nil)
-                return
-            }
-            let fetched = try await helper.fetchRecommendPlaylists()
-            await storePlaylists(fetched, category: .recommendPlaylists, key: "default")
-            recommendPlaylists = fetched
-            report(nil)
-        } catch {
-            report("歌单加载失败：\(noteFailure(error))", isError: true)
-            Log.warning("[QQMusicOnline] recommend playlists failed: \(error)", category: .import)
-        }
     }
 
     func loadToplists(force: Bool = false) async {

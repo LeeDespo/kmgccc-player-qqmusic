@@ -23,16 +23,18 @@ struct QQMusicOnlineView: View {
     @EnvironmentObject private var themeStore: ThemeStore
 
     @State private var searchText = ""
-    @State private var playlistSearchText = ""
+    @State private var searchKind: SearchKind = .songs
     @State private var mineSection: MineSection = .likedSongs
+    /// Artist drilled into from search results.
+    @State private var openedArtist: QQMusicOnlineArtist?
     @State private var section: Section = .recommend
 
     private enum Section: String, CaseIterable, Identifiable {
         case mine
         case recommend
+        case radio
         case newSongs
-        case playlists
-        case playlistSearch
+        case search
         case toplists
 
         var id: String { rawValue }
@@ -41,10 +43,27 @@ struct QQMusicOnlineView: View {
             switch self {
             case .mine: return "我的"
             case .recommend: return "猜你喜欢"
+            case .radio: return "电台"
             case .newSongs: return "新歌电台"
-            case .playlists: return "歌单推荐"
-            case .playlistSearch: return "找歌单"
+            case .search: return "搜索"
             case .toplists: return "排行榜"
+            }
+        }
+    }
+
+    /// Search is split by content type; the selector only appears on that page.
+    private enum SearchKind: String, CaseIterable, Identifiable {
+        case songs
+        case artists
+        case playlists
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .songs: return "歌曲"
+            case .artists: return "歌手"
+            case .playlists: return "歌单"
             }
         }
     }
@@ -79,6 +98,15 @@ struct QQMusicOnlineView: View {
         // never load — which is how the "我的" page ended up permanently empty.
         .task(id: section) {
             await loadContent(for: section)
+        }
+        // A separate page rather than a mode of the browse list: the artist
+        // view has its own sub-navigation and should not disturb the section
+        // the user came from.
+        .sheet(item: $openedArtist) { artist in
+            QQMusicArtistDetailView(artist: artist)
+                .environment(coordinator)
+                .environmentObject(themeStore)
+                .environment(\.qqMusicArtworkLoader, coordinator.artworkLoader)
         }
     }
 
@@ -171,8 +199,8 @@ struct QQMusicOnlineView: View {
                         if section == .newSongs {
                             regionPicker
                         }
-                        if section == .playlistSearch {
-                            playlistSearchField
+                        if section == .search {
+                            searchKindSelector
                         }
                         if section == .mine {
                             mineSubSelector
@@ -181,9 +209,14 @@ struct QQMusicOnlineView: View {
                     }
                 }
 
-                HStack(spacing: 8) {
-                    searchField
-                    Spacer()
+                // The keyword field belongs to the search page only; keeping it
+                // out of the other sections is what frees the width for the
+                // section selector.
+                if section == .search {
+                    HStack(spacing: 8) {
+                        searchField
+                        Spacer()
+                    }
                 }
             }
         }
@@ -201,13 +234,15 @@ struct QQMusicOnlineView: View {
             await coordinator.loadUserLibraryIfNeeded()
         case .newSongs:
             await coordinator.loadNewSongs(region: coordinator.newSongsRegion)
-        case .recommend, .playlists, .playlistSearch, .toplists:
+        case .radio:
+            await coordinator.loadRadioStations()
+        case .recommend, .search, .toplists:
             break
         }
     }
 
     private var showsSectionControls: Bool {
-        section == .newSongs || section == .playlistSearch || section == .mine
+        section == .newSongs || section == .search || section == .mine
     }
 
     /// Region filter for the new-song radio.
@@ -228,21 +263,40 @@ struct QQMusicOnlineView: View {
     }
 
     /// Keyword field for finding playlists by mood or genre.
-    private var playlistSearchField: some View {
+    /// Content-type selector for the search page.
+    private var searchKindSelector: some View {
+        Picker("", selection: $searchKind) {
+            ForEach(SearchKind.allCases, id: \.self) { kind in
+                Text(kind.title).tag(kind)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: 240)
+        .onChange(of: searchKind) { _, _ in
+            // Re-run the same query against the newly selected type so switching
+            // does not leave an empty page behind.
+            let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { return }
+            Task { await runSearch(query) }
+        }
+    }
+
+    private var searchField: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-            TextField("按风格/场景找歌单", text: $playlistSearchText)
+            TextField(searchPlaceholder, text: $searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13))
                 .onSubmit {
-                    Task { await coordinator.searchPlaylists(playlistSearchText) }
+                    Task { await runSearch(searchText) }
                 }
-            if !playlistSearchText.isEmpty {
+            if !searchText.isEmpty {
                 Button {
-                    playlistSearchText = ""
-                    coordinator.clearPlaylistSearch()
+                    searchText = ""
+                    clearSearchResults()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 12))
@@ -260,36 +314,167 @@ struct QQMusicOnlineView: View {
         .frame(maxWidth: 320)
     }
 
-    private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-            TextField("搜索在线歌曲", text: $searchText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13))
-                .onSubmit {
-                    Task { await coordinator.search(searchText) }
+    private var searchPlaceholder: String {
+        switch searchKind {
+        case .songs: return "搜索在线歌曲"
+        case .artists: return "搜索歌手"
+        case .playlists: return "搜索歌单"
+        }
+    }
+
+    /// Dispatch the query to the loader matching the selected content type.
+    private func runSearch(_ query: String) async {
+        switch searchKind {
+        case .songs:
+            await coordinator.search(query)
+        case .artists:
+            await coordinator.searchArtists(query)
+        case .playlists:
+            await coordinator.searchPlaylists(query)
+        }
+    }
+
+    /// Clear only the current type's results, so the other tabs keep theirs.
+    private func clearSearchResults() {
+        switch searchKind {
+        case .songs: coordinator.clearSearch()
+        case .artists: coordinator.clearArtistSearch()
+        case .playlists: coordinator.clearPlaylistSearch()
+        }
+    }
+
+    // MARK: - Radio
+
+    /// Stations grouped by category, with drill-down into one station.
+    @ViewBuilder
+    private var radioContent: some View {
+        if !coordinator.radioStationTitle.isEmpty {
+            radioTrackList
+        } else if coordinator.radioGroups.isEmpty {
+            if coordinator.isLoadingRadioStations { loadingState } else { emptyState("暂无电台") }
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    ForEach(coordinator.radioGroups) { group in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(group.name)
+                                .font(.headline)
+                                .padding(.horizontal, 20)
+                            ForEach(group.stations) { station in
+                                Button {
+                                    Task { await coordinator.openRadioStation(station) }
+                                } label: {
+                                    HStack(spacing: 10) {
+                                        QQMusicArtworkView(
+                                            urlString: station.coverURL,
+                                            size: 34,
+                                            cornerRadius: 5
+                                        )
+                                        Text(station.title)
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(.primary)
+                                        Spacer()
+                                        if let listeners = station.listenerCount, listeners > 0 {
+                                            Text(Self.listenerText(listeners))
+                                                .font(.system(size: 11))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Image(systemName: "chevron.right")
+                                            .font(.system(size: 10, weight: .semibold))
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 5)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
                 }
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                    coordinator.clearSearch()
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
+                .padding(.vertical, 10)
             }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(Color.primary.opacity(0.07))
-        )
-        .frame(maxWidth: 320)
+    }
+
+    private var radioTrackList: some View {
+        Group {
+            if coordinator.playlistTracks.isEmpty {
+                if coordinator.isLoadingRadioTracks { loadingState } else { emptyState("这个电台暂无曲目") }
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(Array(coordinator.playlistTracks.enumerated()), id: \.element.id) { index, track in
+                            QQMusicOnlineTrackRow(track: track) {
+                                // A station's rotation is endless, so playback
+                                // continues by pulling more rather than stopping.
+                                Task { await coordinator.startPlayback(coordinator.playlistTracks, startingAt: index) }
+                            }
+                            .onAppear {
+                                guard index >= coordinator.playlistTracks.count - 3 else { return }
+                                Task { await coordinator.loadMoreRadioTracks() }
+                            }
+                        }
+                        if coordinator.isLoadingRadioTracks {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("正在加载更多…").font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                }
+            }
+        }
+    }
+
+    private static func listenerText(_ count: Int) -> String {
+        count >= 10_000
+            ? String(format: "%.1f 万人在听", Double(count) / 10_000)
+            : "\(count) 人在听"
+    }
+
+    // MARK: - Search
+
+    @ViewBuilder
+    private var searchContent: some View {
+        switch searchKind {
+        case .songs:
+            trackList(coordinator.searchResults, loading: coordinator.isSearching)
+        case .artists:
+            artistList
+        case .playlists:
+            searchedPlaylistGrid
+        }
+    }
+
+    private var artistList: some View {
+        Group {
+            if coordinator.searchedArtists.isEmpty {
+                if coordinator.isSearchingArtists {
+                    loadingState
+                } else {
+                    emptyState(coordinator.artistSearchKeyword.isEmpty
+                               ? "输入歌手名开始搜索"
+                               : "没有找到相关歌手")
+                }
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        ForEach(coordinator.searchedArtists) { artist in
+                            QQMusicArtistRow(artist: artist) {
+                                openedArtist = artist
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                }
+            }
+        }
     }
 
     // MARK: - Status banner
@@ -380,10 +565,10 @@ struct QQMusicOnlineView: View {
                 mineContent
             case .newSongs:
                 trackList(coordinator.newSongs, loading: coordinator.isLoadingNewSongs)
-            case .playlists:
-                playlistGrid
-            case .playlistSearch:
-                searchedPlaylistGrid
+            case .radio:
+                radioContent
+            case .search:
+                searchContent
             case .toplists:
                 toplistList
             }
@@ -443,31 +628,6 @@ struct QQMusicOnlineView: View {
         }
     }
 
-    private var playlistGrid: some View {
-        Group {
-            if coordinator.recommendPlaylists.isEmpty {
-                if coordinator.isLoadingPlaylists { loadingState } else { emptyState("暂无推荐歌单") }
-            } else {
-                ScrollView {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 168), spacing: 14)],
-                        spacing: 14
-                    ) {
-                        ForEach(coordinator.recommendPlaylists) { playlist in
-                            QQMusicPlaylistCard(playlist: playlist) {
-                                Task { await coordinator.openPlaylist(id: playlist.id, title: playlist.title) }
-                            }
-                        }
-                    }
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 14)
-                }
-            }
-        }
-    }
-
-    /// Playlists found by keyword. Empty state explains the interaction rather
-    /// than showing a bare "nothing here", since the user has to type.
     private var searchedPlaylistGrid: some View {
         Group {
             if coordinator.searchedPlaylists.isEmpty {
@@ -695,7 +855,7 @@ struct QQMusicOnlineView: View {
 
 // MARK: - Row
 
-private struct QQMusicOnlineTrackRow: View {
+struct QQMusicOnlineTrackRow: View {
 
     let track: QQMusicOnlineTrack
     let onPlay: () -> Void
@@ -882,5 +1042,49 @@ private struct QQMusicAlbumCard: View {
             }
         }
         .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Artist row
+
+struct QQMusicArtistRow: View {
+
+    let artist: QQMusicOnlineArtist
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 10) {
+                QQMusicArtworkView(urlString: artist.coverURL, size: 42, cornerRadius: 21)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(artist.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                    Text(countText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var countText: String {
+        var parts: [String] = []
+        if let songs = artist.songCount { parts.append("\(songs) 首歌曲") }
+        if let albums = artist.albumCount { parts.append("\(albums) 张专辑") }
+        return parts.isEmpty ? "歌手" : parts.joined(separator: " · ")
     }
 }

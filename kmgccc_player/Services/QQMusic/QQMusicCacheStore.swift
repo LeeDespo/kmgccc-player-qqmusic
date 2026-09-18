@@ -25,8 +25,6 @@ import Foundation
 nonisolated enum QQMusicCacheCategory: String, Sendable {
     /// "Guess you like" radio; changes often.
     case recommendFeed
-    /// Recommended playlists; changes often.
-    case recommendPlaylists
     /// Ranking structure; changes daily.
     case toplists
     /// New-song radio; refreshed daily upstream.
@@ -38,6 +36,10 @@ nonisolated enum QQMusicCacheCategory: String, Sendable {
     case likedSongs
     /// The account's own playlists and favorited albums.
     case userLibrary
+    /// Radio station groups; the list is stable for a long time.
+    case radioStations
+    /// Artist search results, keyed by query.
+    case artistSearch
     /// A playlist's track list; changes occasionally.
     case playlistTracks
     /// Search results; short-lived because the user is iterating on queries.
@@ -46,11 +48,13 @@ nonisolated enum QQMusicCacheCategory: String, Sendable {
     var timeToLive: TimeInterval {
         switch self {
         case .search: return 5 * 60
-        case .recommendFeed, .recommendPlaylists: return 30 * 60
+        case .recommendFeed: return 30 * 60
         case .toplists: return 6 * 60 * 60
         case .newSongs: return 6 * 60 * 60
         case .playlistSearch: return 60 * 60
         case .likedSongs, .userLibrary: return 10 * 60
+        case .radioStations: return 24 * 60 * 60
+        case .artistSearch: return 60 * 60
         case .playlistTracks: return 2 * 60 * 60
         }
     }

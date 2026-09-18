@@ -1112,6 +1112,27 @@ public final class AppSettings {
     @ObservationIgnored
     @AppStorage("qqMusicPrefetchDepth") var qqMusicPrefetchDepth: Int = 2
 
+    /// Whether the helper's automatic circuit breaker is active.
+    ///
+    /// On by default: it stops the app from hammering an upstream that is
+    /// clearly failing. Turning it off means every request is attempted
+    /// regardless of recent failures, which is useful for diagnosing whether a
+    /// failure is transient, at the cost of retrying into a wall.
+    @ObservationIgnored
+    @AppStorage("qqMusicCircuitBreakerEnabled") var qqMusicCircuitBreakerEnabled: Bool = true
+
+    /// Consecutive failures within the window that trip the breaker.
+    @ObservationIgnored
+    @AppStorage("qqMusicCircuitFailureThreshold") var qqMusicCircuitFailureThreshold: Int = 3
+
+    /// How long failures are counted over before they age out.
+    @ObservationIgnored
+    @AppStorage("qqMusicCircuitFailureWindowSeconds") var qqMusicCircuitFailureWindowSeconds: Int = 120
+
+    /// How long the breaker stays open once tripped.
+    @ObservationIgnored
+    @AppStorage("qqMusicCircuitOpenSeconds") var qqMusicCircuitOpenSeconds: Int = 300
+
     /// Whether the playback bar shows a favorite button for online tracks.
     ///
     /// Off by default is wrong here: the button is the only way to reach the
