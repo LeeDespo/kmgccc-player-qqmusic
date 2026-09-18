@@ -24,9 +24,11 @@ struct QQMusicOnlineView: View {
 
     @State private var searchText = ""
     @State private var playlistSearchText = ""
+    @State private var mineSection: MineSection = .likedSongs
     @State private var section: Section = .recommend
 
     private enum Section: String, CaseIterable, Identifiable {
+        case mine
         case recommend
         case newSongs
         case playlists
@@ -37,11 +39,29 @@ struct QQMusicOnlineView: View {
 
         var title: String {
             switch self {
+            case .mine: return "我的"
             case .recommend: return "猜你喜欢"
             case .newSongs: return "新歌电台"
             case .playlists: return "歌单推荐"
             case .playlistSearch: return "找歌单"
             case .toplists: return "排行榜"
+            }
+        }
+    }
+
+    /// Sub-sections inside "我的".
+    private enum MineSection: String, CaseIterable, Identifiable {
+        case likedSongs
+        case albums
+        case playlists
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .likedSongs: return "我喜欢"
+            case .albums: return "收藏专辑"
+            case .playlists: return "我的歌单"
             }
         }
     }
@@ -157,6 +177,9 @@ struct QQMusicOnlineView: View {
                         if section == .playlistSearch {
                             playlistSearchField
                         }
+                        if section == .mine {
+                            mineSubSelector
+                        }
                         Spacer()
                     }
                 }
@@ -173,7 +196,7 @@ struct QQMusicOnlineView: View {
     }
 
     private var showsSectionControls: Bool {
-        section == .newSongs || section == .playlistSearch
+        section == .newSongs || section == .playlistSearch || section == .mine
     }
 
     /// Region filter for the new-song radio.
@@ -342,6 +365,8 @@ struct QQMusicOnlineView: View {
             switch section {
             case .recommend:
                 trackList(coordinator.recommendFeed, loading: coordinator.isLoadingFeed, pageable: true)
+            case .mine:
+                mineContent
             case .newSongs:
                 trackList(coordinator.newSongs, loading: coordinator.isLoadingNewSongs)
             case .playlists:
@@ -449,6 +474,136 @@ struct QQMusicOnlineView: View {
                         spacing: 14
                     ) {
                         ForEach(coordinator.searchedPlaylists) { playlist in
+                            QQMusicPlaylistCard(playlist: playlist) {
+                                Task { await coordinator.openPlaylist(id: playlist.id, title: playlist.title) }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                }
+            }
+        }
+    }
+
+    private var mineSubSelector: some View {
+        Picker("", selection: $mineSection) {
+            ForEach(MineSection.allCases, id: \.self) { item in
+                Text(item.title).tag(item)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(width: 300)
+    }
+
+    /// The "我的" section: liked songs, favorited albums, own playlists.
+    ///
+    /// Read-only by design. The upstream refuses writes over the web channel, so
+    /// there is no like/unlike or playlist-editing affordance to be confused by.
+    @ViewBuilder
+    private var mineContent: some View {
+        if coordinator.userLibraryNeedsLogin {
+            loginPrompt
+        } else {
+            switch mineSection {
+            case .likedSongs:
+                likedSongsList
+            case .albums:
+                likedAlbumGrid
+            case .playlists:
+                userPlaylistGrid
+            }
+        }
+    }
+
+    private var loginPrompt: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "person.crop.circle.badge.exclamationmark")
+                .font(.system(size: 26))
+                .foregroundStyle(.secondary)
+            Text("需要登录 QQ 音乐账号")
+                .font(.headline)
+            Text("收藏和自建歌单属于账号数据，登录后才能读取。点右下角的地球按钮进入 QQ 音乐设置即可登录。")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 380)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var likedSongsList: some View {
+        Group {
+            if coordinator.likedSongs.isEmpty {
+                if coordinator.isLoadingLikedSongs { loadingState } else { emptyState("还没有收藏的歌曲") }
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 2) {
+                        HStack {
+                            Text("共 \(coordinator.likedSongsTotal) 首")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 8)
+
+                        ForEach(Array(coordinator.likedSongs.enumerated()), id: \.element.id) { index, track in
+                            QQMusicOnlineTrackRow(track: track) {
+                                Task { await coordinator.startPlayback(coordinator.likedSongs, startingAt: index) }
+                            }
+                            .onAppear {
+                                // "我喜欢" can run to hundreds of tracks, so page
+                                // rather than fetching it all up front.
+                                guard index >= coordinator.likedSongs.count - 5 else { return }
+                                Task { await coordinator.loadMoreLikedSongs() }
+                            }
+                        }
+
+                        if coordinator.hasMoreLikedSongs {
+                            HStack(spacing: 8) {
+                                ProgressView().controlSize(.small)
+                                Text("正在加载更多…").font(.system(size: 11)).foregroundStyle(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                }
+            }
+        }
+    }
+
+    private var likedAlbumGrid: some View {
+        Group {
+            if coordinator.likedAlbums.isEmpty {
+                if coordinator.isLoadingLikedAlbums { loadingState } else { emptyState("还没有收藏的专辑") }
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 168), spacing: 14)], spacing: 14) {
+                        ForEach(coordinator.likedAlbums) { album in
+                            QQMusicAlbumCard(album: album) {
+                                Task { await coordinator.openAlbum(id: album.id, title: album.title) }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                }
+            }
+        }
+    }
+
+    private var userPlaylistGrid: some View {
+        Group {
+            if coordinator.userPlaylists.isEmpty {
+                if coordinator.isLoadingUserPlaylists { loadingState } else { emptyState("还没有自建或收藏的歌单") }
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 168), spacing: 14)], spacing: 14) {
+                        ForEach(coordinator.userPlaylists) { playlist in
                             QQMusicPlaylistCard(playlist: playlist) {
                                 Task { await coordinator.openPlaylist(id: playlist.id, title: playlist.title) }
                             }
@@ -677,6 +832,41 @@ private struct QQMusicPlaylistCard: View {
                     Text("\(count) 首")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Album card
+
+private struct QQMusicAlbumCard: View {
+
+    let album: QQMusicOnlineAlbum
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: 6) {
+                QQMusicArtworkView(
+                    urlString: album.coverURL,
+                    size: 132,
+                    cornerRadius: 8
+                )
+                .frame(maxWidth: .infinity)
+
+                Text(album.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .foregroundStyle(.primary)
+
+                if let artist = album.artist, !artist.isEmpty {
+                    Text(artist)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
             }
         }

@@ -69,6 +69,10 @@ KNOWN_METHODS: tuple[str, ...] = (
     "fetch_playlist_tracks",
     "fetch_new_songs",
     "search_playlists",
+    "fetch_album_tracks",
+    "fetch_liked_songs",
+    "fetch_liked_albums",
+    "fetch_user_playlists",
     "fetch_lyric",
     "resolve_song_url",
     "search_artist_artwork",
@@ -1565,6 +1569,188 @@ def _strip_search_highlight(value: str) -> str:
     return re.sub(r"</?em>", "", value or "").strip()
 
 
+# MARK: - User library (liked songs / albums / playlists)
+#
+# Read-only. Every write endpoint reachable over the web channel is either
+# silently ineffective or rejected: adding a track to "我喜欢" returns a
+# success-shaped payload while `songnum` stays unchanged, and the same call on
+# an owned playlist answers 80092. So these helpers only ever read, and the UI
+# deliberately offers no like/unlike affordance.
+
+# `dirid` of the "我喜欢" folder. It is a fixed virtual id, not a playlist id.
+LIKED_SONGS_DIRID = 201
+
+
+async def fetch_liked_songs(params: dict[str, Any]) -> dict[str, Any]:
+    """Tracks in "我喜欢", paginated.
+
+    The folder reports its own total, so callers can page without guessing.
+    """
+    _require_dependency()
+    page = max(1, _first_int(params, ("page",)) or 1)
+    limit = max(1, min(_first_int(params, ("limit",)) or 50, 100))
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.song._build_cgi(
+                "music.srfDissInfo.DissInfo",
+                "CgiGetDiss",
+                {
+                    "disstid": 0,
+                    "dirid": LIKED_SONGS_DIRID,
+                    "tag": True,
+                    "song_begin": limit * (page - 1),
+                    "song_num": limit,
+                    "userinfo": True,
+                    "orderlist": True,
+                },
+            )
+        )
+    )
+    info = _first_dict(plain, ("dirinfo",))
+    tracks = _tracks_payload(_items_from_search_result(plain, ("songlist", "songs")))
+    return {
+        "title": _first_text(info, ("title",)) or "我喜欢",
+        "total": _first_int(info, ("songnum", "song_num", "total")) or len(tracks),
+        "tracks": tracks,
+    }
+
+
+async def fetch_liked_albums(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Favorited albums, resolved to displayable metadata.
+
+    Upstream returns only numeric album ids, so each is resolved through the
+    album info endpoint to get a name, `albumMid` (which yields the cover) and
+    artist. Ids are resolved concurrently because the cost is round-trip, but
+    the batch is capped to stay well under upstream rate limits.
+    """
+    _require_dependency()
+    limit = max(1, min(_first_int(params, ("limit",)) or 30, 50))
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.song._build_cgi(
+                "music.musicasset.AlbumFavRead", "GetAlbumFavList", {"From": 0, "Size": limit}
+            )
+        )
+    )
+    ids = [int(x) for x in (plain.get("v_albumId") or []) if str(x).isdigit()][:limit]
+    if not ids:
+        return []
+
+    details = await asyncio.gather(
+        *[_fetch_album_basic(album_id) for album_id in ids],
+        return_exceptions=True,
+    )
+    albums: list[dict[str, Any]] = []
+    for album_id, detail in zip(ids, details):
+        if isinstance(detail, BaseException) or not detail:
+            # Keep the row so the count stays truthful, even without metadata.
+            albums.append({"source": SOURCE, "id": album_id, "title": f"专辑 {album_id}", "coverURL": "", "artist": ""})
+            continue
+        albums.append(detail)
+    return albums
+
+
+async def _fetch_album_basic(album_id: int) -> dict[str, Any]:
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.song._build_cgi(
+                "music.musichallAlbum.AlbumInfoServer",
+                "GetAlbumDetail",
+                {"albumId": album_id},
+            )
+        )
+    )
+    basic = _first_dict(plain, ("basicInfo",))
+    album_mid = _first_text(basic, ("albumMid",))
+    singers = _singers_text_from_list(((plain.get("singer") or {}).get("singerList")) or [])
+    return {
+        "source": SOURCE,
+        "id": album_id,
+        "title": _first_text(basic, ("albumName", "name")) or f"专辑 {album_id}",
+        "albumMid": album_mid,
+        "coverURL": _sanitize_image_url(_album_cover_url(album_mid)),
+        "artist": singers,
+        "releaseDate": _first_text(basic, ("publishDate",)),
+    }
+
+
+async def fetch_album_tracks(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Tracks of an album, addressed by its numeric id.
+
+    Favorited albums are only identified by numeric id, and `album.get_detail`
+    returns an empty payload for those, so the song list is requested directly
+    by id with a large page size.
+    """
+    _require_dependency()
+    album_id = _first_int(params, ("albumId", "id"))
+    if not album_id:
+        raise ValueError("albumId is required")
+    limit = max(1, min(_first_int(params, ("limit",)) or 100, 300))
+    # Built as a raw CGI request on purpose: `client.album.get_song` returns a
+    # parsed model whose fields are snake_cased (`song_list`), which the payload
+    # normaliser does not recognise — it would silently yield an empty list.
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.song._build_cgi(
+                "music.musichallAlbum.AlbumSongList",
+                "GetAlbumSongList",
+                {"albumId": album_id, "begin": 0, "num": limit},
+            )
+        )
+    )
+    return _tracks_payload(_items_from_search_result(plain, ("songList", "songs", "list")))
+
+
+async def fetch_user_playlists(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """The account's own playlists (created and favorited).
+
+    Must go through the legacy `c.y.qq.com` fcgi: every candidate method on
+    `music.musicasset.PlaylistBaseRead` answers 40000, verified 2026-09-18.
+    """
+    _require_dependency()
+    credential = load_credential()
+    uin = ""
+    if credential is not None:
+        uin = str(getattr(credential, "str_musicid", "") or getattr(credential, "musicid", "") or "")
+    if not uin:
+        raise ValueError("需要登录后才能读取歌单")
+
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.song._build_http(
+                "GET",
+                "https://c.y.qq.com/fav/fcgi-bin/fcg_get_profile_order_asset.fcg",
+                params={
+                    "ct": "20",
+                    "cid": "205360956",
+                    "userid": uin,
+                    "reqtype": "3",
+                    "sin": "0",
+                    "ein": "100",
+                },
+            )
+        )
+    )
+    items = _items_from_search_result(_first_dict(plain, ("data",)), ("cdlist", "disslist", "list"))
+    playlists: list[dict[str, Any]] = []
+    for item in items or []:
+        diss_id = _first_int(item, ("dissid", "tid", "id"))
+        if not diss_id:
+            continue
+        playlists.append(
+            {
+                "source": SOURCE,
+                "id": diss_id,
+                "title": _first_text(item, ("dissname", "name", "title")),
+                "coverURL": _sanitize_image_url(_first_text(item, ("logo", "picurl", "cover"))),
+                "creator": _first_text(item, ("nickname", "creator", "nick")),
+                "songCount": _first_int(item, ("songnum", "song_cnt", "songCount")),
+                "playCount": _first_int(item, ("listennum", "play_cnt", "playCount")),
+            }
+        )
+    return playlists
+
+
 async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     request_id = request.get("id")
     method = request.get("method")
@@ -1619,6 +1805,27 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     elif method == "fetch_new_songs":
         tracks = await fetch_new_songs(params)
         return _tracks_response(request_id, method, tracks, started_at)
+    elif method == "fetch_liked_songs":
+        payload = await fetch_liked_songs(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(
+            f"response id={request_id} method={method} "
+            f"tracks={len(payload.get('tracks') or [])} total={payload.get('total')} durationMs={duration_ms}"
+        )
+        return {"id": request_id, "ok": True, "likedSongs": payload}
+    elif method == "fetch_liked_albums":
+        albums = await fetch_liked_albums(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(f"response id={request_id} method={method} albums={len(albums)} durationMs={duration_ms}")
+        return {"id": request_id, "ok": True, "albums": albums}
+    elif method == "fetch_album_tracks":
+        tracks = await fetch_album_tracks(params)
+        return _tracks_response(request_id, method, tracks, started_at)
+    elif method == "fetch_user_playlists":
+        playlists = await fetch_user_playlists(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(f"response id={request_id} method={method} playlists={len(playlists)} durationMs={duration_ms}")
+        return {"id": request_id, "ok": True, "playlists": playlists}
     elif method == "search_playlists":
         playlists = await search_playlists(params)
         duration_ms = int((time.monotonic() - started_at) * 1000)

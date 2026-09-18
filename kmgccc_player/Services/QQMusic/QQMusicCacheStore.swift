@@ -33,6 +33,11 @@ nonisolated enum QQMusicCacheCategory: String, Sendable {
     case newSongs
     /// Playlist search results, keyed by the query the user typed.
     case playlistSearch
+    /// "我喜欢" tracks, keyed by page. Short TTL: the user may have just liked
+    /// something on their phone.
+    case likedSongs
+    /// The account's own playlists and favorited albums.
+    case userLibrary
     /// A playlist's track list; changes occasionally.
     case playlistTracks
     /// Search results; short-lived because the user is iterating on queries.
@@ -45,6 +50,7 @@ nonisolated enum QQMusicCacheCategory: String, Sendable {
         case .toplists: return 6 * 60 * 60
         case .newSongs: return 6 * 60 * 60
         case .playlistSearch: return 60 * 60
+        case .likedSongs, .userLibrary: return 10 * 60
         case .playlistTracks: return 2 * 60 * 60
         }
     }
