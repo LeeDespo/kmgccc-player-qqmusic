@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""QQMusicApi stdio JSON helper.
+"""QQMusicAPI stdio JSON helper.
 
 Protocol:
   stdin:  one JSON request per line: {"id": "...", "method": "...", "params": {...}}

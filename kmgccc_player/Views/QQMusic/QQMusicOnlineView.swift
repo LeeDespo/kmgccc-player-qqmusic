@@ -74,8 +74,11 @@ struct QQMusicOnlineView: View {
             content
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .task {
-            await coordinator.loadInitialContentIfNeeded()
+        // Driven by `section` rather than by the selector's setter: the setter
+        // only fires on a user tap, so a section restored or defaulted to would
+        // never load — which is how the "我的" page ended up permanently empty.
+        .task(id: section) {
+            await loadContent(for: section)
         }
     }
 
@@ -138,12 +141,6 @@ struct QQMusicOnlineView: View {
                         get: { section },
                         set: { newValue in
                             section = newValue
-                            Task {
-                                await coordinator.loadInitialContentIfNeeded()
-                                if newValue == .newSongs {
-                                    await coordinator.loadNewSongs(region: coordinator.newSongsRegion)
-                                }
-                            }
                         }
                     ),
                     animation: .spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.08),
@@ -193,6 +190,20 @@ struct QQMusicOnlineView: View {
         .padding(.horizontal, 20)
         .padding(.top, 14)
         .padding(.bottom, 10)
+    }
+
+    /// Kick off whatever the given section needs. Idempotent — each coordinator
+    /// loader returns early when its content is already present.
+    private func loadContent(for section: Section) async {
+        await coordinator.loadInitialContentIfNeeded()
+        switch section {
+        case .mine:
+            await coordinator.loadUserLibraryIfNeeded()
+        case .newSongs:
+            await coordinator.loadNewSongs(region: coordinator.newSongsRegion)
+        case .recommend, .playlists, .playlistSearch, .toplists:
+            break
+        }
     }
 
     private var showsSectionControls: Bool {
