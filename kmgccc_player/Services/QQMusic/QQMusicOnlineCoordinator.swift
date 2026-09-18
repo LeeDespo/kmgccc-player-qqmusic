@@ -36,6 +36,19 @@ final class QQMusicOnlineCoordinator {
     private(set) var newSongsRegion: QQMusicNewSongRegion = .latest
     /// Playlists found by keyword, for category/mood browsing.
     private(set) var searchedPlaylists: [QQMusicOnlinePlaylist] = []
+
+    // User library (read-only)
+    private(set) var likedSongs: [QQMusicOnlineTrack] = []
+    private(set) var likedSongsTotal = 0
+    private(set) var likedSongsPage = 0
+    private(set) var likedAlbums: [QQMusicOnlineAlbum] = []
+    private(set) var userPlaylists: [QQMusicOnlinePlaylist] = []
+    private(set) var isLoadingLikedSongs = false
+    private(set) var isLoadingLikedAlbums = false
+    private(set) var isLoadingUserPlaylists = false
+    /// True when the last user-library call reported it needs a login.
+    private(set) var userLibraryNeedsLogin = false
+    private var isLoadingMoreLikedSongs = false
     private(set) var playlistSearchKeyword = ""
     private(set) var isLoadingNewSongs = false
     private(set) var isSearchingPlaylists = false
@@ -316,6 +329,200 @@ final class QQMusicOnlineCoordinator {
     func clearPlaylistSearch() {
         playlistSearchKeyword = ""
         searchedPlaylists = []
+    }
+
+    // MARK: - User library (read-only)
+    //
+    // Everything here reads. The upstream rejects writes over the web channel
+    // (see docs/qqmusic/02-helper.md 02-07), so no like/unlike affordance is
+    // offered anywhere in the UI.
+
+    var hasMoreLikedSongs: Bool { likedSongs.count < likedSongsTotal }
+
+    /// Load the first page of "我喜欢".
+    func loadLikedSongs(force: Bool = false) async {
+        guard !isLoadingLikedSongs else { return }
+        if !force, !likedSongs.isEmpty { return }
+        isLoadingLikedSongs = true
+        defer { isLoadingLikedSongs = false }
+        do {
+            if !force, let cached = await cachedLikedSongs(page: 1) {
+                likedSongs = cached.tracks
+                likedSongsTotal = cached.total
+                likedSongsPage = 1
+                userLibraryNeedsLogin = false
+                report(nil)
+                return
+            }
+            let page = try await helper.fetchLikedSongs(page: 1, limit: 100)
+            await cacheLikedSongs(page, page: 1)
+            likedSongs = page.tracks
+            likedSongsTotal = page.total
+            likedSongsPage = 1
+            userLibraryNeedsLogin = false
+            report(nil)
+        } catch {
+            // A login requirement is a state to guide the user through, not a
+            // generic failure.
+            if Self.isLoginRequired(error) {
+                userLibraryNeedsLogin = true
+                report("需要登录后才能读取收藏", isError: true)
+            } else {
+                report("收藏加载失败：\(noteFailure(error))", isError: true)
+            }
+            Log.warning("[QQMusicOnline] liked songs failed: \(error)", category: .import)
+        }
+    }
+
+    /// Append the next page of "我喜欢".
+    func loadMoreLikedSongs() async {
+        guard !isLoadingMoreLikedSongs, hasMoreLikedSongs else { return }
+        isLoadingMoreLikedSongs = true
+        defer { isLoadingMoreLikedSongs = false }
+        let next = likedSongsPage + 1
+        do {
+            if let cached = await cachedLikedSongs(page: next) {
+                appendLiked(cached.tracks, page: next, total: cached.total)
+                return
+            }
+            let page = try await helper.fetchLikedSongs(page: next, limit: 100)
+            await cacheLikedSongs(page, page: next)
+            appendLiked(page.tracks, page: next, total: page.total)
+        } catch {
+            report("加载更多失败：\(noteFailure(error))", isError: true)
+        }
+    }
+
+    private func appendLiked(_ tracks: [QQMusicOnlineTrack], page: Int, total: Int) {
+        // Guard against the upstream repeating a track across pages.
+        let known = Set(likedSongs.map(\.songMid))
+        likedSongs.append(contentsOf: tracks.filter { !known.contains($0.songMid) })
+        likedSongsPage = page
+        likedSongsTotal = max(total, likedSongs.count)
+        report(nil)
+    }
+
+    private func cachedLikedSongs(page: Int) async -> QQMusicLikedSongs? {
+        guard let store = cacheStore,
+              let data = await store.catalog(.likedSongs, key: "page-\(page)"),
+              let decoded = try? JSONDecoder().decode(QQMusicLikedSongs.self, from: data),
+              !decoded.tracks.isEmpty
+        else { return nil }
+        return decoded
+    }
+
+    private func cacheLikedSongs(_ payload: QQMusicLikedSongs, page: Int) async {
+        guard let store = cacheStore, let data = try? JSONEncoder().encode(payload) else { return }
+        await store.storeCatalog(data, category: .likedSongs, key: "page-\(page)")
+    }
+
+    /// Load favorited albums (resolved to names and covers by the helper).
+    func loadLikedAlbums(force: Bool = false) async {
+        guard !isLoadingLikedAlbums else { return }
+        if !force, !likedAlbums.isEmpty { return }
+        isLoadingLikedAlbums = true
+        defer { isLoadingLikedAlbums = false }
+        do {
+            if !force, let cached = await cachedAlbums(force: force) {
+                likedAlbums = cached
+                report(nil)
+                return
+            }
+            let albums = try await helper.fetchLikedAlbums()
+            await cacheAlbums(albums)
+            likedAlbums = albums
+            userLibraryNeedsLogin = false
+            report(nil)
+        } catch {
+            if Self.isLoginRequired(error) {
+                userLibraryNeedsLogin = true
+                report("需要登录后才能读取收藏", isError: true)
+            } else {
+                report("收藏专辑加载失败：\(noteFailure(error))", isError: true)
+            }
+            Log.warning("[QQMusicOnline] liked albums failed: \(error)", category: .import)
+        }
+    }
+
+    private func cachedAlbums(force: Bool) async -> [QQMusicOnlineAlbum]? {
+        guard !force, let store = cacheStore,
+              let data = await store.catalog(.userLibrary, key: "albums"),
+              let decoded = try? JSONDecoder().decode([QQMusicOnlineAlbum].self, from: data),
+              !decoded.isEmpty
+        else { return nil }
+        return decoded
+    }
+
+    private func cacheAlbums(_ albums: [QQMusicOnlineAlbum]) async {
+        guard let store = cacheStore, !albums.isEmpty,
+              let data = try? JSONEncoder().encode(albums) else { return }
+        await store.storeCatalog(data, category: .userLibrary, key: "albums")
+    }
+
+    /// Load the account's own playlists.
+    func loadUserPlaylists(force: Bool = false) async {
+        guard !isLoadingUserPlaylists else { return }
+        if !force, !userPlaylists.isEmpty { return }
+        isLoadingUserPlaylists = true
+        defer { isLoadingUserPlaylists = false }
+        do {
+            if !force, let cached = await cachedUserPlaylists(force: force) {
+                userPlaylists = cached
+                report(nil)
+                return
+            }
+            let playlists = try await helper.fetchUserPlaylists()
+            await cacheUserPlaylists(playlists)
+            userPlaylists = playlists
+            userLibraryNeedsLogin = false
+            report(nil)
+        } catch {
+            if Self.isLoginRequired(error) {
+                userLibraryNeedsLogin = true
+                report("需要登录后才能读取歌单", isError: true)
+            } else {
+                report("我的歌单加载失败：\(noteFailure(error))", isError: true)
+            }
+            Log.warning("[QQMusicOnline] user playlists failed: \(error)", category: .import)
+        }
+    }
+
+    private func cachedUserPlaylists(force: Bool) async -> [QQMusicOnlinePlaylist]? {
+        guard !force, let store = cacheStore,
+              let data = await store.catalog(.userLibrary, key: "playlists"),
+              let decoded = try? JSONDecoder().decode([QQMusicOnlinePlaylist].self, from: data),
+              !decoded.isEmpty
+        else { return nil }
+        return decoded
+    }
+
+    private func cacheUserPlaylists(_ playlists: [QQMusicOnlinePlaylist]) async {
+        guard let store = cacheStore, !playlists.isEmpty,
+              let data = try? JSONEncoder().encode(playlists) else { return }
+        await store.storeCatalog(data, category: .userLibrary, key: "playlists")
+    }
+
+    /// Load everything the "我的" section shows.
+    func loadUserLibraryIfNeeded() async {
+        async let liked: Void = loadLikedSongs()
+        async let albums: Void = loadLikedAlbums()
+        async let playlists: Void = loadUserPlaylists()
+        _ = await (liked, albums, playlists)
+    }
+
+    /// Open a favorited album as a track list.
+    func openAlbum(id: Int, title: String) async {
+        await loadPlaylistTracks(cacheKey: "album-\(id)", title: title) {
+            try await self.helper.fetchAlbumTracks(albumID: id)
+        }
+    }
+
+    /// Whether an error means the user must log in, rather than a real failure.
+    private static func isLoginRequired(_ error: Error) -> Bool {
+        let text = String(describing: error)
+        return text.contains("需要登录")
+            || text.contains("登录凭证已过期")
+            || text.contains("LoginExpired")
     }
 
     // MARK: - Cache helpers

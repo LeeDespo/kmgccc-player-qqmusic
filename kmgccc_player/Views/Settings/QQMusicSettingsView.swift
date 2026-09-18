@@ -376,6 +376,13 @@ struct QQMusicSettingsView: View {
                 labeledValue("每次取回", "5 首／次（上游限制）")
                 Text("推荐、歌单与封面会缓存在本地，短时间内重复进入不会重新请求上游，这也是避免风控的主要手段。")
                     .settingsDescriptionStyle()
+
+                Divider().opacity(0.4)
+
+                Text("“我的”页可查看账号的收藏与自建歌单（我喜欢 / 收藏专辑 / 我的歌单），**均为只读**。")
+                    .settingsDescriptionStyle()
+                Text("QQ 音乐经网页通道拒绝了所有写入操作（点赞、增删歌单）：接口会返回成功形状但不真正生效，因此应用内不提供红心或编辑按钮，以免出现点了没反应的假交互。")
+                    .settingsDescriptionStyle()
             }
             .padding(SettingsStyleTokens.groupPadding)
             .background(sectionBackground)

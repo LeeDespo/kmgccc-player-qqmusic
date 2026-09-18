@@ -219,6 +219,26 @@ nonisolated struct QQMusicHelperInfo: Codable, Equatable, Sendable {
     func supports(_ method: String) -> Bool { methods.contains(method) }
 }
 
+/// An album in the user's favorites.
+nonisolated struct QQMusicOnlineAlbum: Codable, Equatable, Sendable, Identifiable {
+    var id: Int
+    var title: String
+    var albumMid: String?
+    var coverURL: String?
+    var artist: String?
+    var releaseDate: String?
+
+    /// `id` is a numeric album id, unique per album.
+    var identity: String { albumMid ?? String(id) }
+}
+
+/// "我喜欢" contents plus the folder's own total, so the list can page.
+nonisolated struct QQMusicLikedSongs: Codable, Equatable, Sendable {
+    var title: String
+    var total: Int
+    var tracks: [QQMusicOnlineTrack]
+}
+
 /// Region filter for the new-song radio.
 nonisolated enum QQMusicNewSongRegion: String, Sendable, CaseIterable {
     case latest
@@ -780,6 +800,8 @@ actor QQMusicHelperProcess {
         let detail: QQMusicMetadataDetail?
         let tracks: [QQMusicOnlineTrack]?
         let playlists: [QQMusicOnlinePlaylist]?
+        let albums: [QQMusicOnlineAlbum]?
+        let likedSongs: QQMusicLikedSongs?
         let toplistGroups: [QQMusicToplistGroup]?
         let lyric: QQMusicLyricPayload?
         let stream: QQMusicStreamResolution?
@@ -843,6 +865,20 @@ actor QQMusicHelperProcess {
 
     private struct RecommendPlaylistsParams: Encodable, Sendable {
         let page: Int
+        let limit: Int
+    }
+
+    private struct LikedSongsParams: Encodable, Sendable {
+        let page: Int
+        let limit: Int
+    }
+
+    private struct LikedAlbumsParams: Encodable, Sendable {
+        let limit: Int
+    }
+
+    private struct AlbumTracksParams: Encodable, Sendable {
+        let albumId: Int
         let limit: Int
     }
 
@@ -1137,6 +1173,41 @@ actor QQMusicHelperProcess {
             method: "search_playlists",
             params: SearchPlaylistsParams(keyword: keyword, limit: limit)
         )
+        return response.playlists ?? []
+    }
+
+    // MARK: - User library (read-only)
+
+    /// Tracks in "我喜欢", paginated.
+    func fetchLikedSongs(page: Int = 1, limit: Int = 50) async throws -> QQMusicLikedSongs {
+        let response = try await send(
+            method: "fetch_liked_songs",
+            params: LikedSongsParams(page: page, limit: limit)
+        )
+        return response.likedSongs ?? QQMusicLikedSongs(title: "我喜欢", total: 0, tracks: [])
+    }
+
+    /// Favorited albums, already resolved to names and covers.
+    func fetchLikedAlbums(limit: Int = 30) async throws -> [QQMusicOnlineAlbum] {
+        let response = try await send(
+            method: "fetch_liked_albums",
+            params: LikedAlbumsParams(limit: limit)
+        )
+        return response.albums ?? []
+    }
+
+    /// Tracks of a favorited album, addressed by its numeric id.
+    func fetchAlbumTracks(albumID: Int, limit: Int = 100) async throws -> [QQMusicOnlineTrack] {
+        let response = try await send(
+            method: "fetch_album_tracks",
+            params: AlbumTracksParams(albumId: albumID, limit: limit)
+        )
+        return response.tracks ?? []
+    }
+
+    /// The account's own playlists. Requires a login.
+    func fetchUserPlaylists() async throws -> [QQMusicOnlinePlaylist] {
+        let response = try await send(method: "fetch_user_playlists", params: EmptyParams())
         return response.playlists ?? []
     }
 
