@@ -48,6 +48,14 @@ final class QQMusicOnlineCoordinator {
     private(set) var isLoadingUserPlaylists = false
     /// True when the last user-library call reported it needs a login.
     private(set) var userLibraryNeedsLogin = false
+    /// Song mids currently liked, from the account's "我喜欢".
+    ///
+    /// Held as a set rather than re-querying per track: the upstream has no
+    /// per-track membership endpoint, so the folder is read once and kept in
+    /// memory while the session lives.
+    private(set) var likedSongMids: Set<String> = []
+    /// Writes in flight, so the button can show progress and not double-fire.
+    private(set) var pendingLikeSongMids: Set<String> = []
     private var isLoadingMoreLikedSongs = false
     private(set) var playlistSearchKeyword = ""
     private(set) var isLoadingNewSongs = false
@@ -523,6 +531,84 @@ final class QQMusicOnlineCoordinator {
         return text.contains("需要登录")
             || text.contains("登录凭证已过期")
             || text.contains("LoginExpired")
+    }
+
+    // MARK: - Like / unlike
+
+    /// Whether the given library track is in the account's favorites.
+    func isLiked(_ track: Track) -> Bool {
+        guard let mid = track.qqMusicSongMid else { return false }
+        return likedSongMids.contains(mid)
+    }
+
+    func isLikePending(_ track: Track) -> Bool {
+        guard let mid = track.qqMusicSongMid else { return false }
+        return pendingLikeSongMids.contains(mid)
+    }
+
+    /// Whether this track can be liked at all. Only online-sourced tracks carry
+    /// the upstream identifier; the helper resolves it to the numeric id the
+    /// write endpoint needs.
+    func canLike(_ track: Track) -> Bool {
+        track.qqMusicSongMid?.isEmpty == false
+    }
+
+    /// Refresh the set of liked song mids from the account.
+    func refreshLikedSongMids() async {
+        do {
+            var mids: Set<String> = []
+            var page = 1
+            // The folder can hold hundreds of tracks; walk pages until the
+            // reported total is covered.
+            while page <= 20 {
+                let payload = try await helper.fetchLikedSongs(page: page, limit: 100)
+                mids.formUnion(payload.tracks.map(\.songMid))
+                if mids.count >= payload.total || payload.tracks.isEmpty { break }
+                page += 1
+            }
+            likedSongMids = mids
+        } catch {
+            Log.warning("[QQMusicOnline] liked mids refresh failed: \(error)", category: .import)
+        }
+    }
+
+    /// Toggle the favorite state of a library track.
+    ///
+    /// The upstream applies the change asynchronously, so the local set is
+    /// updated optimistically and rolled back if the write is rejected.
+    @discardableResult
+    func toggleLike(_ track: Track) async -> Bool {
+        guard let mid = track.qqMusicSongMid, !mid.isEmpty else { return false }
+        guard !pendingLikeSongMids.contains(mid) else { return likedSongMids.contains(mid) }
+
+        let target = !likedSongMids.contains(mid)
+        pendingLikeSongMids.insert(mid)
+        defer { pendingLikeSongMids.remove(mid) }
+
+        do {
+            let result = try await helper.setLiked(songMid: mid, liked: target)
+            guard result.ok != false else {
+                report(target ? "收藏失败" : "取消收藏失败", isError: true)
+                return likedSongMids.contains(mid)
+            }
+            if target {
+                likedSongMids.insert(mid)
+            } else {
+                likedSongMids.remove(mid)
+            }
+            report(target ? "已收藏到「我喜欢」" : "已取消收藏")
+            // The change also invalidates the cached liked list.
+            if let store = cacheStore {
+                await store.invalidateCatalog(.likedSongs, key: "page-1")
+            }
+            likedSongs = []
+            likedSongsPage = 0
+            return target
+        } catch {
+            report((error as? LocalizedError)?.errorDescription ?? "收藏操作失败", isError: true)
+            Log.warning("[QQMusicOnline] like toggle failed: \(error)", category: .import)
+            return likedSongMids.contains(mid)
+        }
     }
 
     // MARK: - Cache helpers

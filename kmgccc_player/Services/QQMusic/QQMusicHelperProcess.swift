@@ -232,6 +232,15 @@ nonisolated struct QQMusicOnlineAlbum: Codable, Equatable, Sendable, Identifiabl
     var identity: String { albumMid ?? String(id) }
 }
 
+/// Result of a like/unlike request.
+nonisolated struct QQMusicLikeResult: Codable, Equatable, Sendable {
+    var songId: Int
+    var liked: Bool
+    /// Whether the upstream accepted the write. The change still lands
+    /// asynchronously, so this reports acceptance rather than a visible result.
+    var ok: Bool?
+}
+
 /// "我喜欢" contents plus the folder's own total, so the list can page.
 nonisolated struct QQMusicLikedSongs: Codable, Equatable, Sendable {
     var title: String
@@ -802,6 +811,7 @@ actor QQMusicHelperProcess {
         let playlists: [QQMusicOnlinePlaylist]?
         let albums: [QQMusicOnlineAlbum]?
         let likedSongs: QQMusicLikedSongs?
+        let like: QQMusicLikeResult?
         let toplistGroups: [QQMusicToplistGroup]?
         let lyric: QQMusicLyricPayload?
         let stream: QQMusicStreamResolution?
@@ -866,6 +876,11 @@ actor QQMusicHelperProcess {
     private struct RecommendPlaylistsParams: Encodable, Sendable {
         let page: Int
         let limit: Int
+    }
+
+    private struct SetLikedParams: Encodable, Sendable {
+        let songMid: String
+        let liked: Bool
     }
 
     private struct LikedSongsParams: Encodable, Sendable {
@@ -1177,6 +1192,23 @@ actor QQMusicHelperProcess {
     }
 
     // MARK: - User library (read-only)
+
+    /// Add or remove a track from "我喜欢".
+    ///
+    /// The upstream applies this asynchronously (a few seconds), so the returned
+    /// value is the requested state, not confirmation that it is visible yet.
+    /// Takes a song mid rather than the numeric id: the library only stores the
+    /// mid, and the helper resolves the id the write endpoint actually wants.
+    func setLiked(songMid: String, liked: Bool) async throws -> QQMusicLikeResult {
+        let response = try await send(
+            method: "set_liked",
+            params: SetLikedParams(songMid: songMid, liked: liked)
+        )
+        guard let result = response.like else {
+            throw QQMusicHelperError.requestFailed("missing like payload")
+        }
+        return result
+    }
 
     /// Tracks in "我喜欢", paginated.
     func fetchLikedSongs(page: Int = 1, limit: Int = 50) async throws -> QQMusicLikedSongs {

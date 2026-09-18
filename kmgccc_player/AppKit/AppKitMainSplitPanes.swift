@@ -310,6 +310,7 @@ struct AppKitMainContentPaneRoot: View {
             if !FullscreenWindowManager.shared.isWindowedFullscreenActive {
                 GeometryReader { proxy in
                     MiniPlayerView()
+                        .environment(appSession.qqMusicOnlineCoordinator)
                         .onGeometryChange(for: CGRect.self) { geometry in
                             geometry.frame(in: .global)
                         } action: { newRect in

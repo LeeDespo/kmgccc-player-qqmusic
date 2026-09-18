@@ -1112,6 +1112,13 @@ public final class AppSettings {
     @ObservationIgnored
     @AppStorage("qqMusicPrefetchDepth") var qqMusicPrefetchDepth: Int = 2
 
+    /// Whether the playback bar shows a favorite button for online tracks.
+    ///
+    /// Off by default is wrong here: the button is the only way to reach the
+    /// account's likes from the player, so it ships visible and can be hidden.
+    @ObservationIgnored
+    @AppStorage("qqMusicShowLikeButton") var qqMusicShowLikeButton: Bool = true
+
     /// Preferred download quality for QQ Music tracks.
     ///
     /// The upstream grants the best tier the account allows, so this is a
