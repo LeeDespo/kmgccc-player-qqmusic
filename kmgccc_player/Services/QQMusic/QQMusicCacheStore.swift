@@ -29,6 +29,10 @@ nonisolated enum QQMusicCacheCategory: String, Sendable {
     case recommendPlaylists
     /// Ranking structure; changes daily.
     case toplists
+    /// New-song radio; refreshed daily upstream.
+    case newSongs
+    /// Playlist search results, keyed by the query the user typed.
+    case playlistSearch
     /// A playlist's track list; changes occasionally.
     case playlistTracks
     /// Search results; short-lived because the user is iterating on queries.
@@ -39,6 +43,8 @@ nonisolated enum QQMusicCacheCategory: String, Sendable {
         case .search: return 5 * 60
         case .recommendFeed, .recommendPlaylists: return 30 * 60
         case .toplists: return 6 * 60 * 60
+        case .newSongs: return 6 * 60 * 60
+        case .playlistSearch: return 60 * 60
         case .playlistTracks: return 2 * 60 * 60
         }
     }

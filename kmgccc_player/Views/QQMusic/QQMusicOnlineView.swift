@@ -23,19 +23,24 @@ struct QQMusicOnlineView: View {
     @EnvironmentObject private var themeStore: ThemeStore
 
     @State private var searchText = ""
+    @State private var playlistSearchText = ""
     @State private var section: Section = .recommend
 
     private enum Section: String, CaseIterable, Identifiable {
         case recommend
+        case newSongs
         case playlists
+        case playlistSearch
         case toplists
 
         var id: String { rawValue }
 
         var title: String {
             switch self {
-            case .recommend: return "为你推荐"
+            case .recommend: return "猜你喜欢"
+            case .newSongs: return "新歌电台"
             case .playlists: return "歌单推荐"
+            case .playlistSearch: return "找歌单"
             case .toplists: return "排行榜"
             }
         }
@@ -111,7 +116,12 @@ struct QQMusicOnlineView: View {
                             get: { section },
                             set: { newValue in
                                 section = newValue
-                                Task { await coordinator.loadInitialContentIfNeeded() }
+                                Task {
+                                    await coordinator.loadInitialContentIfNeeded()
+                                    if newValue == .newSongs {
+                                        await coordinator.loadNewSongs(region: coordinator.newSongsRegion)
+                                    }
+                                }
                             }
                         ),
                         animation: .spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.08),
@@ -134,6 +144,12 @@ struct QQMusicOnlineView: View {
 
                     Spacer()
 
+                    if section == .newSongs {
+                        regionPicker
+                    }
+                    if section == .playlistSearch {
+                        playlistSearchField
+                    }
                     searchField
                 }
             }
@@ -141,6 +157,56 @@ struct QQMusicOnlineView: View {
         .padding(.horizontal, 20)
         .padding(.top, 14)
         .padding(.bottom, 10)
+    }
+
+    /// Region filter for the new-song radio.
+    private var regionPicker: some View {
+        Picker("", selection: Binding(
+            get: { coordinator.newSongsRegion },
+            set: { region in
+                Task { await coordinator.loadNewSongs(region: region) }
+            }
+        )) {
+            ForEach(QQMusicNewSongRegion.allCases, id: \.self) { region in
+                Text(region.displayName).tag(region)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .frame(width: 96)
+    }
+
+    /// Keyword field for finding playlists by mood or genre.
+    private var playlistSearchField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            TextField("按风格/场景找歌单", text: $playlistSearchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .onSubmit {
+                    Task { await coordinator.searchPlaylists(playlistSearchText) }
+                }
+            if !playlistSearchText.isEmpty {
+                Button {
+                    playlistSearchText = ""
+                    coordinator.clearPlaylistSearch()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(Color.primary.opacity(0.07))
+        )
+        .frame(width: 200)
     }
 
     private var searchField: some View {
@@ -259,8 +325,12 @@ struct QQMusicOnlineView: View {
             switch section {
             case .recommend:
                 trackList(coordinator.recommendFeed, loading: coordinator.isLoadingFeed, pageable: true)
+            case .newSongs:
+                trackList(coordinator.newSongs, loading: coordinator.isLoadingNewSongs)
             case .playlists:
                 playlistGrid
+            case .playlistSearch:
+                searchedPlaylistGrid
             case .toplists:
                 toplistList
             }
@@ -331,6 +401,37 @@ struct QQMusicOnlineView: View {
                         spacing: 14
                     ) {
                         ForEach(coordinator.recommendPlaylists) { playlist in
+                            QQMusicPlaylistCard(playlist: playlist) {
+                                Task { await coordinator.openPlaylist(id: playlist.id, title: playlist.title) }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                }
+            }
+        }
+    }
+
+    /// Playlists found by keyword. Empty state explains the interaction rather
+    /// than showing a bare "nothing here", since the user has to type.
+    private var searchedPlaylistGrid: some View {
+        Group {
+            if coordinator.searchedPlaylists.isEmpty {
+                if coordinator.isSearchingPlaylists {
+                    loadingState
+                } else {
+                    emptyState(coordinator.playlistSearchKeyword.isEmpty
+                               ? "输入风格或场景关键词，例如「爵士」「深夜」「运动」"
+                               : "没有找到相关歌单")
+                }
+            } else {
+                ScrollView {
+                    LazyVGrid(
+                        columns: [GridItem(.adaptive(minimum: 168), spacing: 14)],
+                        spacing: 14
+                    ) {
+                        ForEach(coordinator.searchedPlaylists) { playlist in
                             QQMusicPlaylistCard(playlist: playlist) {
                                 Task { await coordinator.openPlaylist(id: playlist.id, title: playlist.title) }
                             }

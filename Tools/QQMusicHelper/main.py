@@ -67,6 +67,8 @@ KNOWN_METHODS: tuple[str, ...] = (
     "fetch_recommend_playlists",
     "fetch_toplist_categories",
     "fetch_playlist_tracks",
+    "fetch_new_songs",
+    "search_playlists",
     "fetch_lyric",
     "resolve_song_url",
     "search_artist_artwork",
@@ -1195,9 +1197,20 @@ async def search_songs(params: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def fetch_recommend_feed(params: dict[str, Any]) -> list[dict[str, Any]]:
-    """Guess-you-like radio ("猜你喜欢"). Upstream yields ~5 tracks per call."""
+    """Guess-you-like radio ("猜你喜欢").
+
+    The upstream hands out only ~5 tracks per call, so several calls are needed
+    for a usable queue.
+
+    **These calls must stay serial.** Fetching the rounds concurrently was
+    measured to be ~2x faster but returned the *same* 5 tracks every time —
+    the upstream radio advances its state per call, so parallel calls all read
+    the same position. Serial rounds are what produce distinct tracks, which is
+    why the cost is paid here rather than parallelised away. Callers that want
+    a faster first paint should request a small `rounds` and page for more.
+    """
     _require_dependency()
-    rounds = max(1, min(_first_int(params, ("rounds",)) or 4, 6))
+    rounds = max(1, min(_first_int(params, ("rounds",)) or 2, 6))
     songs: list[dict[str, Any]] = []
     seen: set[str] = set()
     for _ in range(rounds):
@@ -1475,6 +1488,83 @@ def _qqmusic_library_version() -> str:
         return ""
 
 
+# New-song radio regions. Mirrors the upstream `type` parameter.
+NEW_SONG_REGIONS: dict[str, int] = {
+    "latest": 5,
+    "mainland": 1,
+    "europe_us": 2,
+    "japan": 3,
+    "korea": 4,
+    "hongkong_taiwan": 6,
+}
+
+
+async def fetch_new_songs(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """New-song radio ("推荐新歌"), filterable by region.
+
+    A far richer source than the guess-you-like radio: one call returns 65-99
+    tracks instead of 5, so it is the better choice when the user wants a long
+    queue rather than a handful of picks.
+    """
+    _require_dependency()
+    region = str(params.get("region") or "latest").strip().lower()
+    song_type = NEW_SONG_REGIONS.get(region)
+    if song_type is None:
+        raise ValueError(f"unknown region: {region}")
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.song._build_cgi(
+                "newsong.NewSongServer", "get_new_song_info", {"type": song_type}
+            )
+        )
+    )
+    return _tracks_payload(_items_from_search_result(plain, ("songlist", "songs", "list")))
+
+
+async def search_playlists(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Search playlists by keyword.
+
+    This is how category browsing works here: the upstream's playlist-square
+    category ids are not usable through the public channel (a `tag_id`-filtered
+    request is silently ignored and returns the unfiltered feed), but searching
+    playlists by a mood or genre word returns real playlists for it.
+    """
+    _require_dependency()
+    keyword = str(params.get("keyword") or "").strip()
+    if not keyword:
+        return []
+    limit = max(1, min(_first_int(params, ("limit",)) or 20, 50))
+    results = await _search_by_type(
+        keyword, SearchType.SONGLIST, ("songlist", "songlists", "list"), limit
+    )
+    payloads: list[dict[str, Any]] = []
+    for item in results:
+        diss_id = _first_int(item, ("dissid", "tid", "id"))
+        if not diss_id:
+            continue
+        payloads.append(
+            {
+                "source": SOURCE,
+                "id": diss_id,
+                "title": _strip_search_highlight(
+                    _first_text(item, ("dissname", "title", "name"))
+                ),
+                "coverURL": _sanitize_image_url(
+                    _first_text(item, ("picurl", "imgurl", "cover"))
+                ),
+                "creator": _first_text(item, ("nickname", "creator", "nick")),
+                "songCount": _first_int(item, ("songnum", "song_cnt", "songCount")),
+                "playCount": _first_int(item, ("listennum", "play_cnt", "playCount")),
+            }
+        )
+    return payloads
+
+
+def _strip_search_highlight(value: str) -> str:
+    """Search results wrap matched terms in <em>; drop the markup."""
+    return re.sub(r"</?em>", "", value or "").strip()
+
+
 async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     request_id = request.get("id")
     method = request.get("method")
@@ -1526,6 +1616,17 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     elif method == "fetch_playlist_tracks":
         tracks = await fetch_playlist_tracks(params)
         return _tracks_response(request_id, method, tracks, started_at)
+    elif method == "fetch_new_songs":
+        tracks = await fetch_new_songs(params)
+        return _tracks_response(request_id, method, tracks, started_at)
+    elif method == "search_playlists":
+        playlists = await search_playlists(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(
+            f"response id={request_id} method={method} "
+            f"playlists={len(playlists)} durationMs={duration_ms}"
+        )
+        return {"id": request_id, "ok": True, "playlists": playlists}
     elif method == "fetch_recommend_playlists":
         playlists = await fetch_recommend_playlists(params)
         duration_ms = int((time.monotonic() - started_at) * 1000)
@@ -1589,29 +1690,61 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     return {"id": request_id, "ok": True, "candidates": candidates}
 
 
+# Serializes writing to stdout. Requests are handled concurrently, so two
+# responses must never interleave within one line.
+_stdout_lock = asyncio.Lock()
+
+
+async def _write_response(payload: dict[str, Any]) -> None:
+    line = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    async with _stdout_lock:
+        print(line, flush=True)
+
+
+async def _serve_one(request: dict[str, Any]) -> None:
+    """Handle a single request and write its response."""
+    try:
+        if not isinstance(request, dict):
+            raise ValueError("request must be an object")
+        response = await handle_request(request)
+    except Exception as exc:
+        request_id = None
+        try:
+            request_id = request.get("id") if isinstance(request, dict) else None
+        except Exception:
+            request_id = None
+        _log(traceback.format_exc())
+        response = {"id": request_id, "ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    await _write_response(response)
+
+
 async def main() -> int:
     _log(f"startup {_dependency_diagnostics()}")
+    # Each request runs as its own task. Handling them inline made the helper a
+    # bottleneck: the app fires several independent calls at once (feed,
+    # playlists, rankings), and the upstream round-trip is the whole cost, so
+    # serializing them multiplied the wait. Measured with 3 concurrent searches:
+    # 4.42s inline vs ~1.9s when dispatched.
+    pending: set[asyncio.Task[None]] = set()
     while True:
         line = await asyncio.to_thread(sys.stdin.buffer.readline)
         if not line:
-            return 0
+            break
         try:
             request = json.loads(line.decode("utf-8"))
-            if not isinstance(request, dict):
-                raise ValueError("request must be an object")
-            response = await handle_request(request)
-            print(json.dumps(response, ensure_ascii=False, separators=(",", ":")), flush=True)
-        except Exception as exc:
-            request_id = None
-            try:
-                request_id = request.get("id") if isinstance(request, dict) else None
-            except Exception:
-                request_id = None
+        except Exception:
             _log(traceback.format_exc())
-            print(
-                _json_response(request_id, False, error=f"{type(exc).__name__}: {exc}"),
-                flush=True,
-            )
+            await _write_response({"id": None, "ok": False, "error": "invalid JSON request"})
+            continue
+
+        task = asyncio.create_task(_serve_one(request))
+        pending.add(task)
+        task.add_done_callback(pending.discard)
+
+    # stdin closed: let in-flight work finish rather than truncating responses.
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+    return 0
 
 
 if __name__ == "__main__":
