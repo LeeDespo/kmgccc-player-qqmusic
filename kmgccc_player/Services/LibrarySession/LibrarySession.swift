@@ -108,6 +108,23 @@ final class LibrarySession: LibrarySessionLifecycle {
         onlineCoordinator.importService = fileImportService
         onlineCoordinator.paths = context.paths
         onlineCoordinator.playerViewModel = playerViewModel
+        // Settings live on the main actor; the helper owns them locally so its
+        // breaker can be consulted without hopping actors on every request.
+        let settings = AppSettings.shared
+        let circuit = (
+            isEnabled: settings.qqMusicCircuitBreakerEnabled,
+            threshold: settings.qqMusicCircuitFailureThreshold,
+            window: TimeInterval(settings.qqMusicCircuitFailureWindowSeconds),
+            open: TimeInterval(settings.qqMusicCircuitOpenSeconds)
+        )
+        Task {
+            await QQMusicHelperProcess.shared.applyCircuitConfiguration(
+                isEnabled: circuit.isEnabled,
+                threshold: circuit.threshold,
+                failureWindow: circuit.window,
+                openDuration: circuit.open
+            )
+        }
         onlineCoordinator.libraryViewModel = libraryViewModel
         self.qqMusicOnlineCoordinator = onlineCoordinator
     }

@@ -72,6 +72,7 @@ struct QQMusicSettingsView: View {
 
     // Cache
     @State private var cacheSizeText = "计算中…"
+    @State private var circuitState: QQMusicCircuitState?
 
     private let helper = QQMusicHelperProcess.shared
 
@@ -499,6 +500,136 @@ struct QQMusicSettingsView: View {
             }
             .padding(SettingsStyleTokens.groupPadding)
             .background(sectionBackground)
+
+            circuitBreakerSection
+        }
+        .onChange(of: AppSettings.shared.qqMusicCircuitBreakerEnabled) { _, _ in
+            Task { await pushCircuitConfiguration() }
+        }
+        .onChange(of: AppSettings.shared.qqMusicCircuitFailureThreshold) { _, _ in
+            Task { await pushCircuitConfiguration() }
+        }
+        .onChange(of: AppSettings.shared.qqMusicCircuitFailureWindowSeconds) { _, _ in
+            Task { await pushCircuitConfiguration() }
+        }
+        .onChange(of: AppSettings.shared.qqMusicCircuitOpenSeconds) { _, _ in
+            Task { await pushCircuitConfiguration() }
+        }
+    }
+
+    /// Circuit breaker controls.
+    ///
+    /// The breaker exists so a failing upstream is not hammered; the defaults
+    /// suit a flaky network. These controls exist because the right trade-off
+    /// depends on the account and connection, and because waiting out an
+    /// automatic cooldown is pointless when the upstream is already reachable.
+    private var circuitBreakerSection: some View {
+        let settings = AppSettings.shared
+        return VStack(alignment: .leading, spacing: SettingsStyleTokens.groupSpacing) {
+            SettingsHeaderLabel(title: "熔断", systemImage: "bolt.horizontal.circle")
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 10) {
+                    Circle()
+                        .fill(circuitStateIsOpen ? Color.orange : Color.green)
+                        .frame(width: 8, height: 8)
+                    Text(circuitStateText)
+                        .settingsRowLabelStyle()
+                    Spacer()
+                    if circuitStateIsOpen {
+                        Button("立即恢复") { resetCircuitBreaker() }
+                    }
+                }
+
+                SettingsSwitchRow(
+                    title: "启用自动熔断",
+                    isOn: Binding(
+                        get: { settings.qqMusicCircuitBreakerEnabled },
+                        set: { settings.qqMusicCircuitBreakerEnabled = $0 }
+                    ),
+                    detail: "连续请求失败达到阈值时暂停一段时间，避免持续冲击上游。关闭后每个请求都会尝试。"
+                )
+
+                if settings.qqMusicCircuitBreakerEnabled {
+                    Divider().opacity(0.4)
+                    stepperRow(
+                        title: "失败次数阈值",
+                        value: settings.qqMusicCircuitFailureThreshold,
+                        range: 1...20,
+                        unit: "次",
+                        detail: "统计窗口内累计失败达到该次数即暂停。",
+                        set: { settings.qqMusicCircuitFailureThreshold = $0 }
+                    )
+                    Divider().opacity(0.4)
+                    stepperRow(
+                        title: "统计窗口",
+                        value: settings.qqMusicCircuitFailureWindowSeconds,
+                        range: 10...600,
+                        unit: "秒",
+                        step: 10,
+                        detail: "只统计这段时间内的失败，更早的失败会被忽略。",
+                        set: { settings.qqMusicCircuitFailureWindowSeconds = $0 }
+                    )
+                    Divider().opacity(0.4)
+                    stepperRow(
+                        title: "暂停时长",
+                        value: settings.qqMusicCircuitOpenSeconds,
+                        range: 10...1800,
+                        unit: "秒",
+                        step: 30,
+                        detail: "触发后暂停请求的时长。设为较小值配合登录使用效果更好。",
+                        set: { settings.qqMusicCircuitOpenSeconds = $0 }
+                    )
+                }
+            }
+            .padding(SettingsStyleTokens.groupPadding)
+            .background(sectionBackground)
+        }
+    }
+
+    private func stepperRow(
+        title: String,
+        value: Int,
+        range: ClosedRange<Int>,
+        unit: String,
+        step: Int = 1,
+        detail: String,
+        set: @escaping (Int) -> Void
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                Text(title)
+                    .settingsRowLabelStyle()
+                Spacer(minLength: 12)
+                Text("\(value) \(unit)")
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Stepper("", value: Binding(get: { value }, set: set), in: range, step: step)
+                    .labelsHidden()
+            }
+            Text(detail)
+                .settingsDescriptionStyle()
+        }
+    }
+
+    private var circuitStateIsOpen: Bool { circuitState?.isOpen == true }
+
+    private var circuitStateText: String {
+        switch circuitState {
+        case .disabled:
+            return "自动熔断已关闭"
+        case .open(let until, let reason):
+            let remaining = max(0, Int(until.timeIntervalSinceNow.rounded(.up)))
+            return "已暂停，剩余 \(remaining) 秒（\(reason)）"
+        default:
+            return "正常"
+        }
+    }
+
+    private func resetCircuitBreaker() {
+        Task {
+            await QQMusicHelperProcess.shared.resetCircuitBreaker()
+            await refreshCircuitState()
         }
     }
 
@@ -558,12 +689,33 @@ struct QQMusicSettingsView: View {
         isCheckingStatus = true
         defer { isCheckingStatus = false }
         helperInfo = try? await helper.helperInfo()
+        await pushCircuitConfiguration()
         do {
             loginStatus = try await helper.loginStatus()
         } catch {
             statusIsError = true
             statusText = "无法连接 Helper：\(error.localizedDescription)"
         }
+    }
+
+    private func refreshCircuitState() async {
+        circuitState = await helper.circuitState()
+    }
+
+    /// Push the current settings into the helper.
+    ///
+    /// The helper is an actor and cannot read `AppSettings` itself, so changes
+    /// made here must be forwarded explicitly — otherwise the controls would
+    /// appear to do nothing until the next app launch.
+    private func pushCircuitConfiguration() async {
+        let settings = AppSettings.shared
+        await helper.applyCircuitConfiguration(
+            isEnabled: settings.qqMusicCircuitBreakerEnabled,
+            threshold: settings.qqMusicCircuitFailureThreshold,
+            failureWindow: TimeInterval(settings.qqMusicCircuitFailureWindowSeconds),
+            openDuration: TimeInterval(settings.qqMusicCircuitOpenSeconds)
+        )
+        await refreshCircuitState()
     }
 
     private func refreshCacheSize() async {

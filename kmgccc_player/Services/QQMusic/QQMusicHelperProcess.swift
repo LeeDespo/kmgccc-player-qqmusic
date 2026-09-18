@@ -130,6 +130,9 @@ nonisolated struct QQMusicOnlineTrack: Codable, Equatable, Sendable, Identifiabl
     var sizeFlac: Int?
     var size128: Int?
     var singerMid: String?
+    /// Album release date, present when the source supplied it (artist "最新"
+    /// ordering attaches it).
+    var releaseDate: String?
 
     var id: String { songMid }
 
@@ -230,6 +233,46 @@ nonisolated struct QQMusicOnlineAlbum: Codable, Equatable, Sendable, Identifiabl
 
     /// `id` is a numeric album id, unique per album.
     var identity: String { albumMid ?? String(id) }
+}
+
+/// A radio station ("电台").
+nonisolated struct QQMusicRadioStation: Codable, Equatable, Sendable, Identifiable {
+    var id: Int
+    var title: String
+    var coverURL: String?
+    var listenerCount: Int?
+}
+
+/// A radio group (心情 / 主题 / 场景 …).
+nonisolated struct QQMusicRadioGroup: Codable, Equatable, Sendable, Identifiable {
+    var id: Int?
+    var name: String
+    var stations: [QQMusicRadioStation]
+
+    var identity: String { "\(id ?? -1)-\(name)" }
+}
+
+/// An artist in search results, with counts for display.
+nonisolated struct QQMusicOnlineArtist: Codable, Equatable, Sendable, Identifiable {
+    var singerMid: String
+    var name: String
+    var coverURL: String?
+    var songCount: Int?
+    var albumCount: Int?
+
+    var id: String { singerMid }
+}
+
+/// Circuit-breaker state, surfaced in QQ Music settings.
+nonisolated enum QQMusicCircuitState: Sendable, Equatable {
+    case closed
+    case open(until: Date, reason: String)
+    case disabled
+
+    var isOpen: Bool {
+        if case .open = self { return true }
+        return false
+    }
 }
 
 /// Result of a like/unlike request.
@@ -812,6 +855,8 @@ actor QQMusicHelperProcess {
         let albums: [QQMusicOnlineAlbum]?
         let likedSongs: QQMusicLikedSongs?
         let like: QQMusicLikeResult?
+        let radioGroups: [QQMusicRadioGroup]?
+        let artists: [QQMusicOnlineArtist]?
         let toplistGroups: [QQMusicToplistGroup]?
         let lyric: QQMusicLyricPayload?
         let stream: QQMusicStreamResolution?
@@ -883,6 +928,30 @@ actor QQMusicHelperProcess {
         let liked: Bool
     }
 
+    private struct RadioTracksParams: Encodable, Sendable {
+        let stationId: Int
+        let limit: Int
+        let firstPlay: Bool
+    }
+
+    private struct SearchArtistsParams: Encodable, Sendable {
+        let keyword: String
+        let limit: Int
+    }
+
+    private struct ArtistMidisParams: Encodable, Sendable {
+        let singerMid: String
+        let limit: Int
+        let page: Int
+    }
+
+    private struct ArtistSongsParams: Encodable, Sendable {
+        let singerMid: String
+        let limit: Int
+        let page: Int
+        let sort: String
+    }
+
     private struct LikedSongsParams: Encodable, Sendable {
         let page: Int
         let limit: Int
@@ -938,9 +1007,48 @@ actor QQMusicHelperProcess {
 
     private let requestTimeout: TimeInterval = 15
     private let idleTimeout: TimeInterval = 60
-    private let failureWindow: TimeInterval = 120
-    private let circuitOpenDuration: TimeInterval = 300
-    private let failureThreshold = 3
+
+    /// Circuit breaker tunables.
+    ///
+    /// `AppSettings` is main-actor isolated and this type is an actor, so the
+    /// values cannot be read directly here. They are pushed in from the main
+    /// actor whenever they change, and mirrored locally so the breaker can
+    /// consult them synchronously.
+    private struct CircuitConfiguration: Sendable {
+        var isEnabled = true
+        var threshold = 3
+        var failureWindow: TimeInterval = 120
+        var openDuration: TimeInterval = 300
+    }
+
+    private var circuitConfiguration = CircuitConfiguration()
+
+    /// Apply the user's breaker settings. Called from the main actor.
+    func applyCircuitConfiguration(
+        isEnabled: Bool,
+        threshold: Int,
+        failureWindow: TimeInterval,
+        openDuration: TimeInterval
+    ) {
+        circuitConfiguration = CircuitConfiguration(
+            isEnabled: isEnabled,
+            threshold: max(1, threshold),
+            failureWindow: failureWindow,
+            openDuration: openDuration
+        )
+        if !isEnabled {
+            // Re-enabling should start from a clean slate rather than resume a
+            // circuit that opened before the setting changed.
+            circuitOpenUntil = nil
+            recentFailureDates.removeAll()
+            circuitLastReason = ""
+        }
+    }
+
+    private var failureWindow: TimeInterval { circuitConfiguration.failureWindow }
+    private var circuitOpenDuration: TimeInterval { circuitConfiguration.openDuration }
+    private var failureThreshold: Int { max(1, circuitConfiguration.threshold) }
+    private var isCircuitBreakerEnabled: Bool { circuitConfiguration.isEnabled }
     private let recentLogLimit = 8_000
 
     private var process: Process?
@@ -1228,6 +1336,64 @@ actor QQMusicHelperProcess {
         return response.albums ?? []
     }
 
+    // MARK: - Radio
+
+    /// Grouped radio stations. Station ids come only from this response; nothing
+    /// hardcodes one, since the upstream's own ids are not contractual.
+    func fetchRadioStations() async throws -> [QQMusicRadioGroup] {
+        let response = try await send(method: "fetch_radio_stations", params: EmptyParams())
+        return response.radioGroups ?? []
+    }
+
+    func fetchRadioTracks(
+        stationID: Int,
+        limit: Int = 20,
+        firstPlay: Bool = true
+    ) async throws -> [QQMusicOnlineTrack] {
+        let response = try await send(
+            method: "fetch_radio_tracks",
+            params: RadioTracksParams(stationId: stationID, limit: limit, firstPlay: firstPlay)
+        )
+        return response.tracks ?? []
+    }
+
+    // MARK: - Artists
+
+    func searchArtists(keyword: String, limit: Int = 20) async throws -> [QQMusicOnlineArtist] {
+        let response = try await send(
+            method: "search_artists",
+            params: SearchArtistsParams(keyword: keyword, limit: limit)
+        )
+        return response.artists ?? []
+    }
+
+    /// `sort` is `hot` (upstream order) or `latest` (by album release date,
+    /// computed by the helper because the upstream ignores ordering params).
+    func fetchArtistSongs(
+        singerMid: String,
+        limit: Int = 50,
+        page: Int = 1,
+        sort: String = "hot"
+    ) async throws -> [QQMusicOnlineTrack] {
+        let response = try await send(
+            method: "fetch_artist_songs",
+            params: ArtistSongsParams(singerMid: singerMid, limit: limit, page: page, sort: sort)
+        )
+        return response.tracks ?? []
+    }
+
+    func fetchArtistAlbums(
+        singerMid: String,
+        limit: Int = 50,
+        page: Int = 1
+    ) async throws -> [QQMusicOnlineAlbum] {
+        let response = try await send(
+            method: "fetch_artist_albums",
+            params: ArtistMidisParams(singerMid: singerMid, limit: limit, page: page)
+        )
+        return response.albums ?? []
+    }
+
     /// Tracks of a favorited album, addressed by its numeric id.
     func fetchAlbumTracks(albumID: Int, limit: Int = 100) async throws -> [QQMusicOnlineTrack] {
         let response = try await send(
@@ -1346,6 +1512,26 @@ actor QQMusicHelperProcess {
 
     private struct ImportCookiesParams: Encodable, Sendable {
         let cookies: [String: String]
+    }
+
+    /// Current breaker state, for the settings page.
+    ///
+    /// `nil` means closed (requests allowed).
+    func circuitState() -> QQMusicCircuitState {
+        guard isCircuitBreakerEnabled else { return .disabled }
+        guard let until = circuitOpenUntil, Date() < until else { return .closed }
+        return .open(until: until, reason: circuitLastReason)
+    }
+
+    /// Close the breaker immediately and forget accumulated failures.
+    ///
+    /// Exposed because the automatic cooldown is a guess: if the user knows the
+    /// upstream is reachable again, waiting out the remainder is pointless.
+    func resetCircuitBreaker() {
+        circuitOpenUntil = nil
+        recentFailureDates.removeAll()
+        circuitLastReason = ""
+        Log.info("[QQMusicHelperProcess] circuit breaker reset by user", category: .import)
     }
 
     func terminate() {
@@ -1729,6 +1915,7 @@ actor QQMusicHelperProcess {
     }
 
     private func recordFailure(reason: String) {
+        guard isCircuitBreakerEnabled else { return }
         let now = Date()
         recentFailureDates = recentFailureDates.filter {
             now.timeIntervalSince($0) <= failureWindow
@@ -1749,6 +1936,16 @@ actor QQMusicHelperProcess {
     }
 
     private func checkCircuitBreaker() throws {
+        guard isCircuitBreakerEnabled else {
+            // Disabled: clear any state so re-enabling starts fresh rather than
+            // resuming a stale open circuit.
+            if circuitOpenUntil != nil {
+                circuitOpenUntil = nil
+                recentFailureDates.removeAll()
+                circuitLastReason = ""
+            }
+            return
+        }
         guard let until = circuitOpenUntil else { return }
         if Date() < until {
             Log.warning("[QQMusicHelperProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)

@@ -72,6 +72,11 @@ KNOWN_METHODS: tuple[str, ...] = (
     "fetch_album_tracks",
     "set_liked",
     "is_liked",
+    "fetch_radio_stations",
+    "fetch_radio_tracks",
+    "search_artists",
+    "fetch_artist_songs",
+    "fetch_artist_albums",
     "fetch_liked_songs",
     "fetch_liked_albums",
     "fetch_user_playlists",
@@ -1869,6 +1874,179 @@ async def is_liked(params: dict[str, Any]) -> dict[str, Any]:
     return {"songId": song_id, "liked": any(t.get("songId") == song_id for t in tracks)}
 
 
+# MARK: - Radio stations ("电台")
+#
+# Discovered by reading the radio page's own bundle rather than guessing method
+# names (`pf.radiosvr`, not `music.radioProxy`). The upstream site special-cases
+# id 99 to a different method, but `GetRadiosonglist` was measured to work for
+# every station tried (99/101/567/686/673/270/127/167), so no id is hardcoded
+# here — ids only ever come from `GetRadiolist`.
+
+
+async def fetch_radio_stations(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Grouped radio station list ("电台")."""
+    _require_dependency()
+    credential = load_credential()
+    uin = ""
+    if credential is not None:
+        uin = str(getattr(credential, "str_musicid", "") or getattr(credential, "musicid", "") or "0")
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.song._build_cgi(
+                "pf.radiosvr", "GetRadiolist", {"uin": uin or "0"}
+            )
+        )
+    )
+    groups = _items_from_search_result(plain, ("radio_list", "list"))
+    payload: list[dict[str, Any]] = []
+    for group in groups:
+        items = _items_from_search_result(group, ("list", "radios"))
+        stations = []
+        for item in items:
+            station_id = _first_int(item, ("id",))
+            if not station_id:
+                continue
+            stations.append(
+                {
+                    "source": SOURCE,
+                    "id": station_id,
+                    "title": _first_text(item, ("title", "name")),
+                    "coverURL": _sanitize_image_url(_first_text(item, ("pic_url", "picUrl"))),
+                    "listenerCount": _first_int(item, ("listenNum", "listen_num")),
+                }
+            )
+        if stations:
+            payload.append(
+                {
+                    "id": _first_int(group, ("id",)),
+                    "name": _first_text(group, ("title", "name")),
+                    "stations": stations,
+                }
+            )
+    return payload
+
+
+async def fetch_radio_tracks(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Tracks of a radio station.
+
+    `firstplay` restarts the station's rotation; subsequent calls continue it.
+    """
+    _require_dependency()
+    station_id = _first_int(params, ("stationId", "id"))
+    if not station_id:
+        raise ValueError("stationId is required")
+    num = max(1, min(_first_int(params, ("limit",)) or 20, 50))
+    first_play = 1 if params.get("firstPlay", True) else 0
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.song._build_cgi(
+                "pf.radiosvr",
+                "GetRadiosonglist",
+                {"id": station_id, "firstplay": first_play, "num": num},
+            )
+        )
+    )
+    data = _first_dict(plain, ("data",)) or plain
+    return _tracks_payload(_items_from_search_result(data, ("track_list", "songlist", "tracks")))
+
+
+async def search_artists(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Artist search with song/album counts, for the search page."""
+    _require_dependency()
+    keyword = str(params.get("keyword") or "").strip()
+    if not keyword:
+        return []
+    limit = max(1, min(_first_int(params, ("limit",)) or 20, 50))
+    results = await _search_by_type(
+        keyword, SearchType.SINGER, ("singer", "singers", "list"), limit
+    )
+    payload: list[dict[str, Any]] = []
+    for item in results:
+        mid = _first_text(item, ("mid", "singerMID", "singerMid"))
+        if not mid:
+            continue
+        payload.append(
+            {
+                "source": SOURCE,
+                "singerMid": mid,
+                "name": _strip_search_highlight(_first_text(item, ("name", "title", "singerName"))),
+                "coverURL": _sanitize_image_url(
+                    _first_text(item, ("pic", "singerPic", "image")) or _singer_cover_url(mid)
+                ),
+                "songCount": _first_int(item, ("song_num", "songNum", "musicSize")),
+                "albumCount": _first_int(item, ("album_num", "albumNum", "albumSize")),
+            }
+        )
+    return payload
+
+
+async def fetch_artist_songs(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Songs of an artist, by singer mid.
+
+    Supports `sort`: `hot` (upstream default ordering) or `latest` (by album
+    release date, newest first). The upstream ignores every ordering parameter
+    tried (`order` 0/1/2 all return the same list), so `latest` is computed
+    here from each track's album `time_public`, which the response does carry.
+    """
+    _require_dependency()
+    singer_mid = str(params.get("singerMid") or "").strip()
+    if not singer_mid:
+        raise ValueError("singerMid is required")
+    num = max(1, min(_first_int(params, ("limit",)) or 50, 100))
+    page = max(1, _first_int(params, ("page",)) or 1)
+    sort = str(params.get("sort") or "hot").strip().lower()
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.singer.get_songs_list(singer_mid, num=num, page=page)
+        )
+    )
+    items = _items_from_search_result(plain, ("song_list", "songList", "list"))
+    tracks = _tracks_payload(items)
+    if sort == "latest":
+        # Attach the release date so the ordering is explainable, then sort.
+        # Tracks without a date sink to the end rather than being dropped.
+        for track, item in zip(tracks, items):
+            album = _first_dict(item, ("album", "albumInfo"))
+            track["releaseDate"] = _first_text(album, ("time_public", "publishDate"))
+        tracks.sort(key=lambda t: t.get("releaseDate") or "", reverse=True)
+    return tracks
+
+
+async def fetch_artist_albums(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Albums of an artist, by singer mid."""
+    _require_dependency()
+    singer_mid = str(params.get("singerMid") or "").strip()
+    if not singer_mid:
+        raise ValueError("singerMid is required")
+    num = max(1, min(_first_int(params, ("limit",)) or 50, 100))
+    page = max(1, _first_int(params, ("page",)) or 1)
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.singer.get_album_list(singer_mid, num=num, page=page)
+        )
+    )
+    items = _items_from_search_result(plain, ("album_list", "albumList", "list"))
+    albums: list[dict[str, Any]] = []
+    for item in items:
+        album_mid = _album_mid(item)
+        album_id = _first_int(item, ("id", "albumId"))
+        if not album_mid and not album_id:
+            continue
+        albums.append(
+            {
+                "source": SOURCE,
+                "id": album_id or 0,
+                "title": _first_text(item, ("name", "title", "albumName")),
+                "albumMid": album_mid,
+                "coverURL": _sanitize_image_url(_album_cover_url(album_mid)),
+                "artist": _first_text(item, ("singer_name", "singerName")),
+                "releaseDate": _first_text(item, ("time_public", "publishDate")),
+            }
+        )
+    return albums
+
+
+
 async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     request_id = request.get("id")
     method = request.get("method")
@@ -1930,6 +2108,28 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     elif method == "is_liked":
         result = await is_liked(params)
         return {"id": request_id, "ok": True, "like": result}
+    elif method == "fetch_radio_stations":
+        groups = await fetch_radio_stations(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        total = sum(len(g.get("stations") or []) for g in groups)
+        _log(f"response id={request_id} method={method} groups={len(groups)} stations={total} durationMs={duration_ms}")
+        return {"id": request_id, "ok": True, "radioGroups": groups}
+    elif method == "fetch_radio_tracks":
+        tracks = await fetch_radio_tracks(params)
+        return _tracks_response(request_id, method, tracks, started_at)
+    elif method == "search_artists":
+        artists = await search_artists(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(f"response id={request_id} method={method} artists={len(artists)} durationMs={duration_ms}")
+        return {"id": request_id, "ok": True, "artists": artists}
+    elif method == "fetch_artist_songs":
+        tracks = await fetch_artist_songs(params)
+        return _tracks_response(request_id, method, tracks, started_at)
+    elif method == "fetch_artist_albums":
+        albums = await fetch_artist_albums(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(f"response id={request_id} method={method} albums={len(albums)} durationMs={duration_ms}")
+        return {"id": request_id, "ok": True, "albums": albums}
     elif method == "fetch_liked_songs":
         payload = await fetch_liked_songs(params)
         duration_ms = int((time.monotonic() - started_at) * 1000)
