@@ -31,6 +31,14 @@ final class QQMusicOnlineCoordinator {
     private(set) var toplistGroups: [QQMusicToplistGroup] = []
     private(set) var searchResults: [QQMusicOnlineTrack] = []
     private(set) var playlistTracks: [QQMusicOnlineTrack] = []
+    /// New-song radio for the selected region.
+    private(set) var newSongs: [QQMusicOnlineTrack] = []
+    private(set) var newSongsRegion: QQMusicNewSongRegion = .latest
+    /// Playlists found by keyword, for category/mood browsing.
+    private(set) var searchedPlaylists: [QQMusicOnlinePlaylist] = []
+    private(set) var playlistSearchKeyword = ""
+    private(set) var isLoadingNewSongs = false
+    private(set) var isSearchingPlaylists = false
     private(set) var loadedPlaylistTitle: String = ""
     private(set) var searchKeyword: String = ""
 
@@ -69,6 +77,11 @@ final class QQMusicOnlineCoordinator {
     /// session supplies paths, which also disables caching rather than failing.
     private(set) var cacheStore: QQMusicCacheStore?
 
+    /// One loader for the whole session, so cover fetches coalesce across rows
+    /// and stay within the concurrency cap instead of each row racing its own.
+    /// Built together with the cache store so it always has the right one.
+    private(set) var artworkLoader = QQMusicArtworkLoader(cache: nil)
+
     /// Library root, exposed so the QQ Music window can report and reveal cache.
     var libraryRootURL: URL? { paths?.rootURL }
 
@@ -79,6 +92,7 @@ final class QQMusicOnlineCoordinator {
             guard let paths, cacheStore == nil else { return }
             let store = QQMusicCacheStore(paths: paths)
             cacheStore = store
+            artworkLoader = QQMusicArtworkLoader(cache: store)
             let quality = AppSettings.shared.qqMusicPreferredQuality
             Task {
                 await downloader.attach(cacheStore: store)
@@ -215,6 +229,8 @@ final class QQMusicOnlineCoordinator {
         defer { isExtendingFeed = false }
 
         do {
+            // Two rounds per page keeps the wait short while still adding
+            // enough that scrolling feels productive.
             let fetched = try await helper.fetchRecommendFeed(rounds: 2)
             let fresh = fetched.filter { !seenFeedSongMids.contains($0.songMid) }
             guard !fresh.isEmpty else { return [] }
@@ -233,6 +249,73 @@ final class QQMusicOnlineCoordinator {
             Log.warning("[QQMusicOnline] feed paging failed: \(error)", category: .import)
             return []
         }
+    }
+
+    // MARK: - New songs & playlist search
+
+    /// Load the new-song radio for a region.
+    ///
+    /// One call returns 65-99 tracks, so this is the better source when a long
+    /// queue is wanted, unlike the guess-you-like radio which yields 5.
+    func loadNewSongs(region: QQMusicNewSongRegion, force: Bool = false) async {
+        if !force, newSongsRegion == region, !newSongs.isEmpty { return }
+        if let wait = backoffRemaining() {
+            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
+            return
+        }
+        isLoadingNewSongs = true
+        newSongsRegion = region
+        defer { isLoadingNewSongs = false }
+        do {
+            if let cached = await cachedTracks(.newSongs, key: region.rawValue, force: force) {
+                newSongs = cached
+                report(nil)
+                return
+            }
+            let fetched = try await helper.fetchNewSongs(region: region)
+            await storeTracks(fetched, category: .newSongs, key: region.rawValue)
+            newSongs = fetched
+            report(nil)
+        } catch {
+            report("新歌加载失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] new songs failed: \(error)", category: .import)
+        }
+    }
+
+    /// Search playlists by keyword — the category/mood browse path.
+    func searchPlaylists(_ keyword: String) async {
+        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        playlistSearchKeyword = trimmed
+        guard !trimmed.isEmpty else {
+            searchedPlaylists = []
+            return
+        }
+        if let wait = backoffRemaining() {
+            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
+            return
+        }
+        isSearchingPlaylists = true
+        defer { isSearchingPlaylists = false }
+        do {
+            if let cached = await cachedPlaylists(.playlistSearch, key: trimmed, force: false) {
+                searchedPlaylists = cached
+                report(nil)
+                return
+            }
+            let fetched = try await helper.searchPlaylists(keyword: trimmed, limit: 30)
+            await storePlaylists(fetched, category: .playlistSearch, key: trimmed)
+            searchedPlaylists = fetched
+            report(nil)
+        } catch {
+            // Keep what is displayed; a failed search is not an empty result.
+            report("歌单搜索失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] playlist search failed: \(error)", category: .import)
+        }
+    }
+
+    func clearPlaylistSearch() {
+        playlistSearchKeyword = ""
+        searchedPlaylists = []
     }
 
     // MARK: - Cache helpers

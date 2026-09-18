@@ -219,6 +219,27 @@ nonisolated struct QQMusicHelperInfo: Codable, Equatable, Sendable {
     func supports(_ method: String) -> Bool { methods.contains(method) }
 }
 
+/// Region filter for the new-song radio.
+nonisolated enum QQMusicNewSongRegion: String, Sendable, CaseIterable {
+    case latest
+    case mainland
+    case europeUS = "europe_us"
+    case japan
+    case korea
+    case hongkongTaiwan = "hongkong_taiwan"
+
+    var displayName: String {
+        switch self {
+        case .latest: return "最新"
+        case .mainland: return "内地"
+        case .europeUS: return "欧美"
+        case .japan: return "日本"
+        case .korea: return "韩国"
+        case .hongkongTaiwan: return "港台"
+        }
+    }
+}
+
 /// Which QR login flow to start.
 nonisolated enum QQMusicLoginType: String, Sendable, CaseIterable {
     case qq
@@ -825,6 +846,15 @@ actor QQMusicHelperProcess {
         let limit: Int
     }
 
+    private struct NewSongsParams: Encodable, Sendable {
+        let region: String
+    }
+
+    private struct SearchPlaylistsParams: Encodable, Sendable {
+        let keyword: String
+        let limit: Int
+    }
+
     private struct PlaylistTracksParams: Encodable, Sendable {
         let songlistId: Int?
         let topId: Int?
@@ -1036,9 +1066,14 @@ actor QQMusicHelperProcess {
         return response.tracks ?? []
     }
 
-    /// "猜你喜欢" radio. The upstream returns ~5 tracks per round, so the helper
-    /// loops to assemble a usable queue.
-    func fetchRecommendFeed(rounds: Int = 4) async throws -> [QQMusicOnlineTrack] {
+    /// "猜你喜欢" radio.
+    ///
+    /// The upstream returns ~5 tracks per round and rounds must be fetched
+    /// serially (parallel calls read the same upstream position and return
+    /// duplicates), so cost scales with `rounds` at roughly 2.5s each. The
+    /// default stays low for a fast first paint; the browse list pages for more
+    /// as the user scrolls.
+    func fetchRecommendFeed(rounds: Int = 2) async throws -> [QQMusicOnlineTrack] {
         let response = try await send(
             method: "fetch_recommend_feed",
             params: RecommendFeedParams(rounds: rounds)
@@ -1084,6 +1119,25 @@ actor QQMusicHelperProcess {
             )
         )
         return response.tracks ?? []
+    }
+
+    /// New-song radio ("推荐新歌"), filterable by region. One call returns far
+    /// more tracks than the guess-you-like radio, so it suits a long queue.
+    func fetchNewSongs(region: QQMusicNewSongRegion = .latest) async throws -> [QQMusicOnlineTrack] {
+        let response = try await send(
+            method: "fetch_new_songs",
+            params: NewSongsParams(region: region.rawValue)
+        )
+        return response.tracks ?? []
+    }
+
+    /// Search playlists by keyword — how category/mood browsing works here.
+    func searchPlaylists(keyword: String, limit: Int = 20) async throws -> [QQMusicOnlinePlaylist] {
+        let response = try await send(
+            method: "search_playlists",
+            params: SearchPlaylistsParams(keyword: keyword, limit: limit)
+        )
+        return response.playlists ?? []
     }
 
     func fetchLyric(
