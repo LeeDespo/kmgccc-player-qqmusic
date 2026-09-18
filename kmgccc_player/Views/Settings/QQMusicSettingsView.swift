@@ -379,9 +379,9 @@ struct QQMusicSettingsView: View {
 
                 Divider().opacity(0.4)
 
-                Text("“我的”页可查看账号的收藏与自建歌单（我喜欢 / 收藏专辑 / 我的歌单），**均为只读**。")
+                Text("“我的”页可查看账号的收藏与自建歌单（我喜欢 / 收藏专辑 / 我的歌单）。")
                     .settingsDescriptionStyle()
-                Text("QQ 音乐经网页通道拒绝了所有写入操作（点赞、增删歌单）：接口会返回成功形状但不真正生效，因此应用内不提供红心或编辑按钮，以免出现点了没反应的假交互。")
+                Text("收藏（喜欢）可在播放栏直接操作，上游需要几秒同步。歌单的新建、改名、增删目前无法在应用内完成。")
                     .settingsDescriptionStyle()
             }
             .padding(SettingsStyleTokens.groupPadding)
@@ -402,6 +402,8 @@ struct QQMusicSettingsView: View {
                 prefetchDepthRow
                 Divider().opacity(0.4)
                 qualityRow
+                Divider().opacity(0.4)
+                likeButtonRow
             }
             .padding(SettingsStyleTokens.groupPadding)
             .background(sectionBackground)
@@ -436,6 +438,20 @@ struct QQMusicSettingsView: View {
                  ? "不预取：只下载你实际播放的那一首，播放下一首时需要等待下载。"
                  : "播放当前歌曲时，后台提前下载接下来的 \(settings.qqMusicPrefetchDepth) 首，播完自动续上。")
                 .settingsDescriptionStyle()
+        }
+    }
+
+    private var likeButtonRow: some View {
+        let settings = AppSettings.shared
+        return VStack(alignment: .leading, spacing: 6) {
+            SettingsSwitchRow(
+                title: "在播放栏显示收藏按钮",
+                isOn: Binding(
+                    get: { settings.qqMusicShowLikeButton },
+                    set: { settings.qqMusicShowLikeButton = $0 }
+                ),
+                detail: "为从 QQ 音乐下载的歌曲显示心形按钮，可直接收藏到账号的「我喜欢」。本地歌曲没有对应的在线条目，不显示该按钮。"
+            )
         }
     }
 

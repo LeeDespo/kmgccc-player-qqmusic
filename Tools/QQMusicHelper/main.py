@@ -70,6 +70,8 @@ KNOWN_METHODS: tuple[str, ...] = (
     "fetch_new_songs",
     "search_playlists",
     "fetch_album_tracks",
+    "set_liked",
+    "is_liked",
     "fetch_liked_songs",
     "fetch_liked_albums",
     "fetch_user_playlists",
@@ -1571,11 +1573,15 @@ def _strip_search_highlight(value: str) -> str:
 
 # MARK: - User library (liked songs / albums / playlists)
 #
-# Read-only. Every write endpoint reachable over the web channel is either
-# silently ineffective or rejected: adding a track to "我喜欢" returns a
-# success-shaped payload while `songnum` stays unchanged, and the same call on
-# an owned playlist answers 80092. So these helpers only ever read, and the UI
-# deliberately offers no like/unlike affordance.
+# Reads plus like/unlike. Writing to "我喜欢" **does** work over the web
+# channel: `AddSonglist` / `DelSonglist` with `dirId:201` take effect within a
+# few seconds. The parameter that matters is `songType`, which must be **0** —
+# sending 1 returns a success-shaped payload that changes nothing, which is an
+# easy way to conclude the endpoint is dead when it is not. Verified 2026-09-18
+# in both directions (472 -> 473 -> 472).
+#
+# Unlike a track's own `type` field, which is 1 for ordinary songs, the write
+# payload wants 0. Do not "fix" this to match the track.
 
 # `dirid` of the "我喜欢" folder. It is a fixed virtual id, not a playlist id.
 LIKED_SONGS_DIRID = 201
@@ -1751,6 +1757,118 @@ async def fetch_user_playlists(params: dict[str, Any]) -> list[dict[str, Any]]:
     return playlists
 
 
+#: `songType` accepted by the playlist write endpoints. Must be 0 — see the
+#: note above; the track's own `type` field is unrelated.
+PLAYLIST_WRITE_SONG_TYPE = 0
+
+
+async def _song_id_for_mid(song_mid: str) -> int:
+    """Resolve a song mid to the numeric id the write endpoints require.
+
+    `set_liked` cannot take a mid — the upstream answers 1101 for one, verified
+    2026-09-18 — so the id is looked up first. Callers that already hold the
+    numeric id should pass it and skip this.
+    """
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.song._build_cgi(
+                "music.trackInfo.UniformRuleCtrl",
+                "CgiGetTrackInfo",
+                {"ctx": 0, "client": 1, "mids": [song_mid], "types": [0], "modify_stamp": [0]},
+            )
+        )
+    )
+    track = _first_dict(plain, ("track_info", "trackInfo"))
+    if not track:
+        items = _items_from_search_result(plain, ("tracks", "track_list", "list"))
+        track = items[0] if items else {}
+    return _first_int(track, ("id", "songId", "songid")) or 0
+
+
+async def _playlist_write(method: str, song_id: int, dirid: int) -> bool:
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.song._build_cgi(
+                "music.musicasset.PlaylistDetailWrite",
+                method,
+                {
+                    "dirId": dirid,
+                    "tid": 0,
+                    "bFmtUtf8": True,
+                    "v_songInfo": [
+                        {"songId": song_id, "songType": PLAYLIST_WRITE_SONG_TYPE}
+                    ],
+                },
+            )
+        )
+    )
+    # Response shape: {"msg": "", "result": {...}, "retCode": 0}. `retCode` is
+    # the success signal and sits at the top level, not inside `result`.
+    ret_code = _first_int(plain, ("retCode", "ret_code"))
+    if ret_code is not None:
+        return ret_code == 0
+    return _first_int(plain, ("code",)) == 0
+
+
+async def set_liked(params: dict[str, Any]) -> dict[str, Any]:
+    """Add or remove a track from "我喜欢".
+
+    Takes effect asynchronously upstream, so callers should treat the returned
+    `liked` as intent and re-read the list to confirm rather than assuming the
+    change is already visible.
+    """
+    _require_dependency()
+    song_id = _first_int(params, ("songId",))
+    if not song_id:
+        # Accept a mid too, so callers holding only the library's stored
+        # identifier do not have to resolve it themselves.
+        song_mid = str(params.get("songMid") or "").strip()
+        if not song_mid:
+            raise ValueError("songId or songMid is required")
+        song_id = await _song_id_for_mid(song_mid)
+        if not song_id:
+            raise ValueError(f"无法解析 {song_mid} 的数字 id")
+    liked = bool(params.get("liked", True))
+    method = "AddSonglist" if liked else "DelSonglist"
+    ok = await _playlist_write(method, song_id, LIKED_SONGS_DIRID)
+    return {"songId": song_id, "liked": liked, "ok": ok}
+
+
+async def is_liked(params: dict[str, Any]) -> dict[str, Any]:
+    """Whether a track is in "我喜欢", by scanning the folder.
+
+    There is no per-track membership endpoint on the web channel, so this reads
+    the folder and looks for the id. Callers should prefer checking against a
+    list they already hold.
+    """
+    _require_dependency()
+    song_id = _first_int(params, ("songId",))
+    song_mid = str(params.get("songMid") or "").strip()
+    if not song_id:
+        if not song_mid:
+            raise ValueError("songId or songMid is required")
+        song_id = await _song_id_for_mid(song_mid)
+    plain = _to_plain(
+        await _execute_client_request(
+            lambda client: client.song._build_cgi(
+                "music.srfDissInfo.DissInfo",
+                "CgiGetDiss",
+                {
+                    "disstid": 0,
+                    "dirid": LIKED_SONGS_DIRID,
+                    "tag": True,
+                    "song_begin": 0,
+                    "song_num": 100,
+                    "userinfo": True,
+                    "orderlist": True,
+                },
+            )
+        )
+    )
+    tracks = _tracks_payload(_items_from_search_result(plain, ("songlist", "songs")))
+    return {"songId": song_id, "liked": any(t.get("songId") == song_id for t in tracks)}
+
+
 async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     request_id = request.get("id")
     method = request.get("method")
@@ -1805,6 +1923,13 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     elif method == "fetch_new_songs":
         tracks = await fetch_new_songs(params)
         return _tracks_response(request_id, method, tracks, started_at)
+    elif method == "set_liked":
+        result = await set_liked(params)
+        _log(f"response id={request_id} method={method} liked={result.get('liked')} ok={result.get('ok')}")
+        return {"id": request_id, "ok": True, "like": result}
+    elif method == "is_liked":
+        result = await is_liked(params)
+        return {"id": request_id, "ok": True, "like": result}
     elif method == "fetch_liked_songs":
         payload = await fetch_liked_songs(params)
         duration_ms = int((time.monotonic() - started_at) * 1000)
