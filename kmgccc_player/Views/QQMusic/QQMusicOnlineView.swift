@@ -115,15 +115,21 @@ struct QQMusicOnlineView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 10) {
-                if !coordinator.loadedPlaylistTitle.isEmpty {
+                if drilledDownTitle != nil {
                     Button {
-                        coordinator.closePlaylist()
+                        closeDrillDown()
                     } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 13, weight: .semibold))
+                        HStack(spacing: 2) {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 13, weight: .semibold))
+                            Text("返回")
+                                .font(.system(size: 13))
+                        }
+                        .foregroundStyle(themeStore.accentColor)
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help("返回")
+                    .help("返回上一级")
                 }
 
                 Text(currentTitle)
@@ -159,7 +165,7 @@ struct QQMusicOnlineView: View {
                 }
             }
 
-            if coordinator.loadedPlaylistTitle.isEmpty {
+            if drilledDownTitle == nil {
                 // The selector takes the full available width: a fixed width
                 // clipped the segments once there were five of them (each has a
                 // minimum), which cut the first one off rather than shrinking.
@@ -517,18 +523,36 @@ struct QQMusicOnlineView: View {
 
     // MARK: - Content
 
+    /// Title of the drilled-down list, if we are inside one.
+    ///
+    /// Playback lists and radio stations are separate coordinator states, so
+    /// both are consulted here — otherwise entering a station would leave the
+    /// header showing the section name with no way back.
+    private var drilledDownTitle: String? {
+        if !coordinator.radioStationTitle.isEmpty { return coordinator.radioStationTitle }
+        if !coordinator.loadedPlaylistTitle.isEmpty { return coordinator.loadedPlaylistTitle }
+        return nil
+    }
+
     private var currentTitle: String {
-        if !coordinator.loadedPlaylistTitle.isEmpty {
-            return coordinator.loadedPlaylistTitle
-        }
+        if let drilledDownTitle { return drilledDownTitle }
         if !coordinator.searchKeyword.isEmpty {
             return "搜索：\(coordinator.searchKeyword)"
         }
         return section.title
     }
 
+    /// Leave whichever drill-down is active.
+    private func closeDrillDown() {
+        if !coordinator.radioStationTitle.isEmpty {
+            coordinator.closeRadioStation()
+        } else {
+            coordinator.closePlaylist()
+        }
+    }
+
     private var isShowingTrackList: Bool {
-        !coordinator.loadedPlaylistTitle.isEmpty
+        drilledDownTitle != nil
             || !coordinator.searchKeyword.isEmpty
             || section == .recommend
     }
@@ -542,7 +566,8 @@ struct QQMusicOnlineView: View {
     }
 
     private var currentTrackList: [QQMusicOnlineTrack] {
-        if !coordinator.loadedPlaylistTitle.isEmpty {
+        if drilledDownTitle != nil {
+            // Both playlist and station tracks live in `playlistTracks`.
             return coordinator.playlistTracks
         }
         if !coordinator.searchKeyword.isEmpty {
@@ -553,8 +578,13 @@ struct QQMusicOnlineView: View {
 
     @ViewBuilder
     private var content: some View {
-        if !coordinator.loadedPlaylistTitle.isEmpty {
-            trackList(coordinator.playlistTracks, loading: coordinator.isLoadingPlaylistTracks)
+        if drilledDownTitle != nil {
+            // Playlist or radio station: both publish into `playlistTracks`.
+            if coordinator.radioStationTitle.isEmpty {
+                trackList(coordinator.playlistTracks, loading: coordinator.isLoadingPlaylistTracks)
+            } else {
+                radioTrackList
+            }
         } else if !coordinator.searchKeyword.isEmpty {
             trackList(coordinator.searchResults, loading: coordinator.isSearching)
         } else {
@@ -1012,7 +1042,7 @@ private struct QQMusicPlaylistCard: View {
 
 // MARK: - Album card
 
-private struct QQMusicAlbumCard: View {
+struct QQMusicAlbumCard: View {
 
     let album: QQMusicOnlineAlbum
     let onOpen: () -> Void

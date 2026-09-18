@@ -2,12 +2,20 @@
 //  QQMusicArtistDetailView.swift
 //  kmgccc_player
 //
-//  Online artist page: songs and albums for an artist from QQ Music.
+//  Online artist page.
 //
-//  Deliberately its own view rather than a mode of the app's library artist
-//  page. The library page is built around `ArtistEntry` and local tracks; this
-//  one shows catalogue data with nothing local about it, and keeping them apart
-//  means changes here cannot disturb the library surface.
+//  Deliberately replicates the look of the app's library artist page — a large
+//  circular portrait, then title / subtitle / metadata, and a list beneath —
+//  so browsing an online artist feels like the same application. It is a
+//  separate view built from the same styling rather than a reuse of
+//  `PlaylistDetailView`: that page is driven by `LibrarySelection` and local
+//  `Track` values, and bending it to carry catalogue data would change the
+//  library surface. `PlaylistDetailView` and `LibraryDetailHeaderView` are
+//  untouched.
+//
+//  The app's artist page lists tracks only, so the album list here is an
+//  addition (a segmented switch). Albums have no notion of "hot"/"latest", so
+//  that second-level control appears only under songs.
 //
 
 import SwiftUI
@@ -21,9 +29,7 @@ struct QQMusicArtistDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.colorScheme) private var colorScheme
 
-    /// Top-level choice. Songs carry a further sort; albums do not — an album
-    /// has no notion of "hot" or "latest", so the sort control is hidden there
-    /// rather than shown disabled.
+    /// Top-level content switch.
     private enum Tab: String, CaseIterable, Identifiable {
         case songs
         case albums
@@ -32,6 +38,7 @@ struct QQMusicArtistDetailView: View {
         var title: String { self == .songs ? "歌曲" : "专辑" }
     }
 
+    /// Ordering for the song list.
     private enum SongSort: String, CaseIterable, Identifiable {
         case hot
         case latest
@@ -46,61 +53,110 @@ struct QQMusicArtistDetailView: View {
     @State private var albums: [QQMusicOnlineAlbum] = []
     @State private var isLoading = false
     @State private var errorText: String?
+    /// Album whose tracks are being shown in place of the artist's own list.
+    @State private var openedAlbumTitle: String?
+
+    /// Matches the library header's artwork side so the two pages read alike.
+    private static let artworkSide: CGFloat = 220
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider().opacity(0.3)
-            content
+            // Back is drawn inside the content, matching the app's own pages
+            // (no toolbar), so it looks identical wherever the user is.
+            navigationBar
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    header
+                    contentSwitch
+                    content
+                }
+                .padding(.horizontal, 28)
+                .padding(.bottom, 28)
+            }
         }
-        .frame(minWidth: 620, minHeight: 520)
+        .frame(minWidth: 720, minHeight: 600)
         .background(ThemedBaseBackgroundColorView())
-        .task { await load() }
+        .task { await loadSongs(force: true) }
+    }
+
+    // MARK: - Navigation
+
+    private var navigationBar: some View {
+        HStack(spacing: 6) {
+            Button {
+                if openedAlbumTitle != nil {
+                    // Step back to the artist's own list first.
+                    openedAlbumTitle = nil
+                    Task { await loadSongs(force: true) }
+                } else {
+                    dismiss()
+                }
+            } label: {
+                HStack(spacing: 2) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text("返回")
+                        .font(.system(size: 13))
+                }
+                .foregroundStyle(themeStore.accentColor)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("返回")
+
+            Spacer()
+
+            if isLoading { ProgressView().controlSize(.small) }
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
     }
 
     // MARK: - Header
 
+    /// Mirror of the library artist header: circular portrait on the left,
+    /// text column on the right.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 12) {
-                QQMusicArtworkView(urlString: artist.coverURL, size: 64, cornerRadius: 32)
+        HStack(alignment: .top, spacing: 22) {
+            QQMusicArtworkView(
+                urlString: artist.coverURL,
+                size: Self.artworkSide,
+                cornerRadius: Self.artworkSide / 2
+            )
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(artist.name)
-                        .font(.title2.weight(.semibold))
-                        .lineLimit(1)
-                    Text(countText)
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
+            VStack(alignment: .leading, spacing: 5) {
+                Text(artist.name)
+                    .font(.title.weight(.bold))
+                    .lineLimit(2)
 
-                Spacer()
+                Text(countText)
+                    .font(.callout)
+                    .foregroundStyle(themeStore.appForegroundPalette.secondaryColor)
 
-                if isLoading { ProgressView().controlSize(.small) }
-
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: GlassStyleTokens.headerStandardIconSize, weight: .semibold))
-                        .foregroundStyle(themeStore.accentColor.opacity(0.9))
-                        .frame(
-                            width: GlassStyleTokens.headerControlHeight,
-                            height: GlassStyleTokens.headerControlHeight
-                        )
-                        .contentShape(Circle())
-                        .liquidGlassCircle(
-                            colorScheme: colorScheme,
-                            accentColor: nil as Color?,
-                            isFloating: true
-                        )
-                }
-                .buttonStyle(.plain)
-                .help("关闭")
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.top, 6)
+        }
+        .frame(minHeight: Self.artworkSide, alignment: .top)
+    }
 
-            // Sort is only meaningful for songs, so it disappears on the album
-            // tab instead of sitting there disabled.
+    private var countText: String {
+        var parts: [String] = []
+        if let songs = artist.songCount { parts.append("\(songs) 首歌曲") }
+        if let albums = artist.albumCount { parts.append("\(albums) 张专辑") }
+        return parts.isEmpty ? "在线歌手" : parts.joined(separator: " · ")
+    }
+
+    // MARK: - Content switch
+
+    @ViewBuilder
+    private var contentSwitch: some View {
+        if let openedAlbumTitle {
+            Text(openedAlbumTitle)
+                .font(.headline)
+                .lineLimit(1)
+        } else {
             HStack(spacing: 8) {
                 Picker("", selection: $tab) {
                     ForEach(Tab.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -108,10 +164,14 @@ struct QQMusicArtistDetailView: View {
                 .labelsHidden()
                 .pickerStyle(.segmented)
                 .frame(width: 160)
-                .onChange(of: tab) { _, _ in
-                    Task { await loadIfNeeded() }
+                .onChange(of: tab) { _, newValue in
+                    Task {
+                        if newValue == .albums { await loadAlbums() }
+                    }
                 }
 
+                // An album has no notion of hot/latest, so this control is
+                // absent there rather than present but meaningless.
                 if tab == .songs {
                     Picker("", selection: $songSort) {
                         ForEach(SongSort.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -127,16 +187,6 @@ struct QQMusicArtistDetailView: View {
                 Spacer()
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 16)
-        .padding(.bottom, 10)
-    }
-
-    private var countText: String {
-        var parts: [String] = []
-        if let songs = artist.songCount { parts.append("\(songs) 首歌曲") }
-        if let albums = artist.albumCount { parts.append("\(albums) 张专辑") }
-        return parts.isEmpty ? "在线歌手" : parts.joined(separator: " · ")
     }
 
     // MARK: - Content
@@ -149,10 +199,11 @@ struct QQMusicArtistDetailView: View {
                     .font(.system(size: 22))
                     .foregroundStyle(.secondary)
                 Text(errorText).font(.callout).foregroundStyle(.secondary)
-                Button("重试") { Task { await loadIfNeeded(force: true) } }
+                Button("重试") { Task { await loadSongs(force: true) } }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if tab == .songs {
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 60)
+        } else if tab == .songs || openedAlbumTitle != nil {
             songList
         } else {
             albumGrid
@@ -164,16 +215,12 @@ struct QQMusicArtistDetailView: View {
             if songs.isEmpty {
                 if isLoading { loadingView } else { emptyView("暂无歌曲") }
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 2) {
-                        ForEach(Array(songs.enumerated()), id: \.element.id) { index, track in
-                            QQMusicOnlineTrackRow(track: track) {
-                                Task { await coordinator.startPlayback(songs, startingAt: index) }
-                            }
+                LazyVStack(spacing: 2) {
+                    ForEach(Array(songs.enumerated()), id: \.element.id) { index, track in
+                        QQMusicOnlineTrackRow(track: track) {
+                            Task { await coordinator.startPlayback(songs, startingAt: index) }
                         }
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
                 }
             }
         }
@@ -184,16 +231,12 @@ struct QQMusicArtistDetailView: View {
             if albums.isEmpty {
                 if isLoading { loadingView } else { emptyView("暂无专辑") }
             } else {
-                ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 14)], spacing: 14) {
-                        ForEach(albums) { album in
-                            QQMusicArtistAlbumCard(album: album) {
-                                Task { await openAlbum(album) }
-                            }
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 160), spacing: 16)], spacing: 16) {
+                    ForEach(albums) { album in
+                        QQMusicAlbumCard(album: album) {
+                            Task { await openAlbum(album) }
                         }
                     }
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 14)
                 }
             }
         }
@@ -204,28 +247,19 @@ struct QQMusicArtistDetailView: View {
             ProgressView()
             Text("加载中…").font(.callout).foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 60)
     }
 
     private func emptyView(_ text: String) -> some View {
         Text(text)
             .font(.callout)
             .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 60)
     }
 
     // MARK: - Loading
-
-    private func load() async {
-        await loadIfNeeded(force: true)
-    }
-
-    private func loadIfNeeded(force: Bool = false) async {
-        switch tab {
-        case .songs: await loadSongs(force: force)
-        case .albums: await loadAlbums(force: force)
-        }
-    }
 
     private func loadSongs(force: Bool) async {
         if !force, !songs.isEmpty { return }
@@ -233,22 +267,17 @@ struct QQMusicArtistDetailView: View {
         errorText = nil
         defer { isLoading = false }
         do {
-            // The upstream returns a single ordered list; "latest" is presented
-            // by reversing the release-ordered portion where available. When
-            // the upstream offers no time ordering this is a no-op rather than
-            // a wrong claim, hence the explicit note in the settings copy.
-            let fetched = try await coordinator.artistSongs(
+            songs = try await coordinator.artistSongs(
                 singerMid: artist.singerMid,
                 sort: songSort == .hot ? .hot : .latest
             )
-            songs = fetched
         } catch {
             errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 
-    private func loadAlbums(force: Bool) async {
-        if !force, !albums.isEmpty { return }
+    private func loadAlbums() async {
+        if !albums.isEmpty { return }
         isLoading = true
         errorText = nil
         defer { isLoading = false }
@@ -259,44 +288,16 @@ struct QQMusicArtistDetailView: View {
         }
     }
 
+    /// Show an album's tracks in place, keeping the artist header above them.
     private func openAlbum(_ album: QQMusicOnlineAlbum) async {
-        // Reuse the browse coordinator's album view by pushing its tracks into
-        // the shared playlist state is not appropriate here; instead open the
-        // album's tracks in place.
+        isLoading = true
+        errorText = nil
+        defer { isLoading = false }
         do {
-            let tracks = try await coordinator.albumTracks(albumID: album.id)
-            songs = tracks
-            tab = .songs
-            songSort = .hot
+            songs = try await coordinator.albumTracks(albumID: album.id)
+            openedAlbumTitle = album.title
         } catch {
             errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
-    }
-}
-
-// MARK: - Rows
-
-private struct QQMusicArtistAlbumCard: View {
-
-    let album: QQMusicOnlineAlbum
-    let onOpen: () -> Void
-
-    var body: some View {
-        Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: 6) {
-                QQMusicArtworkView(urlString: album.coverURL, size: 128, cornerRadius: 8)
-                    .frame(maxWidth: .infinity)
-                Text(album.title)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                if let date = album.releaseDate, !date.isEmpty {
-                    Text(date)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .buttonStyle(.plain)
     }
 }
