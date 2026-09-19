@@ -176,9 +176,25 @@ final class QQMusicOnlineCoordinator {
     // MARK: - Status
 
     private func report(_ message: String?, isError: Bool = false) {
-        statusMessage = message
-        statusIsError = isError
+        guard let message, isError else {
+            statusMessage = message
+            statusIsError = isError
+            return
+        }
+        // Two independent switches: users who find the throttling notices
+        // noisy can silence those without losing genuine failure reports, and
+        // the reverse.
+        let isCircuitNotice = Self.circuitNoticeMarkers.contains { message.contains($0) }
+        let allowed = isCircuitNotice
+            ? AppSettings.shared.qqMusicShowCircuitNotices
+            : AppSettings.shared.qqMusicShowGeneralNotices
+        statusMessage = allowed ? message : nil
+        statusIsError = allowed && isError
     }
+
+    /// Substrings that identify a throttling/breaker message rather than a
+    /// content failure. Matched case-insensitively.
+    private static let circuitNoticeMarkers = ["熔断", "暂停", "过于频繁", "风控", "circuit"]
 
     /// Whether an upstream failure looks like rate limiting, so we back off
     /// instead of retrying immediately.
@@ -373,25 +389,40 @@ final class QQMusicOnlineCoordinator {
     var hasMoreLikedSongs: Bool { likedSongs.count < likedSongsTotal }
 
     /// Load the first page of "我喜欢".
+    /// Load "我喜欢".
+    ///
+    /// Cache-first by design: the account's favourites change rarely and only
+    /// slightly, so a cached page is shown immediately and the network result
+    /// is applied only if it actually differs. That keeps the page instant on
+    /// every visit instead of re-fetching hundreds of tracks each time.
     func loadLikedSongs(force: Bool = false) async {
         guard !isLoadingLikedSongs else { return }
         if !force, !likedSongs.isEmpty { return }
+
+        // Serve what we have first.
+        var servedFromCache = false
+        if let cached = await cachedLikedSongs(page: 1) {
+            likedSongs = cached.tracks
+            likedSongsTotal = cached.total
+            likedSongsPage = 1
+            userLibraryNeedsLogin = false
+            servedFromCache = true
+            report(nil)
+        }
+
         isLoadingLikedSongs = true
         defer { isLoadingLikedSongs = false }
         do {
-            if !force, let cached = await cachedLikedSongs(page: 1) {
-                likedSongs = cached.tracks
-                likedSongsTotal = cached.total
-                likedSongsPage = 1
-                userLibraryNeedsLogin = false
-                report(nil)
-                return
-            }
+            // Always revalidate, cache hit or not, so the page cannot drift.
             let page = try await helper.fetchLikedSongs(page: 1, limit: 100)
+            let changed = page.total != likedSongsTotal
+                || page.tracks.map(\.songMid) != likedSongs.map(\.songMid)
             await cacheLikedSongs(page, page: 1)
-            likedSongs = page.tracks
-            likedSongsTotal = page.total
-            likedSongsPage = 1
+            if changed || !servedFromCache {
+                likedSongs = page.tracks
+                likedSongsTotal = page.total
+                likedSongsPage = 1
+            }
             userLibraryNeedsLogin = false
             report(nil)
         } catch {
@@ -453,17 +484,24 @@ final class QQMusicOnlineCoordinator {
     func loadLikedAlbums(force: Bool = false) async {
         guard !isLoadingLikedAlbums else { return }
         if !force, !likedAlbums.isEmpty { return }
+        var servedFromCache = false
+        if let cached = await cachedAlbums(force: false) {
+            likedAlbums = cached
+            servedFromCache = true
+            report(nil)
+        }
+
         isLoadingLikedAlbums = true
         defer { isLoadingLikedAlbums = false }
         do {
-            if !force, let cached = await cachedAlbums(force: force) {
-                likedAlbums = cached
-                report(nil)
-                return
-            }
             let albums = try await helper.fetchLikedAlbums()
             await cacheAlbums(albums)
-            likedAlbums = albums
+            // Only replace what is on screen when the list actually differs —
+            // the albums set changes rarely, and swapping it needlessly makes
+            // covers flicker.
+            if !servedFromCache || albums.map(\.identity) != likedAlbums.map(\.identity) {
+                likedAlbums = albums
+            }
             userLibraryNeedsLogin = false
             report(nil)
         } catch {
@@ -496,17 +534,25 @@ final class QQMusicOnlineCoordinator {
     func loadUserPlaylists(force: Bool = false) async {
         guard !isLoadingUserPlaylists else { return }
         if !force, !userPlaylists.isEmpty { return }
+        var servedFromCache = false
+        if let cached = await cachedUserPlaylists(force: false) {
+            userPlaylists = cached
+            servedFromCache = true
+            report(nil)
+        }
+
         isLoadingUserPlaylists = true
         defer { isLoadingUserPlaylists = false }
         do {
-            if !force, let cached = await cachedUserPlaylists(force: force) {
-                userPlaylists = cached
-                report(nil)
-                return
-            }
             let playlists = try await helper.fetchUserPlaylists()
             await cacheUserPlaylists(playlists)
-            userPlaylists = playlists
+            // Compare by id and track count: a playlist gaining a track should
+            // refresh, but an unchanged list should not be re-rendered.
+            let changed = playlists.map { "\($0.id):\($0.songCount ?? -1)" }
+                != userPlaylists.map { "\($0.id):\($0.songCount ?? -1)" }
+            if !servedFromCache || changed {
+                userPlaylists = playlists
+            }
             userLibraryNeedsLogin = false
             report(nil)
         } catch {
@@ -680,8 +726,24 @@ final class QQMusicOnlineCoordinator {
         case latest
     }
 
-    func artistSongs(singerMid: String, sort: ArtistSongSort) async throws -> [QQMusicOnlineTrack] {
-        try await helper.fetchArtistSongs(singerMid: singerMid, limit: 100, page: 1, sort: sort.rawValue)
+    func artistSongs(
+        singerMid: String,
+        sort: ArtistSongSort,
+        page: Int = 1
+    ) async throws -> [QQMusicOnlineTrack] {
+        try await helper.fetchArtistSongs(
+            singerMid: singerMid,
+            limit: 50,
+            page: page,
+            sort: sort.rawValue
+        )
+    }
+
+    /// Artist biography, or nil when upstream has none.
+    func artistBiography(singerMid: String) async -> String? {
+        let detail = try? await helper.fetchArtistDetail(singerMid: singerMid)
+        let text = detail?.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (text?.isEmpty == false) ? text : nil
     }
 
     func artistAlbums(singerMid: String) async throws -> [QQMusicOnlineAlbum] {

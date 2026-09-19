@@ -75,6 +75,7 @@ KNOWN_METHODS: tuple[str, ...] = (
     "fetch_radio_stations",
     "fetch_radio_tracks",
     "search_artists",
+    "fetch_artist_detail",
     "fetch_artist_songs",
     "fetch_artist_albums",
     "fetch_liked_songs",
@@ -1980,6 +1981,45 @@ async def search_artists(params: dict[str, Any]) -> list[dict[str, Any]]:
     return payload
 
 
+async def fetch_artist_biography(params: dict[str, Any]) -> dict[str, Any]:
+    """Artist biography and basic facts, by singer mid.
+
+    Distinct from `fetch_artist_detail`, which serves library metadata
+    enrichment; naming it the same silently shadowed that method.
+    """
+    _require_dependency()
+    singer_mid = str(params.get("singerMid") or "").strip()
+    if not singer_mid:
+        raise ValueError("singerMid is required")
+
+    description = ""
+    foreign_name = ""
+    genre_tags: list[str] = []
+    region = ""
+    try:
+        plain = _to_plain(
+            await _execute_client_request(lambda client: client.singer.get_desc([singer_mid]))
+        )
+        item = (_items_from_search_result(plain, ("singer_list", "singerList", "list")) or [{}])[0]
+        ex = _first_dict(item, ("ex_info", "exInfo"))
+        description = _first_text(ex, ("desc", "description"))
+        foreign_name = _first_text(ex, ("foreign_name", "foreignName", "other_name"))
+        region = _first_text(ex, ("area", "country", "region"))
+        genre_tags = _split_tags(_first_text(ex, ("genre", "tag")))
+    except Exception as exc:
+        # A missing biography is not a failure of the page.
+        _log(f"artist desc failed singerMid={singer_mid} reason={type(exc).__name__}: {exc}")
+
+    return {
+        "source": SOURCE,
+        "singerMid": singer_mid,
+        "description": description,
+        "foreignName": foreign_name,
+        "region": region,
+        "genreTags": genre_tags,
+    }
+
+
 async def fetch_artist_songs(params: dict[str, Any]) -> list[dict[str, Any]]:
     """Songs of an artist, by singer mid.
 
@@ -2122,6 +2162,14 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
         duration_ms = int((time.monotonic() - started_at) * 1000)
         _log(f"response id={request_id} method={method} artists={len(artists)} durationMs={duration_ms}")
         return {"id": request_id, "ok": True, "artists": artists}
+    elif method == "fetch_artist_biography":
+        detail = await fetch_artist_biography(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(
+            f"response id={request_id} method={method} "
+            f"descLen={len(detail.get('description') or '')} durationMs={duration_ms}"
+        )
+        return {"id": request_id, "ok": True, "artistDetail": detail}
     elif method == "fetch_artist_songs":
         tracks = await fetch_artist_songs(params)
         return _tracks_response(request_id, method, tracks, started_at)

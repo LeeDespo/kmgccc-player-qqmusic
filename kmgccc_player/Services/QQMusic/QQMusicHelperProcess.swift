@@ -252,6 +252,15 @@ nonisolated struct QQMusicRadioGroup: Codable, Equatable, Sendable, Identifiable
     var identity: String { "\(id ?? -1)-\(name)" }
 }
 
+/// Artist biography and basic facts.
+nonisolated struct QQMusicArtistDetail: Codable, Equatable, Sendable {
+    var singerMid: String
+    var description: String?
+    var foreignName: String?
+    var region: String?
+    var genreTags: [String]?
+}
+
 /// An artist in search results, with counts for display.
 nonisolated struct QQMusicOnlineArtist: Codable, Equatable, Sendable, Identifiable {
     var singerMid: String
@@ -857,6 +866,7 @@ actor QQMusicHelperProcess {
         let like: QQMusicLikeResult?
         let radioGroups: [QQMusicRadioGroup]?
         let artists: [QQMusicOnlineArtist]?
+        let artistDetail: QQMusicArtistDetail?
         let toplistGroups: [QQMusicToplistGroup]?
         let lyric: QQMusicLyricPayload?
         let stream: QQMusicStreamResolution?
@@ -1006,7 +1016,24 @@ actor QQMusicHelperProcess {
     }
 
     private let requestTimeout: TimeInterval = 15
-    private let idleTimeout: TimeInterval = 60
+
+    /// How long the helper process is kept alive while idle.
+    ///
+    /// Tunable here rather than in the helper so the helper binary stays
+    /// swappable for a newer QQMusicAPI build. The value is pushed in from the
+    /// main actor (`AppSettings` is main-actor isolated and this is an actor).
+    /// Sending one request restarts the countdown, and the process is
+    /// relaunched transparently on the next call, so this trades memory for
+    /// avoiding a cold start.
+    private var idleTimeoutSeconds: TimeInterval = 300
+
+    private var idleTimeout: TimeInterval { max(10, idleTimeoutSeconds) }
+
+    /// Apply the idle-keepalive window. Called from the main actor.
+    func applyIdleTimeout(_ seconds: TimeInterval) {
+        idleTimeoutSeconds = max(10, seconds)
+        scheduleIdleShutdown()
+    }
 
     /// Circuit breaker tunables.
     ///
@@ -1160,6 +1187,33 @@ actor QQMusicHelperProcess {
     /// circuit-breaker, launch, dispatch and error-handling steps for their own
     /// payload type. Online catalog calls return several different shapes, so
     /// they share this one transport and pick their payload out of the envelope.
+    /// Send one request, retrying once after a transient failure.
+    ///
+    /// A cold start or a process that exited between requests shows up as a
+    /// launch/termination error rather than an upstream problem; retrying once
+    /// absorbs that instead of surfacing it as a failed page load. Cancellation
+    /// is never retried — the caller asked to stop.
+    private func sendRetrying<Params: Encodable & Sendable>(
+        method: String,
+        params: Params
+    ) async throws -> QQMusicHelperResponse {
+        do {
+            return try await send(method: method, params: params)
+        } catch let error as QQMusicHelperError {
+            switch error {
+            case .cancelled, .circuitOpen, .requestFailed:
+                throw error
+            case .helperUnavailable, .processTerminated, .requestTimedOut,
+                 .requestWriteFailed, .invalidResponse:
+                Log.info(
+                    "[QQMusicHelperProcess] retrying after \(error) method=\(method)",
+                    category: .import
+                )
+                return try await send(method: method, params: params)
+            }
+        }
+    }
+
     private func send<Params: Encodable & Sendable>(
         method: String,
         params: Params
@@ -1218,7 +1272,7 @@ actor QQMusicHelperProcess {
     }
 
     func searchSongs(keyword: String, limit: Int = 20, page: Int = 1) async throws -> [QQMusicOnlineTrack] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "search_songs",
             params: SearchSongsParams(keyword: keyword, limit: limit, page: page)
         )
@@ -1233,7 +1287,7 @@ actor QQMusicHelperProcess {
     /// default stays low for a fast first paint; the browse list pages for more
     /// as the user scrolls.
     func fetchRecommendFeed(rounds: Int = 2) async throws -> [QQMusicOnlineTrack] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "fetch_recommend_feed",
             params: RecommendFeedParams(rounds: rounds)
         )
@@ -1246,7 +1300,7 @@ actor QQMusicHelperProcess {
     }
 
     func fetchRecommendPlaylists(page: Int = 1, limit: Int = 20) async throws -> [QQMusicOnlinePlaylist] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "fetch_recommend_playlists",
             params: RecommendPlaylistsParams(page: page, limit: limit)
         )
@@ -1254,7 +1308,7 @@ actor QQMusicHelperProcess {
     }
 
     func fetchToplistCategories() async throws -> [QQMusicToplistGroup] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "fetch_toplist_categories",
             params: EmptyParams()
         )
@@ -1268,7 +1322,7 @@ actor QQMusicHelperProcess {
         limit: Int = 50,
         page: Int = 1
     ) async throws -> [QQMusicOnlineTrack] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "fetch_playlist_tracks",
             params: PlaylistTracksParams(
                 songlistId: songlistId,
@@ -1283,7 +1337,7 @@ actor QQMusicHelperProcess {
     /// New-song radio ("推荐新歌"), filterable by region. One call returns far
     /// more tracks than the guess-you-like radio, so it suits a long queue.
     func fetchNewSongs(region: QQMusicNewSongRegion = .latest) async throws -> [QQMusicOnlineTrack] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "fetch_new_songs",
             params: NewSongsParams(region: region.rawValue)
         )
@@ -1292,7 +1346,7 @@ actor QQMusicHelperProcess {
 
     /// Search playlists by keyword — how category/mood browsing works here.
     func searchPlaylists(keyword: String, limit: Int = 20) async throws -> [QQMusicOnlinePlaylist] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "search_playlists",
             params: SearchPlaylistsParams(keyword: keyword, limit: limit)
         )
@@ -1308,7 +1362,7 @@ actor QQMusicHelperProcess {
     /// Takes a song mid rather than the numeric id: the library only stores the
     /// mid, and the helper resolves the id the write endpoint actually wants.
     func setLiked(songMid: String, liked: Bool) async throws -> QQMusicLikeResult {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "set_liked",
             params: SetLikedParams(songMid: songMid, liked: liked)
         )
@@ -1320,7 +1374,7 @@ actor QQMusicHelperProcess {
 
     /// Tracks in "我喜欢", paginated.
     func fetchLikedSongs(page: Int = 1, limit: Int = 50) async throws -> QQMusicLikedSongs {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "fetch_liked_songs",
             params: LikedSongsParams(page: page, limit: limit)
         )
@@ -1329,7 +1383,7 @@ actor QQMusicHelperProcess {
 
     /// Favorited albums, already resolved to names and covers.
     func fetchLikedAlbums(limit: Int = 30) async throws -> [QQMusicOnlineAlbum] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "fetch_liked_albums",
             params: LikedAlbumsParams(limit: limit)
         )
@@ -1350,7 +1404,7 @@ actor QQMusicHelperProcess {
         limit: Int = 20,
         firstPlay: Bool = true
     ) async throws -> [QQMusicOnlineTrack] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "fetch_radio_tracks",
             params: RadioTracksParams(stationId: stationID, limit: limit, firstPlay: firstPlay)
         )
@@ -1359,8 +1413,17 @@ actor QQMusicHelperProcess {
 
     // MARK: - Artists
 
+    /// Artist biography. A missing biography is not an error.
+    func fetchArtistDetail(singerMid: String) async throws -> QQMusicArtistDetail? {
+        let response = try await sendRetrying(
+            method: "fetch_artist_biography",
+            params: ArtistDetailParams(name: nil, singerMid: singerMid)
+        )
+        return response.artistDetail
+    }
+
     func searchArtists(keyword: String, limit: Int = 20) async throws -> [QQMusicOnlineArtist] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "search_artists",
             params: SearchArtistsParams(keyword: keyword, limit: limit)
         )
@@ -1375,7 +1438,7 @@ actor QQMusicHelperProcess {
         page: Int = 1,
         sort: String = "hot"
     ) async throws -> [QQMusicOnlineTrack] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "fetch_artist_songs",
             params: ArtistSongsParams(singerMid: singerMid, limit: limit, page: page, sort: sort)
         )
@@ -1387,7 +1450,7 @@ actor QQMusicHelperProcess {
         limit: Int = 50,
         page: Int = 1
     ) async throws -> [QQMusicOnlineAlbum] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "fetch_artist_albums",
             params: ArtistMidisParams(singerMid: singerMid, limit: limit, page: page)
         )
@@ -1396,7 +1459,7 @@ actor QQMusicHelperProcess {
 
     /// Tracks of a favorited album, addressed by its numeric id.
     func fetchAlbumTracks(albumID: Int, limit: Int = 100) async throws -> [QQMusicOnlineTrack] {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "fetch_album_tracks",
             params: AlbumTracksParams(albumId: albumID, limit: limit)
         )
@@ -1414,7 +1477,7 @@ actor QQMusicHelperProcess {
         songId: Int? = nil,
         translation: Bool = true
     ) async throws -> QQMusicLyricPayload {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "fetch_lyric",
             params: LyricParams(songMid: songMid, songId: songId, translation: translation)
         )
@@ -1429,7 +1492,7 @@ actor QQMusicHelperProcess {
         mediaMid: String? = nil,
         quality: String? = nil
     ) async throws -> QQMusicStreamResolution {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "resolve_song_url",
             params: ResolveSongURLParams(
                 songMid: songMid,
@@ -1464,7 +1527,7 @@ actor QQMusicHelperProcess {
 
     /// Create a login QR code for the given flow.
     func startLogin(type: QQMusicLoginType) async throws -> QQMusicLoginQRCode {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "start_login",
             params: StartLoginParams(loginType: type.rawValue)
         )
@@ -1476,7 +1539,7 @@ actor QQMusicHelperProcess {
 
     /// Poll a login QR code once. Returns `loggedIn == true` once accepted.
     func pollLogin(_ qr: QQMusicLoginQRCode) async throws -> QQMusicLoginStatus {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "poll_login",
             params: PollLoginParams(
                 identifier: qr.identifier,
@@ -1500,7 +1563,7 @@ actor QQMusicHelperProcess {
     /// pair the login page sets, so this is equivalent to completing the QR
     /// flow — including the playback ticket VIP url resolution needs.
     func importCookies(_ cookies: [String: String]) async throws -> QQMusicLoginStatus {
-        let response = try await send(
+        let response = try await sendRetrying(
             method: "import_cookies",
             params: ImportCookiesParams(cookies: cookies)
         )

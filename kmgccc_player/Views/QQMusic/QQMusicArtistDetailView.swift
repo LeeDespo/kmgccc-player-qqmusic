@@ -51,7 +51,11 @@ struct QQMusicArtistDetailView: View {
     @State private var songs: [QQMusicOnlineTrack] = []
     @State private var albums: [QQMusicOnlineAlbum] = []
     @State private var isLoading = false
+    @State private var isLoadingMore = false
+    @State private var songPage = 1
+    @State private var hasMoreSongs = true
     @State private var errorText: String?
+    @State private var biography: String?
     /// Set when a favourited/artist album has been opened in this page.
     @State private var openedAlbum: QQMusicOnlineAlbum?
     @State private var albumSongs: [QQMusicOnlineTrack] = []
@@ -71,12 +75,16 @@ struct QQMusicArtistDetailView: View {
                         .padding(.top, 16)
                     content
                         .padding(.top, 10)
+                        .transition(.opacity)
+                        .animation(.easeInOut(duration: 0.18), value: tab)
+                        .animation(.easeInOut(duration: 0.18), value: songSort)
+                        .animation(.easeInOut(duration: 0.18), value: openedAlbum?.id)
                 }
                 .padding(.bottom, 28)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .task { await loadSongs(force: true) }
+        .onAppear { Task { await loadSongs(force: true) } }
     }
 
     // MARK: - Navigation
@@ -161,6 +169,16 @@ struct QQMusicArtistDetailView: View {
                 metadataView
 
                 Spacer().frame(height: 2)
+
+                // Biography, as the library artist page shows one. Omitted
+                // entirely (rather than a placeholder) when upstream has none.
+                if let biography, !biography.isEmpty, !isShowingAlbum {
+                    Text(biography)
+                        .font(.callout)
+                        .foregroundStyle(themeStore.appForegroundPalette.secondaryColor)
+                        .lineLimit(4)
+                        .padding(.top, 4)
+                }
             }
             .frame(
                 maxWidth: .infinity,
@@ -247,7 +265,8 @@ struct QQMusicArtistDetailView: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .disabled(currentTracks.isEmpty)
+        .disabled(!canPlayFromHeader)
+        .opacity(canPlayFromHeader ? 1 : 0)
         .background(Capsule().fill(themeStore.accentColor))
         .background(Capsule().fill(Color.black.opacity(colorScheme == .dark ? 0.22 : 0.08)))
         .glassEffect(.clear, in: Capsule())
@@ -256,9 +275,18 @@ struct QQMusicArtistDetailView: View {
         .help("播放全部")
     }
 
-    /// What "播放" acts on: the open album, else the visible song list.
+    /// What "播放" acts on.
+    ///
+    /// Only ever a concrete track list: the open album's tracks, or the
+    /// artist's songs while the songs tab is showing. There is deliberately no
+    /// button on the albums tab — "play all albums" has no meaning.
     private var currentTracks: [QQMusicOnlineTrack] {
         isShowingAlbum ? albumSongs : songs
+    }
+
+    /// Whether the header's play button applies.
+    private var canPlayFromHeader: Bool {
+        (isShowingAlbum || tab == .songs) && !currentTracks.isEmpty
     }
 
     // MARK: - Content switch
@@ -328,6 +356,24 @@ struct QQMusicArtistDetailView: View {
                         QQMusicOnlineTrackRow(track: track) {
                             Task { await coordinator.startPlayback(list, startingAt: index) }
                         }
+                        .onAppear {
+                            // Artists can have over a thousand songs, so page
+                            // as the end comes into view rather than up front.
+                            guard tab == .songs, !isShowingAlbum,
+                                  index >= list.count - 5
+                            else { return }
+                            Task { await loadMoreSongs() }
+                        }
+                    }
+                    if isLoadingMore {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("正在加载更多…")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
                     }
                 }
                 .padding(.horizontal, 14)
@@ -379,11 +425,49 @@ struct QQMusicArtistDetailView: View {
         do {
             songs = try await coordinator.artistSongs(
                 singerMid: artist.singerMid,
-                sort: songSort == .hot ? .hot : .latest
+                sort: songSort == .hot ? .hot : .latest,
+                page: 1
             )
+            songPage = 1
+            hasMoreSongs = !songs.isEmpty
+            await loadBiographyIfNeeded()
         } catch {
             errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
+    }
+
+    /// Append the next page of the artist's songs.
+    private func loadMoreSongs() async {
+        guard hasMoreSongs, !isLoadingMore, !isLoading, !isShowingAlbum else { return }
+        isLoadingMore = true
+        defer { isLoadingMore = false }
+        do {
+            let next = songPage + 1
+            let more = try await coordinator.artistSongs(
+                singerMid: artist.singerMid,
+                sort: songSort == .hot ? .hot : .latest,
+                page: next
+            )
+            // Comparing the tail guards against a server that keeps returning
+            // the same page, which would otherwise loop forever.
+            let known = Set(songs.map(\.songMid))
+            let fresh = more.filter { !known.contains($0.songMid) }
+            guard !fresh.isEmpty else {
+                hasMoreSongs = false
+                return
+            }
+            songs.append(contentsOf: fresh)
+            songPage = next
+        } catch {
+            errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            hasMoreSongs = false
+        }
+    }
+
+    /// Artist biography, shown under the header as the library page does.
+    private func loadBiographyIfNeeded() async {
+        guard biography == nil else { return }
+        biography = await coordinator.artistBiography(singerMid: artist.singerMid)
     }
 
     private func loadAlbums() async {

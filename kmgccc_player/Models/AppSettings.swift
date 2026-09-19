@@ -1112,6 +1112,23 @@ public final class AppSettings {
     @ObservationIgnored
     @AppStorage("qqMusicPrefetchDepth") var qqMusicPrefetchDepth: Int = 2
 
+    /// Whether QQ Music surfaces circuit-breaker and rate-limit messages
+    /// (the orange "已暂停 / 访问过于频繁" notices).
+    @ObservationIgnored
+    @AppStorage("qqMusicShowCircuitNotices") var qqMusicShowCircuitNotices: Bool = true
+
+    /// Whether QQ Music surfaces other problem messages (load failures etc.).
+    @ObservationIgnored
+    @AppStorage("qqMusicShowGeneralNotices") var qqMusicShowGeneralNotices: Bool = true
+
+    /// How long the QQ Music helper stays alive while idle, in seconds.
+    ///
+    /// The helper's own 60s is not used: keeping the process warm avoids a cold
+    /// start on the next request, which is the main source of perceived
+    /// slowness when moving between pages.
+    @ObservationIgnored
+    @AppStorage("qqMusicHelperIdleSeconds") var qqMusicHelperIdleSeconds: Int = 300
+
     /// Whether the QQ Music source warms its content at launch.
     ///
     /// The browse surfaces request several endpoints at once, so the first visit
