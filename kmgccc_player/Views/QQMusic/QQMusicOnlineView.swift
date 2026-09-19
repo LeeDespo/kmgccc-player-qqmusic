@@ -120,6 +120,9 @@ struct QQMusicOnlineView: View {
         .onAppear {
             let target = section
             Task { await loadContent(for: target) }
+            // Row hearts read from the liked-mid set, which is empty until
+            // something fills it; this keeps them accurate on every tab.
+            Task { await coordinator.ensureLikedSongMidsIfNeeded() }
         }
         .onChange(of: section) { _, newValue in
             Task { await loadContent(for: newValue) }
@@ -152,28 +155,6 @@ struct QQMusicOnlineView: View {
                 Text(currentTitle)
                     .font(.title2.weight(.semibold))
                     .lineLimit(1)
-
-                if isShowingTrackList, !currentTrackList.isEmpty {
-                    Button {
-                        Task {
-                            await coordinator.startPlayback(
-                                currentTrackList,
-                                startingAt: 0,
-                                pageable: isShowingRecommendFeed
-                            )
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "play.fill").font(.system(size: 10))
-                            Text("播放全部").font(.system(size: 12, weight: .medium))
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(themeStore.accentColor.opacity(0.24)))
-                    }
-                    .buttonStyle(.plain)
-                    .help("从第一首开始播放，其余歌曲会边播边下载")
-                }
 
                 Spacer()
 
@@ -241,6 +222,16 @@ struct QQMusicOnlineView: View {
                         Spacer()
                     }
                 }
+
+                // Sits under the tab bar rather than beside the title: it acts
+                // on whatever the tab is showing, and up in the title row it
+                // read as belonging to the page header instead.
+                if isShowingTrackList, !currentTrackList.isEmpty {
+                    HStack(spacing: 8) {
+                        playAllButton
+                        Spacer()
+                    }
+                }
             }
         }
         .padding(.horizontal, 20)
@@ -248,10 +239,40 @@ struct QQMusicOnlineView: View {
         .padding(.bottom, 10)
     }
 
+    private var playAllButton: some View {
+        Button {
+            Task {
+                await coordinator.startPlayback(
+                    currentTrackList,
+                    startingAt: 0,
+                    pageable: isShowingRecommendFeed
+                )
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "play.fill").font(.system(size: 12, weight: .semibold))
+                Text("播放全部").font(.system(size: 13, weight: .medium))
+                Text("\(currentTrackList.count)")
+                    .font(.system(size: 12).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(themeStore.accentColor.opacity(0.24)))
+        }
+        .buttonStyle(.plain)
+        .help("从第一首开始播放，其余歌曲会边播边下载")
+    }
+
     /// Kick off whatever the given section needs. Idempotent — each coordinator
     /// loader returns early when its content is already present.
     private func loadContent(for section: Section) async {
-        await coordinator.loadInitialContentIfNeeded()
+        // The shared content is started separately rather than awaited here:
+        // awaiting it first meant a visit to "我的" sat behind the recommend and
+        // ranking requests, so the page looked like it only loaded on a second
+        // tap. Each branch below depends on its own loader and nothing else.
+        Task { await coordinator.loadInitialContentIfNeeded() }
+
         switch section {
         case .mine:
             await coordinator.loadUserLibraryIfNeeded()
@@ -295,7 +316,10 @@ struct QQMusicOnlineView: View {
         }
         .labelsHidden()
         .pickerStyle(.segmented)
-        .frame(width: 240)
+        // A fixed width centres the control inside the box it is given, which
+        // reads as "not left aligned". Hugging the content puts it at the
+        // leading edge, matching the selector above it.
+        .fixedSize(horizontal: true, vertical: false)
         .onChange(of: searchKind) { _, _ in
             // Re-run the same query against the newly selected type so switching
             // does not leave an empty page behind.
@@ -573,10 +597,22 @@ struct QQMusicOnlineView: View {
         }
     }
 
+    /// Whether the header's "播放全部" applies to what is on screen.
+    ///
+    /// A section belongs here when it shows one plain list of playable tracks.
+    /// The albums and playlists grids under "我的" do not: playing them would
+    /// mean fetching every album's tracks first, and each one is already
+    /// playable from its own drilled-down list.
     private var isShowingTrackList: Bool {
-        drilledDownTitle != nil
-            || (isOnSearchPage && !coordinator.searchKeyword.isEmpty)
-            || section == .recommend
+        if drilledDownTitle != nil { return true }
+        switch section {
+        // Search only has a list once a query has returned something.
+        case .search: return !coordinator.searchKeyword.isEmpty
+        case .recommend: return true
+        case .newSongs: return !coordinator.newSongs.isEmpty
+        case .mine: return mineSection == .likedSongs && !coordinator.likedSongs.isEmpty
+        case .radio, .toplists: return false
+        }
     }
 
     /// True when the recommend feed is the list on screen, which is the only
@@ -593,7 +629,13 @@ struct QQMusicOnlineView: View {
         if isOnSearchPage, !coordinator.searchKeyword.isEmpty {
             return coordinator.searchResults
         }
-        return coordinator.recommendFeed
+        switch section {
+        case .newSongs: return coordinator.newSongs
+        // Only the liked-songs tab has a flat list; the other two sub-tabs are
+        // grids and fall through to the (ignored) recommend feed.
+        case .mine: return mineSection == .likedSongs ? coordinator.likedSongs : []
+        default: return coordinator.recommendFeed
+        }
     }
 
     @ViewBuilder
@@ -713,7 +755,9 @@ struct QQMusicOnlineView: View {
         }
         .labelsHidden()
         .pickerStyle(.segmented)
-        .frame(width: 300)
+        // See `searchKindSelector`: a fixed width centres it instead of
+        // aligning it with the leading edge.
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     /// The "我的" section: liked songs, favorited albums, own playlists.
@@ -914,6 +958,8 @@ struct QQMusicOnlineTrackRow: View {
     private var phase: QQMusicDownloadPhase { coordinator.phase(for: track.songMid) }
     private var isImported: Bool { coordinator.isImported(track.songMid) }
     private var isPlaying: Bool { coordinator.isPlaying(track.songMid) }
+    private var isLiked: Bool { coordinator.isLiked(songMid: track.songMid) }
+    private var isLikePending: Bool { coordinator.isLikePending(songMid: track.songMid) }
 
     var body: some View {
         HStack(spacing: 10) {
@@ -938,12 +984,67 @@ struct QQMusicOnlineTrackRow: View {
                     .foregroundStyle(.secondary)
             }
 
+            likeButton
             statusControl
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { onPlay() }
+        .contextMenu {
+            Button {
+                onPlay()
+            } label: {
+                Label("播放", systemImage: "play")
+            }
+
+            Button {
+                Task { await coordinator.playNext(track) }
+            } label: {
+                Label("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward")
+            }
+
+            Divider()
+
+            Button {
+                Task { await coordinator.toggleLike(songMid: track.songMid) }
+            } label: {
+                Label(isLiked ? "取消收藏" : "收藏到「我喜欢」",
+                      systemImage: isLiked ? "heart.slash" : "heart")
+            }
+            .disabled(isLikePending || track.songMid.isEmpty)
+        }
+    }
+
+    /// Favorites toggle for a track that may not be in the library yet.
+    ///
+    /// Driven by song mid rather than a local `Track`, so it works on a row
+    /// that has never been downloaded — liking something is not a reason to
+    /// fetch its audio.
+    @ViewBuilder
+    private var likeButton: some View {
+        if !track.songMid.isEmpty {
+            Button {
+                Task { await coordinator.toggleLike(songMid: track.songMid) }
+            } label: {
+                Group {
+                    if isLikePending {
+                        ProgressView().controlSize(.small).frame(width: 16, height: 16)
+                    } else {
+                        Image(systemName: isLiked ? "heart.fill" : "heart")
+                            .font(.system(size: 12))
+                            .foregroundStyle(isLiked ? themeStore.accentColor : Color.secondary)
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                }
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(isLikePending)
+            .help(isLiked ? "取消收藏" : "收藏到「我喜欢」")
+            .animation(.snappy(duration: 0.2), value: isLiked)
+        }
     }
 
     private var artwork: some View {

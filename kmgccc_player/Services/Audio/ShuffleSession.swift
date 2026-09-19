@@ -284,6 +284,40 @@ final class ShuffleSession {
         return insertionTracks.count
     }
 
+    /// Add tracks to the shuffle pool without placing them next.
+    ///
+    /// Distinct from `insertTracksAfterCurrent`, which answers "play this one
+    /// next" and therefore splices the tracks in at the current position. This
+    /// one only makes the tracks *eligible*: they join the source pool, get a
+    /// preference weight, and become candidates for future random sampling.
+    /// The generated sequence and the play-next anchor are left alone.
+    ///
+    /// That distinction matters for a queue that grows from the background. A
+    /// prefetcher appending into the play-next slot would lay the tracks down in
+    /// fetch order, which turns shuffle back into sequential playback.
+    @discardableResult
+    func addToShufflePool(_ tracks: [Track]) -> Int {
+        guard isActive else { return 0 }
+
+        let candidates = Self.playableUniqueTracks(from: tracks, excluding: currentTrackID)
+        guard !candidates.isEmpty else { return 0 }
+
+        var added = 0
+        for track in candidates {
+            trackCache[track.id] = track
+            if !sourceSnapshotTrackIDs.contains(track.id) {
+                sourceSnapshotTrackIDs.append(track.id)
+                added += 1
+            }
+            updateBaseWeight(for: track)
+        }
+
+        // Sampling draws from `sourceSnapshotTrackIDs`, so growth there is
+        // enough; this only tops up the sequence if the pool now allows it.
+        extendQueueIfNeeded()
+        return added
+    }
+
     // MARK: - Queue Extension
 
     /// Check if queue needs extension and extend if necessary.

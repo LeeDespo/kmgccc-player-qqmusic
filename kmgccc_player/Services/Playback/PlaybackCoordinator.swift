@@ -41,6 +41,9 @@ protocol LocalPlaybackControlling: AnyObject {
         startPolicy: PlaybackStartPolicy
     )
     func insertTracksAfterCurrent(_ tracks: [Track]) -> Int
+    /// Add tracks to the pool without changing what plays next. See
+    /// `PlayerViewModel.addToQueuePool`.
+    func addToQueuePool(_ tracks: [Track]) -> Int
     func play(track: Track)
     func playTrackFromQueue(_ track: Track)
 }
@@ -570,6 +573,21 @@ final class PlaybackCoordinator {
         refreshPresentation()
         NowPlayingService.shared.updateNowPlaying(force: true)
         return insertedCount
+    }
+
+    /// Add prefetched tracks to the pool without changing what plays next.
+    ///
+    /// Unlike `insertTracksAfterCurrent` this does not require a current track:
+    /// growing the pool is meaningful even before playback starts.
+    @discardableResult
+    func addToQueuePool(_ tracks: [Track]) -> Int {
+        guard activeSource == .local else { return 0 }
+        let addedCount = localPlayback?.addToQueuePool(tracks) ?? 0
+        guard addedCount > 0 else { return 0 }
+
+        refreshPresentation()
+        NowPlayingService.shared.updateNowPlaying(force: true)
+        return addedCount
     }
 
     func playRandomTracks(_ tracks: [Track], libraryQueueSource: LibraryQueueSource? = nil) {

@@ -106,6 +106,9 @@ superteam/
 # Local development notes for the QQ Music source (design docs, plans, logs).
 # Kept out of the repository per project convention.
 /docs/qqmusic/
+# Plan documents written before a non-trivial change. They live at the repo root
+# for convenience but are working notes, not part of the published source.
+/*-plan-*.md
 
 # Local-only working copies for the QQ Music patch package.
 #   upstream/  pristine upstream source, the reference "unmodified app"

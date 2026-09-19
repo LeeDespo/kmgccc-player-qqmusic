@@ -108,6 +108,18 @@ final class StubAudioPlaybackService: AudioPlaybackServiceProtocol {
         return insertionTracks.count
     }
 
+    @discardableResult
+    func addToQueuePool(_ tracks: [Track]) -> Int {
+        var seenIDs = Set(queue.map(\.id))
+        let appended = tracks.filter { track in
+            guard track.availability != .missing else { return false }
+            return seenIDs.insert(track.id).inserted
+        }
+        guard !appended.isEmpty else { return 0 }
+        queue.append(contentsOf: appended)
+        return appended.count
+    }
+
     func refreshTracks(_ tracks: [Track]) {
         let refreshedByID = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
         guard !refreshedByID.isEmpty else { return }

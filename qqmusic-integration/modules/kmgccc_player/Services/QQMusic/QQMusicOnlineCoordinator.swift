@@ -66,6 +66,10 @@ final class QQMusicOnlineCoordinator {
     /// per-track membership endpoint, so the folder is read once and kept in
     /// memory while the session lives.
     private(set) var likedSongMids: Set<String> = []
+    /// Walks the remaining pages of the liked folder in the background, so the
+    /// first page can be shown immediately while the full set fills in.
+    private var likedMidsCompletionTask: Task<Void, Never>?
+    private var isRefreshingLikedMids = false
     /// Writes in flight, so the button can show progress and not double-fire.
     private(set) var pendingLikeSongMids: Set<String> = []
     private var isLoadingMoreLikedSongs = false
@@ -232,12 +236,54 @@ final class QQMusicOnlineCoordinator {
     /// cache hit by the time the user opens the tab. Deliberately sequential:
     /// firing every request at once is the fastest way to trip upstream
     /// throttling, and this is background work that nothing is waiting on.
+    ///
+    /// The "我的" library is included because those loaders revalidate against
+    /// the account; starting them here means the page shows the cached list
+    /// immediately instead of waiting for three round-trips on first visit.
+    /// The "我的" library loaders, run one at a time.
+    ///
+    /// `loadUserLibraryIfNeeded` fans these out concurrently, which is right
+    /// when a user is waiting on the page. At launch nothing is waiting, so the
+    /// gentler order is used instead: this is the moment with the most requests
+    /// in flight already, and serial round-trips are what keeps a burst from
+    /// being read as abuse.
+    private func preloadUserLibrary() async {
+        await loadLikedSongs()
+        await loadLikedAlbums()
+        await loadUserPlaylists()
+    }
+
     func preloadAtLaunch() async {
         guard AppSettings.shared.qqMusicPreloadOnLaunch else { return }
         Log.info("[QQMusicOnline] preloading at launch", category: .import)
         await loadInitialContentIfNeeded()
+        await prefillRecommendFeed()
         await loadNewSongs(region: newSongsRegion)
         await loadRadioStations()
+        await preloadUserLibrary()
+    }
+
+    /// How many "guess you like" tracks the launch preload aims to have ready.
+    ///
+    /// The radio hands back about five per round, and rounds must be serial, so
+    /// this is a trade against launch time rather than a free setting.
+    static let recommendPreloadTarget = 20
+
+    /// Top the recommend feed up to `recommendPreloadTarget` tracks.
+    ///
+    /// One page of the radio is only about ten tracks, so opening the tab would
+    /// otherwise show a short list that grows as you scroll. Extending here
+    /// means the list is already a useful length when the page is opened.
+    /// Stops on the first round that adds nothing, so a radio that has run dry
+    /// does not spin.
+    private func prefillRecommendFeed() async {
+        var guardCounter = 0
+        while recommendFeed.count < Self.recommendPreloadTarget, guardCounter < 4 {
+            guardCounter += 1
+            let before = recommendFeed.count
+            let added = await extendRecommendFeed()
+            if added.isEmpty, recommendFeed.count == before { return }
+        }
     }
 
     func loadInitialContentIfNeeded() async {
@@ -256,20 +302,45 @@ final class QQMusicOnlineCoordinator {
         }
         isLoadingFeed = true
         defer { isLoadingFeed = false }
+
+        // Show the last known list first, whatever its age — then revalidate
+        // below and replace it only if the upstream actually differs. Waiting
+        // for the round-trip before showing anything is what made the page look
+        // empty on every visit.
+        var servedFromCache = false
+        if !force, let cached = await cachedTracks(.recommendFeed, key: "default", force: false, allowStale: true) {
+            recommendFeed = cached
+            seenFeedSongMids = Set(cached.map(\.songMid))
+            servedFromCache = true
+            report(nil)
+        }
+
         do {
-            if let cached = await cachedTracks(.recommendFeed, key: "default", force: force) {
-                recommendFeed = cached
-                seenFeedSongMids = Set(cached.map(\.songMid))
-                report(nil)
-                return
-            }
             let fetched = try await helper.fetchRecommendFeed()
-            await storeTracks(fetched, category: .recommendFeed, key: "default")
-            recommendFeed = fetched
-            seenFeedSongMids = Set(fetched.map(\.songMid))
+            if servedFromCache {
+                // The radio is a rolling feed, not an enumeration: a fresh call
+                // returns the *next* few tracks, not a corrected version of the
+                // whole list. Replacing with it would shrink a prefilled list
+                // back to six. Merge instead — fresh tracks first, then whatever
+                // was already there and is still unseen.
+                let freshMids = Set(fetched.map(\.songMid))
+                let carried = recommendFeed.filter { !freshMids.contains($0.songMid) }
+                let merged = fetched + carried
+                if merged.map(\.songMid) != recommendFeed.map(\.songMid) {
+                    recommendFeed = merged
+                    seenFeedSongMids.formUnion(freshMids)
+                }
+                await storeTracks(merged, category: .recommendFeed, key: "default")
+            } else {
+                recommendFeed = fetched
+                seenFeedSongMids = Set(fetched.map(\.songMid))
+                await storeTracks(fetched, category: .recommendFeed, key: "default")
+            }
             report(nil)
         } catch {
-            report("推荐加载失败：\(noteFailure(error))", isError: true)
+            // A failure with something already on screen is not worth
+            // replacing the list with an error; the banner says so instead.
+            report("推荐加载失败：\(noteFailure(error))", isError: servedFromCache)
             Log.warning("[QQMusicOnline] recommend feed failed: \(error)", category: .import)
         }
     }
@@ -298,6 +369,11 @@ final class QQMusicOnlineCoordinator {
             guard !fresh.isEmpty else { return [] }
             seenFeedSongMids.formUnion(fresh.map(\.songMid))
             recommendFeed.append(contentsOf: fresh)
+            // Re-store the whole list, not just the new tracks: the cache holds
+            // one payload per key, so writing only the additions would leave the
+            // preload's extra tracks out of it and the list would shrink back on
+            // the next launch.
+            await storeTracks(recommendFeed, category: .recommendFeed, key: "default")
 
             // Keep the playback session in step with what is on screen, so a
             // track added by scrolling is also reachable when playing.
@@ -328,18 +404,29 @@ final class QQMusicOnlineCoordinator {
         isLoadingNewSongs = true
         newSongsRegion = region
         defer { isLoadingNewSongs = false }
+
+        // Same stale-while-revalidate shape as the recommend feed: paint from
+        // cache first, then replace only when the upstream actually differs.
+        // Unlike the radio this *is* an enumeration (one call returns the whole
+        // regional list), so a straight comparison is the right replacement
+        // rule.
+        var servedFromCache = false
+        if !force, let cached = await cachedTracks(.newSongs, key: region.rawValue, force: false, allowStale: true) {
+            newSongs = cached
+            servedFromCache = true
+            report(nil)
+        }
+
         do {
-            if let cached = await cachedTracks(.newSongs, key: region.rawValue, force: force) {
-                newSongs = cached
-                report(nil)
-                return
-            }
             let fetched = try await helper.fetchNewSongs(region: region)
+            let changed = fetched.map(\.songMid) != newSongs.map(\.songMid)
+            if changed || !servedFromCache {
+                newSongs = fetched
+            }
             await storeTracks(fetched, category: .newSongs, key: region.rawValue)
-            newSongs = fetched
             report(nil)
         } catch {
-            report("新歌加载失败：\(noteFailure(error))", isError: true)
+            report("新歌加载失败：\(noteFailure(error))", isError: servedFromCache)
             Log.warning("[QQMusicOnline] new songs failed: \(error)", category: .import)
         }
     }
@@ -423,6 +510,20 @@ final class QQMusicOnlineCoordinator {
                 likedSongsTotal = page.total
                 likedSongsPage = 1
             }
+            // This response enumerates the folder, so it is the cheapest source
+            // of the liked-mid set: seeding it here fills the hearts everywhere
+            // without a second round of requests.
+            likedSongMids = Set(page.tracks.map(\.songMid))
+            // One page is up to 100 tracks. If the folder is bigger, the rest
+            // would stay unfilled, so walk the remaining pages in the
+            // background rather than blocking the page the user is looking at.
+            if page.total > page.tracks.count {
+                let expected = page.total
+                likedMidsCompletionTask?.cancel()
+                likedMidsCompletionTask = Task { [weak self] in
+                    await self?.completeLikedSongMids(expectedTotal: expected)
+                }
+            }
             userLibraryNeedsLogin = false
             report(nil)
         } catch {
@@ -466,9 +567,15 @@ final class QQMusicOnlineCoordinator {
         report(nil)
     }
 
+    /// Read the first page of "我喜欢" regardless of age.
+    ///
+    /// Deliberately `staleCatalog`, not `catalog`: this is the "show something
+    /// now" path, and the caller revalidates immediately afterwards. TTL-gating
+    /// it meant the list was almost never on screen (the TTL is 10 minutes), so
+    /// every visit waited on a round-trip and the cache bought nothing.
     private func cachedLikedSongs(page: Int) async -> QQMusicLikedSongs? {
         guard let store = cacheStore,
-              let data = await store.catalog(.likedSongs, key: "page-\(page)"),
+              let data = await store.staleCatalog(.likedSongs, key: "page-\(page)"),
               let decoded = try? JSONDecoder().decode(QQMusicLikedSongs.self, from: data),
               !decoded.tracks.isEmpty
         else { return nil }
@@ -517,7 +624,7 @@ final class QQMusicOnlineCoordinator {
 
     private func cachedAlbums(force: Bool) async -> [QQMusicOnlineAlbum]? {
         guard !force, let store = cacheStore,
-              let data = await store.catalog(.userLibrary, key: "albums"),
+              let data = await store.staleCatalog(.userLibrary, key: "albums"),
               let decoded = try? JSONDecoder().decode([QQMusicOnlineAlbum].self, from: data),
               !decoded.isEmpty
         else { return nil }
@@ -568,7 +675,7 @@ final class QQMusicOnlineCoordinator {
 
     private func cachedUserPlaylists(force: Bool) async -> [QQMusicOnlinePlaylist]? {
         guard !force, let store = cacheStore,
-              let data = await store.catalog(.userLibrary, key: "playlists"),
+              let data = await store.staleCatalog(.userLibrary, key: "playlists"),
               let decoded = try? JSONDecoder().decode([QQMusicOnlinePlaylist].self, from: data),
               !decoded.isEmpty
         else { return nil }
@@ -589,6 +696,35 @@ final class QQMusicOnlineCoordinator {
         _ = await (liked, albums, playlists)
     }
 
+    /// Make sure the liked-mid set is populated, so hearts are accurate.
+    ///
+    /// Fired when the browse view appears rather than at launch: the browse
+    /// lists are where the buttons live, and a row's heart is wrong until this
+    /// has run. Only the first page is awaited — that is up to 100 tracks and
+    /// covers what is on screen — with the remainder walked in the background.
+    /// Skipped once the set is known.
+    func ensureLikedSongMidsIfNeeded() async {
+        guard likedSongMids.isEmpty, !isRefreshingLikedMids else { return }
+        isRefreshingLikedMids = true
+        defer { isRefreshingLikedMids = false }
+        do {
+            let page = try await helper.fetchLikedSongs(page: 1, limit: 100)
+            likedSongMids = Set(page.tracks.map(\.songMid))
+            userLibraryNeedsLogin = false
+            if page.total > page.tracks.count {
+                likedMidsCompletionTask?.cancel()
+                likedMidsCompletionTask = Task { [weak self] in
+                    await self?.completeLikedSongMids(expectedTotal: page.total)
+                }
+            }
+        } catch {
+            // Not surfaced: this is background accuracy work, and the heart
+            // simply starts unfilled if it fails. A login prompt here would
+            // interrupt browsing for a cosmetic default.
+            Log.warning("[QQMusicOnline] liked mids seed failed: \(error)", category: .import)
+        }
+    }
+
     /// Open a favorited album as a track list.
     func openAlbum(id: Int, title: String) async {
         await loadPlaylistTracks(cacheKey: "album-\(id)", title: title) {
@@ -597,11 +733,21 @@ final class QQMusicOnlineCoordinator {
     }
 
     /// Whether an error means the user must log in, rather than a real failure.
+    ///
+    /// The upstream reports this in several shapes and none of them is
+    /// self-describing: the CGI codes below are what the favourites and
+    /// playlists endpoints return to an anonymous session. Matching only on
+    /// Chinese login wording meant a logged-out user got "加载失败" and no
+    /// indication that signing in would fix it.
     private static func isLoginRequired(_ error: Error) -> Bool {
         let text = String(describing: error)
         return text.contains("需要登录")
             || text.contains("登录凭证已过期")
             || text.contains("LoginExpired")
+            // CGI 10004: not logged in / no permission for this endpoint.
+            || text.contains("10004")
+            // CGI 80000: the folder endpoints' rejection for anonymous callers.
+            || text.contains("80000")
     }
 
     // MARK: - Radio
@@ -759,12 +905,12 @@ final class QQMusicOnlineCoordinator {
     /// Whether the given library track is in the account's favorites.
     func isLiked(_ track: Track) -> Bool {
         guard let mid = track.qqMusicSongMid else { return false }
-        return likedSongMids.contains(mid)
+        return isLiked(songMid: mid)
     }
 
     func isLikePending(_ track: Track) -> Bool {
         guard let mid = track.qqMusicSongMid else { return false }
-        return pendingLikeSongMids.contains(mid)
+        return isLikePending(songMid: mid)
     }
 
     /// Whether this track can be liked at all. Only online-sourced tracks carry
@@ -774,7 +920,24 @@ final class QQMusicOnlineCoordinator {
         track.qqMusicSongMid?.isEmpty == false
     }
 
+    /// Whether an online track — one not yet in the library — is favorited.
+    ///
+    /// The browse lists hold `QQMusicOnlineTrack`, which has no local file, so
+    /// the library `Track` overload cannot be used there. The upstream write
+    /// endpoint only ever needed the song mid anyway.
+    func isLiked(songMid: String) -> Bool {
+        !songMid.isEmpty && likedSongMids.contains(songMid)
+    }
+
+    func isLikePending(songMid: String) -> Bool {
+        !songMid.isEmpty && pendingLikeSongMids.contains(songMid)
+    }
+
     /// Refresh the set of liked song mids from the account.
+    ///
+    /// This is what makes the heart in the UI show a *filled* state for tracks
+    /// the account already has. Without it the set is only ever populated by
+    /// likes made in this session, so everything reads as "not liked".
     func refreshLikedSongMids() async {
         do {
             var mids: Set<String> = []
@@ -793,13 +956,44 @@ final class QQMusicOnlineCoordinator {
         }
     }
 
+    /// Walk the pages after the first so the liked-mid set covers the folder.
+    private func completeLikedSongMids(expectedTotal: Int) async {
+        var mids = likedSongMids
+        var page = 2
+        while page <= 20 {
+            if Task.isCancelled { return }
+            do {
+                let payload = try await helper.fetchLikedSongs(page: page, limit: 100)
+                if payload.tracks.isEmpty { break }
+                let before = mids.count
+                mids.formUnion(payload.tracks.map(\.songMid))
+                // Stop when the walk adds nothing new: the folder shrank, or
+                // paging wrapped around.
+                if mids.count == before { break }
+                if mids.count >= expectedTotal { break }
+                page += 1
+            } catch {
+                Log.warning("[QQMusicOnline] liked mids completion stopped: \(error)", category: .import)
+                return
+            }
+        }
+        if !Task.isCancelled { likedSongMids = mids }
+    }
+
     /// Toggle the favorite state of a library track.
+    @discardableResult
+    func toggleLike(_ track: Track) async -> Bool {
+        guard let mid = track.qqMusicSongMid, !mid.isEmpty else { return false }
+        return await toggleLike(songMid: mid)
+    }
+
+    /// Toggle the favorite state of an online track by its song mid.
     ///
     /// The upstream applies the change asynchronously, so the local set is
     /// updated optimistically and rolled back if the write is rejected.
     @discardableResult
-    func toggleLike(_ track: Track) async -> Bool {
-        guard let mid = track.qqMusicSongMid, !mid.isEmpty else { return false }
+    func toggleLike(songMid mid: String) async -> Bool {
+        guard !mid.isEmpty else { return false }
         guard !pendingLikeSongMids.contains(mid) else { return likedSongMids.contains(mid) }
 
         let target = !likedSongMids.contains(mid)
@@ -822,8 +1016,12 @@ final class QQMusicOnlineCoordinator {
             if let store = cacheStore {
                 await store.invalidateCatalog(.likedSongs, key: "page-1")
             }
+            // Cleared so the next visit refetches. The total has to be reset
+            // too: leaving the old one makes `hasMoreLikedSongs` briefly lie,
+            // which shows a "load more" affordance for a list that is gone.
             likedSongs = []
             likedSongsPage = 0
+            likedSongsTotal = 0
             return target
         } catch {
             report((error as? LocalizedError)?.errorDescription ?? "收藏操作失败", isError: true)
@@ -841,10 +1039,17 @@ final class QQMusicOnlineCoordinator {
     private func cachedTracks(
         _ category: QQMusicCacheCategory,
         key: String,
-        force: Bool
+        force: Bool,
+        allowStale: Bool = false
     ) async -> [QQMusicOnlineTrack]? {
         guard !force, let store = cacheStore else { return nil }
-        guard let data = await store.catalog(category, key: key) else { return nil }
+        // `allowStale` is the stale-while-revalidate path: show the last known
+        // list immediately, then let the caller refresh it. Without it a short
+        // TTL means the entry is deleted before it can ever be displayed.
+        let data = allowStale
+            ? await store.staleCatalog(category, key: key)
+            : await store.catalog(category, key: key)
+        guard let data else { return nil }
         guard let tracks = try? JSONDecoder().decode([QQMusicOnlineTrack].self, from: data) else {
             await store.invalidateCatalog(category, key: key)
             return nil
@@ -1006,6 +1211,38 @@ final class QQMusicOnlineCoordinator {
         loadedPlaylistTitle = ""
     }
 
+    /// Queue an online track to play right after the current one.
+    ///
+    /// Unlike the prefetch path this is an explicit user request, so it goes
+    /// through `insertTracksAfterCurrent` — which is exactly what that call
+    /// means: put this next. It has to download first, because the queue holds
+    /// playable local tracks, not online metadata.
+    ///
+    /// Returns false when the track could not be queued, so the caller can say
+    /// why rather than appearing to do nothing.
+    @discardableResult
+    func playNext(_ track: QQMusicOnlineTrack) async -> Bool {
+        guard canDownload, let playerViewModel else {
+            report("需要托管资料库才能播放", isError: true)
+            return false
+        }
+        guard let imported = await materialize(track) else { return false }
+
+        // `insertTracksAfterCurrent` needs something playing to insert after.
+        // With an empty queue the honest interpretation of "play next" is
+        // "play it", so start a session instead of failing silently.
+        guard playerViewModel.currentTrack != nil else {
+            await startPlayback([track], startingAt: 0)
+            return true
+        }
+        guard playerViewModel.insertTracksAfterCurrent([imported]) > 0 else {
+            report("这首已经在队列里了", isError: true)
+            return false
+        }
+        report("已加入下一首：\(track.title)")
+        return true
+    }
+
     // MARK: - Playback
 
     /// Play an online list, starting at `index`, keeping the queue fed ahead.
@@ -1136,7 +1373,10 @@ final class QQMusicOnlineCoordinator {
                 continue
             }
             guard !Task.isCancelled else { return }
-            playerViewModel.insertTracksAfterCurrent([imported])
+            // Grow the pool rather than splicing into the play-next slot. Doing
+            // the latter laid the prefetched tracks down in fetch order, which
+            // made shuffle play back as sequential.
+            playerViewModel.addToQueuePool([imported])
         }
     }
 

@@ -1,0 +1,16 @@
+diff --git a/kmgccc_player/Services/Audio/AVAudioPlaybackService.swift b/kmgccc_player/Services/Audio/AVAudioPlaybackService.swift
+index e4fa1ce6..6c2020b2 100644
+--- a/kmgccc_player/Services/Audio/AVAudioPlaybackService.swift
++++ b/kmgccc_player/Services/Audio/AVAudioPlaybackService.swift
+@@ -1637,6 +1637,11 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
+         smartController.insertTracksAfterCurrent(tracks)
+     }
+ 
++    @discardableResult
++    func addToQueuePool(_ tracks: [Track]) -> Int {
++        smartController.addToQueuePool(tracks)
++    }
++
+     func refreshTracks(_ tracks: [Track]) {
+         let refreshedByID = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
+         guard !refreshedByID.isEmpty else { return }

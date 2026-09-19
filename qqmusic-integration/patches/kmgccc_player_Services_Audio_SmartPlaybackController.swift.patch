@@ -1,0 +1,36 @@
+diff --git a/kmgccc_player/Services/Audio/SmartPlaybackController.swift b/kmgccc_player/Services/Audio/SmartPlaybackController.swift
+index 33044ec0..c3661f25 100644
+--- a/kmgccc_player/Services/Audio/SmartPlaybackController.swift
++++ b/kmgccc_player/Services/Audio/SmartPlaybackController.swift
+@@ -213,6 +213,31 @@ final class SmartPlaybackController {
+         return insertionTracks.count
+     }
+ 
++    /// Add tracks to the queue's pool without changing what plays next.
++    ///
++    /// Used by background prefetching, where the tracks are "what might come
++    /// later", not "what the user asked to hear next". In shuffle the tracks
++    /// become sampling candidates; in linear order they are appended to the end.
++    /// Either way the upcoming track is unaffected.
++    @discardableResult
++    func addToQueuePool(_ tracks: [Track]) -> Int {
++        let candidates = Self.playableUniqueTracks(from: tracks, excluding: nil)
++        guard !candidates.isEmpty else { return 0 }
++
++        if isShuffleEnabled, let session = shuffleSession {
++            sourceTracks = Self.replacingOrAppendingTracks(in: sourceTracks, with: candidates)
++            return session.addToShufflePool(candidates)
++        }
++
++        // Linear order: the pool *is* the queue, so appending is the right
++        // meaning. Already-queued tracks are not duplicated.
++        let existing = Set(sourceTracks.map(\.id))
++        let appended = candidates.filter { !existing.contains($0.id) }
++        guard !appended.isEmpty else { return 0 }
++        sourceTracks.append(contentsOf: appended)
++        return appended.count
++    }
++
+     /// Mark the currently active playback session so its already-started stats will be dropped once.
+     func discardCurrentSessionStatsOnFinalizeOnce() {
+         guard let tracker = currentSessionTracker else { return }

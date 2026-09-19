@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-index 81b5c94f..c18fd694 100644
+index 81b5c94f..be7da716 100644
 --- a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 +++ b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-@@ -104,6 +104,238 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
+@@ -104,6 +104,249 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
      let changed: Bool
  }
  
@@ -186,9 +186,20 @@ index 81b5c94f..c18fd694 100644
 +    }
 +}
 +
++/// The breaker and keepalive settings the helper process is actually using.
++///
++/// Reported back from the process rather than echoed from `AppSettings`, so the
++/// settings window can show whether a change reached the helper.
++nonisolated struct QQMusicCircuitConfiguration: Sendable, Equatable {
++    var isEnabled: Bool
++    var threshold: Int
++    var failureWindowSeconds: Int
++    var openSeconds: Int
++    var idleSeconds: Int
++}
++
 +/// Result of a like/unlike request.
-+nonisolated struct QQMusicLikeResult: Codable, Equatable, Sendable {
-+    var songId: Int
++nonisolated struct QQMusicLikeResult: Codable, Equatable, Sendable {    var songId: Int
 +    var liked: Bool
 +    /// Whether the upstream accepted the write. The change still lands
 +    /// asynchronously, so this reports acceptance rather than a visible result.
@@ -241,7 +252,7 @@ index 81b5c94f..c18fd694 100644
  nonisolated enum MetadataDetailApplicator {
      static func applyMissingFields(
          _ detail: ArtistMetadataDetail,
-@@ -627,6 +859,20 @@ actor QQMusicHelperProcess {
+@@ -627,6 +870,20 @@ actor QQMusicHelperProcess {
          let ok: Bool
          let candidates: [QQMusicArtworkCandidate]?
          let detail: QQMusicMetadataDetail?
@@ -262,7 +273,7 @@ index 81b5c94f..c18fd694 100644
          let error: String?
      }
  
-@@ -668,18 +914,175 @@ actor QQMusicHelperProcess {
+@@ -668,18 +925,175 @@ actor QQMusicHelperProcess {
          let duration: Int?
      }
  
@@ -443,7 +454,7 @@ index 81b5c94f..c18fd694 100644
      private var recentStderr = ""
      private var pendingRequests: [String: PendingRequest] = [:]
      private var idleShutdownTask: Task<Void, Never>?
-@@ -776,6 +1179,424 @@ actor QQMusicHelperProcess {
+@@ -776,6 +1190,441 @@ actor QQMusicHelperProcess {
          )
      }
  
@@ -854,6 +865,23 @@ index 81b5c94f..c18fd694 100644
 +        return .open(until: until, reason: circuitLastReason)
 +    }
 +
++    /// The breaker settings this process is actually using right now.
++    ///
++    /// The settings live on the main actor and are pushed in here, so a change
++    /// that fails to arrive is invisible: the window shows the new number while
++    /// the breaker keeps behaving the old way. Reading the effective values
++    /// back is what turns that into something the settings window can display
++    /// and the user can check.
++    func effectiveCircuitConfiguration() -> QQMusicCircuitConfiguration {
++        QQMusicCircuitConfiguration(
++            isEnabled: circuitConfiguration.isEnabled,
++            threshold: failureThreshold,
++            failureWindowSeconds: Int(failureWindow.rounded()),
++            openSeconds: Int(circuitOpenDuration.rounded()),
++            idleSeconds: Int(idleTimeout.rounded())
++        )
++    }
++
 +    /// Close the breaker immediately and forget accumulated failures.
 +    ///
 +    /// Exposed because the automatic cooldown is a guess: if the user knows the
@@ -868,7 +896,7 @@ index 81b5c94f..c18fd694 100644
      func terminate() {
          stopProcess(failingPendingWith: QQMusicHelperError.cancelled)
      }
-@@ -968,9 +1789,11 @@ actor QQMusicHelperProcess {
+@@ -968,9 +1817,11 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -882,7 +910,7 @@ index 81b5c94f..c18fd694 100644
              }
          }
  
-@@ -981,7 +1804,9 @@ actor QQMusicHelperProcess {
+@@ -981,7 +1832,9 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -893,7 +921,7 @@ index 81b5c94f..c18fd694 100644
              Task {
                  await self?.appendStderr(text)
              }
-@@ -1006,20 +1831,41 @@ actor QQMusicHelperProcess {
+@@ -1006,20 +1859,41 @@ actor QQMusicHelperProcess {
          self.stdinHandle = stdinPipe.fileHandleForWriting
          self.stdoutPipe = stdoutPipe
          self.stderrPipe = stderrPipe
@@ -944,7 +972,7 @@ index 81b5c94f..c18fd694 100644
          }
      }
  
-@@ -1091,7 +1937,7 @@ actor QQMusicHelperProcess {
+@@ -1091,7 +1965,7 @@ actor QQMusicHelperProcess {
          stdinHandle = nil
          stdoutPipe = nil
          stderrPipe = nil
@@ -953,7 +981,7 @@ index 81b5c94f..c18fd694 100644
      }
  
      private func markActivity() {
-@@ -1132,6 +1978,7 @@ actor QQMusicHelperProcess {
+@@ -1132,6 +2006,7 @@ actor QQMusicHelperProcess {
      }
  
      private func recordFailure(reason: String) {
@@ -961,7 +989,7 @@ index 81b5c94f..c18fd694 100644
          let now = Date()
          recentFailureDates = recentFailureDates.filter {
              now.timeIntervalSince($0) <= failureWindow
-@@ -1152,6 +1999,16 @@ actor QQMusicHelperProcess {
+@@ -1152,6 +2027,16 @@ actor QQMusicHelperProcess {
      }
  
      private func checkCircuitBreaker() throws {
@@ -978,7 +1006,7 @@ index 81b5c94f..c18fd694 100644
          guard let until = circuitOpenUntil else { return }
          if Date() < until {
              Log.warning("[QQMusicHelperProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)
-@@ -1163,30 +2020,47 @@ actor QQMusicHelperProcess {
+@@ -1163,30 +2048,47 @@ actor QQMusicHelperProcess {
      }
  
      private func findLaunchCandidate() -> LaunchCandidate? {
@@ -1046,7 +1074,7 @@ index 81b5c94f..c18fd694 100644
      }
  
      private func bundledBinaryURL() -> URL {
-@@ -1198,6 +2072,30 @@ actor QQMusicHelperProcess {
+@@ -1198,6 +2100,30 @@ actor QQMusicHelperProcess {
              .appendingPathComponent("qqmusic-helper", isDirectory: false)
      }
  
