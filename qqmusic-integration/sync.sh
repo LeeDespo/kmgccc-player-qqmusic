@@ -49,13 +49,17 @@ fi
 git -C "$FROM" cat-file -e "${BASE}^{commit}" 2>/dev/null \
   || { echo "error: base commit not found in $FROM: $BASE" >&2; exit 2; }
 
-# Everything that differs from the base commit belongs to the feature, except
-# the toolkit's own directories — including them would make each sync patch in
-# the previous sync's output.
-is_feature_path() {
+# Roots that belong to the shipped feature. Everything the toolkit carries must
+# live under one of these; anything else is a local file that only happens to be
+# untracked (a plan document, a scratch note) and must not be shipped. Without
+# this the untracked-file sweep below copied such a file into `modules/`, which
+# then planted it at the root of the target checkout.
+#
+# The toolkit's own directories are excluded by not appearing here at all.
+is_shippable_path() {
   case "$1" in
-    qqmusic-integration/*|upstream/*|testarea/*|docs/qqmusic/*) return 1 ;;
-    *) return 0 ;;
+    kmgccc_player/*|Tools/QQMusicHelper/*|scripts/components/qqmusic-helper.sh|.gitignore) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -70,7 +74,7 @@ echo
 # error: this toolkit cannot express deletions, so it must be resolved by hand.
 added=(); modified=(); deleted=()
 while IFS=$'\t' read -r st path; do
-  is_feature_path "$path" || continue
+  is_shippable_path "$path" || continue
   case "$st" in
     A) added+=("$path") ;;
     M) modified+=("$path") ;;
@@ -84,7 +88,7 @@ done < <(git -C "$FROM" diff --name-status "$BASE")
 # a toolkit silently ships without the file that was just written.
 while IFS= read -r path; do
   [[ -n "$path" ]] || continue
-  is_feature_path "$path" || continue
+  is_shippable_path "$path" || continue
   added+=("$path")
 done < <(git -C "$FROM" ls-files --others --exclude-standard)
 

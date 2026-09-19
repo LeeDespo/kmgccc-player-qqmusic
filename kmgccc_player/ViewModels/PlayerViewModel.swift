@@ -146,6 +146,18 @@ final class PlayerViewModel {
         return insertedCount
     }
 
+    /// Add background-prefetched tracks to the pool without queueing them next.
+    @discardableResult
+    func addToQueuePool(_ tracks: [Track]) -> Int {
+        let addedCount = playbackService.addToQueuePool(tracks)
+        guard addedCount > 0 else { return 0 }
+
+        activeLibraryQueueSource = nil
+        queueRevision += 1
+        nowPlayingService.updateNowPlaying(force: true)
+        return addedCount
+    }
+
     func refreshTracks(_ tracks: [Track]) {
         playbackService.refreshTracks(tracks)
         nowPlayingService.updateNowPlaying(force: true)

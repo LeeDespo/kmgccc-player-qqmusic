@@ -67,6 +67,16 @@ protocol AudioPlaybackServiceProtocol: AnyObject {
     @discardableResult
     func insertTracksAfterCurrent(_ tracks: [Track]) -> Int
 
+    /// Add tracks to the queue's pool without changing what plays next.
+    ///
+    /// The counterpart to `insertTracksAfterCurrent` for background work:
+    /// prefetched tracks are candidates for later, not a request to hear them
+    /// immediately. In shuffle they join the sampling pool; in linear order
+    /// they are appended to the end. Either way the upcoming track is
+    /// unaffected. Returns how many were newly accepted.
+    @discardableResult
+    func addToQueuePool(_ tracks: [Track]) -> Int
+
     /// Replace queue/current-track metadata for already-known track IDs without rebuilding playback state.
     func refreshTracks(_ tracks: [Track])
 

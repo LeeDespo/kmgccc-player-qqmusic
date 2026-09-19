@@ -73,6 +73,9 @@ struct QQMusicSettingsView: View {
     // Cache
     @State private var cacheSizeText = "计算中…"
     @State private var circuitState: QQMusicCircuitState?
+    /// What the helper process reports it is actually using, so a setting that
+    /// never reaches it is visible rather than silent.
+    @State private var effectiveCircuit: QQMusicCircuitConfiguration?
 
     private let helper = QQMusicHelperProcess.shared
 
@@ -522,6 +525,12 @@ struct QQMusicSettingsView: View {
                     detail: "组件在空闲这么久之后退出。保持得久一些可以避免每次切页都重新启动组件（这是感觉变慢的主要原因），代价是常驻内存。"
                 )
 
+                if let effective = effectiveCircuit {
+                    Text("组件当前生效：\(effective.idleSeconds) 秒")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
                 HStack(spacing: 8) {
                     Button("在访达中显示") { revealHelperDirectory() }
                     Button("重新检查") { Task { await refreshStatus() } }
@@ -544,6 +553,9 @@ struct QQMusicSettingsView: View {
             Task { await pushCircuitConfiguration() }
         }
         .onChange(of: AppSettings.shared.qqMusicCircuitOpenSeconds) { _, _ in
+            Task { await pushCircuitConfiguration() }
+        }
+        .onChange(of: AppSettings.shared.qqMusicHelperIdleSeconds) { _, _ in
             Task { await pushCircuitConfiguration() }
         }
     }
@@ -608,6 +620,13 @@ struct QQMusicSettingsView: View {
                     detail: "连续请求失败达到阈值时暂停一段时间，避免持续冲击上游。关闭后每个请求都会尝试。"
                 )
 
+                if let effective = effectiveCircuit {
+                    Text("组件当前生效：\(effectiveSummary(effective))")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .help("组件进程真正在用的值。改上面的数字后这里应立刻跟着变；不变即表示没送达组件。")
+                }
+
                 if AppSettings.shared.qqMusicCircuitBreakerEnabled {
                     Divider().opacity(0.4)
                     stepperRow(
@@ -651,12 +670,15 @@ struct QQMusicSettingsView: View {
         }
     }
 
-    /// A stepper row bound to a `@AppStorage`-backed setting.
+    /// A numeric row bound to a setting, editable by typing or by stepping.
     ///
     /// The binding is passed in rather than a value plus setter: taking a
     /// `value` snapshot meant the row kept rendering the value captured when
     /// the section was built, so pressing the stepper changed the setting but
     /// the displayed number never moved.
+    ///
+    /// Stepping alone is impractical for wide ranges — the pause duration goes
+    /// to 1800 seconds in steps of 30 — so the number itself is a text field.
     private func stepperRow(
         title: String,
         value: Binding<Int>,
@@ -670,9 +692,7 @@ struct QQMusicSettingsView: View {
                 Text(title)
                     .settingsRowLabelStyle()
                 Spacer(minLength: 12)
-                Text("\(value.wrappedValue) \(unit)")
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundStyle(.secondary)
+                NumericSettingField(value: value, range: range, unit: unit)
                 Stepper("", value: value, in: range, step: step)
                     .labelsHidden()
             }
@@ -769,6 +789,12 @@ struct QQMusicSettingsView: View {
 
     private func refreshCircuitState() async {
         circuitState = await helper.circuitState()
+        effectiveCircuit = await helper.effectiveCircuitConfiguration()
+    }
+
+    private func effectiveSummary(_ config: QQMusicCircuitConfiguration) -> String {
+        guard config.isEnabled else { return "熔断已关闭" }
+        return "阈值 \(config.threshold) 次 / 窗口 \(config.failureWindowSeconds) 秒 / 暂停 \(config.openSeconds) 秒"
     }
 
     /// Push the current settings into the helper.
@@ -929,5 +955,69 @@ struct QQMusicSettingsView: View {
         let url = URL(fileURLWithPath: path, isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+}
+
+/// An integer setting shown as an editable field with its unit.
+///
+/// Typing commits on Return or when focus leaves; anything that does not parse,
+/// or that falls outside `range`, reverts to the current value rather than being
+/// silently clamped — clamping a typo like "3000" to the maximum would look like
+/// the app accepted it. The text is re-synced from the binding whenever the
+/// value changes elsewhere (the stepper, or another window).
+private struct NumericSettingField: View {
+
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let unit: String
+
+    @State private var text: String = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            TextField("", text: $text)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.trailing)
+                .font(.system(size: 12).monospacedDigit())
+                .frame(width: 52)
+                .focused($isFocused)
+                .onSubmit(commit)
+                .onChange(of: isFocused) { _, focused in
+                    // Losing focus is a commit, not a cancel: the user typed a
+                    // number and moved on.
+                    if !focused { commit() }
+                }
+            Text(unit)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.primary.opacity(isFocused ? 0.10 : 0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Color.primary.opacity(isFocused ? 0.25 : 0.10), lineWidth: 0.5)
+        )
+        .onAppear { text = String(value) }
+        .onChange(of: value) { _, newValue in
+            // Don't fight the user while they are editing.
+            if !isFocused { text = String(newValue) }
+        }
+    }
+
+    private func commit() {
+        guard let parsed = Int(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              range.contains(parsed)
+        else {
+            text = String(value)
+            return
+        }
+        if parsed != value { value = parsed }
+        // Normalise what is shown, so "007" becomes "7".
+        text = String(value)
     }
 }

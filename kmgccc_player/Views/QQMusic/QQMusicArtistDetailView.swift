@@ -189,7 +189,11 @@ struct QQMusicArtistDetailView: View {
 
             Spacer(minLength: 0)
 
-            playButton
+            // Omitted rather than faded on the albums tab: "play all albums" has
+            // no meaning, and a disabled capsule still reads as a control.
+            if canPlayFromHeader {
+                playButton
+            }
         }
         .frame(
             minWidth: 0,
@@ -266,12 +270,15 @@ struct QQMusicArtistDetailView: View {
         }
         .buttonStyle(.plain)
         .disabled(!canPlayFromHeader)
-        .opacity(canPlayFromHeader ? 1 : 0)
         .background(Capsule().fill(themeStore.accentColor))
         .background(Capsule().fill(Color.black.opacity(colorScheme == .dark ? 0.22 : 0.08)))
         .glassEffect(.clear, in: Capsule())
         .overlay(Capsule().strokeBorder(Color.white.opacity(0.15), lineWidth: 0.5))
         .clipShape(Capsule())
+        // Visibility is decided by the caller (`canPlayFromHeader`), which omits
+        // the button outright on the albums tab. Fading it here would be wrong:
+        // `opacity` applied to the label alone left the capsule drawn behind it,
+        // which is what made a hidden button look like a stray coloured pill.
         .help("播放全部")
     }
 

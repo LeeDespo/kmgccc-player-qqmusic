@@ -284,9 +284,20 @@ nonisolated enum QQMusicCircuitState: Sendable, Equatable {
     }
 }
 
+/// The breaker and keepalive settings the helper process is actually using.
+///
+/// Reported back from the process rather than echoed from `AppSettings`, so the
+/// settings window can show whether a change reached the helper.
+nonisolated struct QQMusicCircuitConfiguration: Sendable, Equatable {
+    var isEnabled: Bool
+    var threshold: Int
+    var failureWindowSeconds: Int
+    var openSeconds: Int
+    var idleSeconds: Int
+}
+
 /// Result of a like/unlike request.
-nonisolated struct QQMusicLikeResult: Codable, Equatable, Sendable {
-    var songId: Int
+nonisolated struct QQMusicLikeResult: Codable, Equatable, Sendable {    var songId: Int
     var liked: Bool
     /// Whether the upstream accepted the write. The change still lands
     /// asynchronously, so this reports acceptance rather than a visible result.
@@ -1584,6 +1595,23 @@ actor QQMusicHelperProcess {
         guard isCircuitBreakerEnabled else { return .disabled }
         guard let until = circuitOpenUntil, Date() < until else { return .closed }
         return .open(until: until, reason: circuitLastReason)
+    }
+
+    /// The breaker settings this process is actually using right now.
+    ///
+    /// The settings live on the main actor and are pushed in here, so a change
+    /// that fails to arrive is invisible: the window shows the new number while
+    /// the breaker keeps behaving the old way. Reading the effective values
+    /// back is what turns that into something the settings window can display
+    /// and the user can check.
+    func effectiveCircuitConfiguration() -> QQMusicCircuitConfiguration {
+        QQMusicCircuitConfiguration(
+            isEnabled: circuitConfiguration.isEnabled,
+            threshold: failureThreshold,
+            failureWindowSeconds: Int(failureWindow.rounded()),
+            openSeconds: Int(circuitOpenDuration.rounded()),
+            idleSeconds: Int(idleTimeout.rounded())
+        )
     }
 
     /// Close the breaker immediately and forget accumulated failures.

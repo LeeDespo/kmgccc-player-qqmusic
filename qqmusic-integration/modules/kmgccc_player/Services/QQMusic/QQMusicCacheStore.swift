@@ -94,6 +94,31 @@ actor QQMusicCacheStore {
         return data
     }
 
+    /// Return a cached payload whatever its age, for stale-while-revalidate.
+    ///
+    /// `catalog` answers "is this fresh enough to trust"; this answers "is there
+    /// anything to show". Callers use it to paint immediately and then revalidate
+    /// against the upstream, replacing the content only if it actually differs.
+    ///
+    /// That distinction matters because a short TTL makes `catalog` almost always
+    /// miss: the "我的" lists are 10 minutes old at most by design, so a cache
+    /// entry was deleted before it could ever be shown and every visit waited on
+    /// three round-trips. Age-gating the *display* is not the same as age-gating
+    /// the *decision to trust it*.
+    ///
+    /// The payload is not deleted here: a revalidation that fails should still
+    /// leave the user with the last known list rather than an empty page.
+    func staleCatalog(_ category: QQMusicCacheCategory, key: String) -> Data? {
+        let cacheKey = "\(category.rawValue)|\(key)"
+        if let entry = memoryCatalog[cacheKey] {
+            return entry.data
+        }
+        let url = catalogFileURL(category: category, key: key)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        memoryCatalog[cacheKey] = (Date(), data)
+        return data
+    }
+
     func storeCatalog(_ data: Data, category: QQMusicCacheCategory, key: String) {
         memoryCatalog["\(category.rawValue)|\(key)"] = (Date(), data)
         let url = catalogFileURL(category: category, key: key)

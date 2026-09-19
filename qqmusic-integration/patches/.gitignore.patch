@@ -1,8 +1,8 @@
 diff --git a/.gitignore b/.gitignore
-index c3238624..74b435be 100644
+index c3238624..1fef70eb 100644
 --- a/.gitignore
 +++ b/.gitignore
-@@ -102,3 +102,15 @@ superteam/
+@@ -102,3 +102,18 @@ superteam/
  
  # Repo-root reference screenshots (kept locally, not published)
  /screenshots/
@@ -10,6 +10,9 @@ index c3238624..74b435be 100644
 +# Local development notes for the QQ Music source (design docs, plans, logs).
 +# Kept out of the repository per project convention.
 +/docs/qqmusic/
++# Plan documents written before a non-trivial change. They live at the repo root
++# for convenience but are working notes, not part of the published source.
++/*-plan-*.md
 +
 +# Local-only working copies for the QQ Music patch package.
 +#   upstream/  pristine upstream source, the reference "unmodified app"

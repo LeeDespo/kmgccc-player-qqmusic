@@ -1105,29 +1105,110 @@ public final class AppSettings {
         static let sourcePreferences = "externalPlaybackSourcePreferences"
     }
 
+    // MARK: - QQ Music Online Source
+    //
+    // These deliberately do NOT use `@AppStorage`: that property wrapper cannot
+    // coexist with `@Observable`'s synthesised storage, so every `@AppStorage`
+    // property here also carries `@ObservationIgnored` — which switches off
+    // change tracking. A settings view binding `.onChange(of:)` to such a
+    // property never fires, so the window would show the new value while the
+    // feature kept using the old one.
+    //
+    // They are written as computed properties that participate in observation
+    // explicitly, which is the idiom the app already uses for `ledCount` and
+    // `shuffleEnabled` above. The UserDefaults keys are unchanged, so existing
+    // values carry over.
+
+    private enum QQMusicKeys {
+        static let prefetchDepth = "qqMusicPrefetchDepth"
+        static let showCircuitNotices = "qqMusicShowCircuitNotices"
+        static let showGeneralNotices = "qqMusicShowGeneralNotices"
+        static let helperIdleSeconds = "qqMusicHelperIdleSeconds"
+        static let preloadOnLaunch = "qqMusicPreloadOnLaunch"
+        static let circuitBreakerEnabled = "qqMusicCircuitBreakerEnabled"
+        static let circuitFailureThreshold = "qqMusicCircuitFailureThreshold"
+        static let circuitFailureWindowSeconds = "qqMusicCircuitFailureWindowSeconds"
+        static let circuitOpenSeconds = "qqMusicCircuitOpenSeconds"
+        static let showLikeButton = "qqMusicShowLikeButton"
+        static let preferredQuality = "qqMusicPreferredQuality"
+    }
+
+    /// Read an integer setting, falling back to the default when unset.
+    ///
+    /// `UserDefaults.integer(forKey:)` returns 0 for a missing key, which is a
+    /// valid value for some of these (`prefetchDepth` uses 0 to mean "off"), so
+    /// presence has to be tested rather than the value.
+    private func qqMusicInt(_ key: String, default fallback: Int) -> Int {
+        UserDefaults.standard.object(forKey: key) == nil
+            ? fallback
+            : UserDefaults.standard.integer(forKey: key)
+    }
+
+    private func qqMusicBool(_ key: String, default fallback: Bool) -> Bool {
+        UserDefaults.standard.object(forKey: key) == nil
+            ? fallback
+            : UserDefaults.standard.bool(forKey: key)
+    }
+
     /// How many tracks ahead of the current one the QQ Music source prefetches.
     ///
     /// 0 disables prefetching entirely (download only what you play); the
     /// default of 2 keeps the next track ready without fetching a whole list.
-    @ObservationIgnored
-    @AppStorage("qqMusicPrefetchDepth") var qqMusicPrefetchDepth: Int = 2
+    var qqMusicPrefetchDepth: Int {
+        get {
+            access(keyPath: \.qqMusicPrefetchDepth)
+            return qqMusicInt(QQMusicKeys.prefetchDepth, default: 2)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicPrefetchDepth) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.prefetchDepth)
+            }
+        }
+    }
 
     /// Whether QQ Music surfaces circuit-breaker and rate-limit messages
     /// (the orange "已暂停 / 访问过于频繁" notices).
-    @ObservationIgnored
-    @AppStorage("qqMusicShowCircuitNotices") var qqMusicShowCircuitNotices: Bool = true
+    var qqMusicShowCircuitNotices: Bool {
+        get {
+            access(keyPath: \.qqMusicShowCircuitNotices)
+            return qqMusicBool(QQMusicKeys.showCircuitNotices, default: true)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicShowCircuitNotices) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.showCircuitNotices)
+            }
+        }
+    }
 
     /// Whether QQ Music surfaces other problem messages (load failures etc.).
-    @ObservationIgnored
-    @AppStorage("qqMusicShowGeneralNotices") var qqMusicShowGeneralNotices: Bool = true
+    var qqMusicShowGeneralNotices: Bool {
+        get {
+            access(keyPath: \.qqMusicShowGeneralNotices)
+            return qqMusicBool(QQMusicKeys.showGeneralNotices, default: true)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicShowGeneralNotices) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.showGeneralNotices)
+            }
+        }
+    }
 
     /// How long the QQ Music helper stays alive while idle, in seconds.
     ///
     /// The helper's own 60s is not used: keeping the process warm avoids a cold
     /// start on the next request, which is the main source of perceived
     /// slowness when moving between pages.
-    @ObservationIgnored
-    @AppStorage("qqMusicHelperIdleSeconds") var qqMusicHelperIdleSeconds: Int = 300
+    var qqMusicHelperIdleSeconds: Int {
+        get {
+            access(keyPath: \.qqMusicHelperIdleSeconds)
+            return qqMusicInt(QQMusicKeys.helperIdleSeconds, default: 300)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicHelperIdleSeconds) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.helperIdleSeconds)
+            }
+        }
+    }
 
     /// Whether the QQ Music source warms its content at launch.
     ///
@@ -1135,8 +1216,17 @@ public final class AppSettings {
     /// otherwise waits on cold network round-trips. Preloading starts those
     /// requests right after launch instead, so the page is already populated
     /// when opened. It costs some bandwidth and upstream requests up front.
-    @ObservationIgnored
-    @AppStorage("qqMusicPreloadOnLaunch") var qqMusicPreloadOnLaunch: Bool = false
+    var qqMusicPreloadOnLaunch: Bool {
+        get {
+            access(keyPath: \.qqMusicPreloadOnLaunch)
+            return qqMusicBool(QQMusicKeys.preloadOnLaunch, default: false)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicPreloadOnLaunch) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.preloadOnLaunch)
+            }
+        }
+    }
 
     /// Whether the helper's automatic circuit breaker is active.
     ///
@@ -1144,34 +1234,91 @@ public final class AppSettings {
     /// clearly failing. Turning it off means every request is attempted
     /// regardless of recent failures, which is useful for diagnosing whether a
     /// failure is transient, at the cost of retrying into a wall.
-    @ObservationIgnored
-    @AppStorage("qqMusicCircuitBreakerEnabled") var qqMusicCircuitBreakerEnabled: Bool = true
+    var qqMusicCircuitBreakerEnabled: Bool {
+        get {
+            access(keyPath: \.qqMusicCircuitBreakerEnabled)
+            return qqMusicBool(QQMusicKeys.circuitBreakerEnabled, default: true)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicCircuitBreakerEnabled) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.circuitBreakerEnabled)
+            }
+        }
+    }
 
     /// Consecutive failures within the window that trip the breaker.
-    @ObservationIgnored
-    @AppStorage("qqMusicCircuitFailureThreshold") var qqMusicCircuitFailureThreshold: Int = 3
+    var qqMusicCircuitFailureThreshold: Int {
+        get {
+            access(keyPath: \.qqMusicCircuitFailureThreshold)
+            return qqMusicInt(QQMusicKeys.circuitFailureThreshold, default: 3)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicCircuitFailureThreshold) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.circuitFailureThreshold)
+            }
+        }
+    }
 
     /// How long failures are counted over before they age out.
-    @ObservationIgnored
-    @AppStorage("qqMusicCircuitFailureWindowSeconds") var qqMusicCircuitFailureWindowSeconds: Int = 120
+    var qqMusicCircuitFailureWindowSeconds: Int {
+        get {
+            access(keyPath: \.qqMusicCircuitFailureWindowSeconds)
+            return qqMusicInt(QQMusicKeys.circuitFailureWindowSeconds, default: 120)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicCircuitFailureWindowSeconds) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.circuitFailureWindowSeconds)
+            }
+        }
+    }
 
     /// How long the breaker stays open once tripped.
-    @ObservationIgnored
-    @AppStorage("qqMusicCircuitOpenSeconds") var qqMusicCircuitOpenSeconds: Int = 300
+    var qqMusicCircuitOpenSeconds: Int {
+        get {
+            access(keyPath: \.qqMusicCircuitOpenSeconds)
+            return qqMusicInt(QQMusicKeys.circuitOpenSeconds, default: 300)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicCircuitOpenSeconds) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.circuitOpenSeconds)
+            }
+        }
+    }
 
     /// Whether the playback bar shows a favorite button for online tracks.
     ///
     /// Off by default is wrong here: the button is the only way to reach the
     /// account's likes from the player, so it ships visible and can be hidden.
-    @ObservationIgnored
-    @AppStorage("qqMusicShowLikeButton") var qqMusicShowLikeButton: Bool = true
+    var qqMusicShowLikeButton: Bool {
+        get {
+            access(keyPath: \.qqMusicShowLikeButton)
+            return qqMusicBool(QQMusicKeys.showLikeButton, default: true)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicShowLikeButton) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.showLikeButton)
+            }
+        }
+    }
 
     /// Preferred download quality for QQ Music tracks.
     ///
     /// The upstream grants the best tier the account allows, so this is a
     /// ceiling rather than a guarantee.
-    @ObservationIgnored
-    @AppStorage("qqMusicPreferredQuality") var qqMusicPreferredQuality: QQMusicQualityPreference = .automatic
+    var qqMusicPreferredQuality: QQMusicQualityPreference {
+        get {
+            access(keyPath: \.qqMusicPreferredQuality)
+            guard let raw = UserDefaults.standard.string(forKey: QQMusicKeys.preferredQuality),
+                  let value = QQMusicQualityPreference(rawValue: raw)
+            else { return .automatic }
+            return value
+        }
+        set {
+            withMutation(keyPath: \.qqMusicPreferredQuality) {
+                UserDefaults.standard.set(newValue.rawValue, forKey: QQMusicKeys.preferredQuality)
+            }
+        }
+    }
 
     /// Whether to show the playback source switcher (local / Apple Music) in the sidebar.
     /// When false, shows the legacy app header (icon + app name) instead.
