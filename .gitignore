@@ -106,3 +106,11 @@ superteam/
 # Local development notes for the QQ Music source (design docs, plans, logs).
 # Kept out of the repository per project convention.
 /docs/qqmusic/
+
+# Local-only working copies for the QQ Music patch package.
+#   upstream/  pristine upstream source, the reference "unmodified app"
+#   testarea/  disposable area where the patch package is replayed and built
+# qqmusic-integration/ itself IS published — it is the deliverable.
+/upstream/
+/testarea/
+/qqmusic-integration/GUIDE.md

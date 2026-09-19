@@ -86,7 +86,7 @@ KNOWN_METHODS: tuple[str, ...] = (
     "search_artist_artwork",
     "search_track_artwork",
     "search_album_artwork",
-    "fetch_artist_detail",
+    "fetch_artist_biography",
     "fetch_album_detail",
     "fetch_song_detail",
 )
