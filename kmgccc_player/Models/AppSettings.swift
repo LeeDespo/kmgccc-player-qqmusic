@@ -1112,6 +1112,15 @@ public final class AppSettings {
     @ObservationIgnored
     @AppStorage("qqMusicPrefetchDepth") var qqMusicPrefetchDepth: Int = 2
 
+    /// Whether the QQ Music source warms its content at launch.
+    ///
+    /// The browse surfaces request several endpoints at once, so the first visit
+    /// otherwise waits on cold network round-trips. Preloading starts those
+    /// requests right after launch instead, so the page is already populated
+    /// when opened. It costs some bandwidth and upstream requests up front.
+    @ObservationIgnored
+    @AppStorage("qqMusicPreloadOnLaunch") var qqMusicPreloadOnLaunch: Bool = false
+
     /// Whether the helper's automatic circuit breaker is active.
     ///
     /// On by default: it stops the app from hammering an upstream that is

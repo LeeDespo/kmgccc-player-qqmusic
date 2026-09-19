@@ -405,6 +405,8 @@ struct QQMusicSettingsView: View {
                 qualityRow
                 Divider().opacity(0.4)
                 likeButtonRow
+                Divider().opacity(0.4)
+                preloadRow
             }
             .padding(SettingsStyleTokens.groupPadding)
             .background(sectionBackground)
@@ -439,6 +441,20 @@ struct QQMusicSettingsView: View {
                  ? "不预取：只下载你实际播放的那一首，播放下一首时需要等待下载。"
                  : "播放当前歌曲时，后台提前下载接下来的 \(settings.qqMusicPrefetchDepth) 首，播完自动续上。")
                 .settingsDescriptionStyle()
+        }
+    }
+
+    private var preloadRow: some View {
+        let settings = AppSettings.shared
+        return VStack(alignment: .leading, spacing: 6) {
+            SettingsSwitchRow(
+                title: "启动时预加载在线内容",
+                isOn: Binding(
+                    get: { settings.qqMusicPreloadOnLaunch },
+                    set: { settings.qqMusicPreloadOnLaunch = $0 }
+                ),
+                detail: "应用启动后后台获取猜你喜欢、新歌电台与电台列表，打开 QQ 音乐页时内容已就绪。会提前消耗一些流量与上游请求。"
+            )
         }
     }
 

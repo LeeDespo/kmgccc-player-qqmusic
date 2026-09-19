@@ -129,6 +129,16 @@ final class LibrarySession: LibrarySessionLifecycle {
         self.qqMusicOnlineCoordinator = onlineCoordinator
     }
 
+    /// Warm the online source in the background when the user has asked for it.
+    ///
+    /// Runs after the library itself is up so it never delays local content.
+    func preloadQQMusicIfEnabled() {
+        guard AppSettings.shared.qqMusicPreloadOnLaunch else { return }
+        Task { [qqMusicOnlineCoordinator] in
+            await qqMusicOnlineCoordinator.preloadAtLaunch()
+        }
+    }
+
     func load() async throws {
         precondition(!isClosed)
         guard !isLoaded else { return }
@@ -164,6 +174,10 @@ final class LibrarySession: LibrarySessionLifecycle {
             try await startManagedLibraryMonitor(libraryChangeMonitor)
         }
         isLoaded = true
+
+        // Started only after the library is up, so warming the online source
+        // can never delay local content.
+        preloadQQMusicIfEnabled()
     }
 
     /// Switch-time first reconcile contract: every known source is attempted
