@@ -508,6 +508,20 @@ struct QQMusicSettingsView: View {
 
                 labeledValue("组件目录", QQMusicHelperProcess.externalHelperDirectory.path, monospaced: true)
 
+                Divider().opacity(0.4)
+
+                stepperRow(
+                    title: "空闲保持时间",
+                    value: Binding(
+                        get: { AppSettings.shared.qqMusicHelperIdleSeconds },
+                        set: { AppSettings.shared.qqMusicHelperIdleSeconds = $0 }
+                    ),
+                    range: 30...1800,
+                    unit: "秒",
+                    step: 30,
+                    detail: "组件在空闲这么久之后退出。保持得久一些可以避免每次切页都重新启动组件（这是感觉变慢的主要原因），代价是常驻内存。"
+                )
+
                 HStack(spacing: 8) {
                     Button("在访达中显示") { revealHelperDirectory() }
                     Button("重新检查") { Task { await refreshStatus() } }
@@ -517,6 +531,7 @@ struct QQMusicSettingsView: View {
             .padding(SettingsStyleTokens.groupPadding)
             .background(sectionBackground)
 
+            noticesSection
             circuitBreakerSection
         }
         .onChange(of: AppSettings.shared.qqMusicCircuitBreakerEnabled) { _, _ in
@@ -533,6 +548,34 @@ struct QQMusicSettingsView: View {
         }
     }
 
+    /// Which problem messages the browse page is allowed to show.
+    private var noticesSection: some View {
+        VStack(alignment: .leading, spacing: SettingsStyleTokens.groupSpacing) {
+            SettingsHeaderLabel(title: "提示与通知", systemImage: "bell")
+
+            VStack(alignment: .leading, spacing: 12) {
+                SettingsSwitchRow(
+                    title: "显示熔断与限流提示",
+                    isOn: Binding(
+                        get: { AppSettings.shared.qqMusicShowCircuitNotices },
+                        set: { AppSettings.shared.qqMusicShowCircuitNotices = $0 }
+                    ),
+                    detail: "请求过于频繁、被暂停等提示。关闭后这类提示不再显示，请求行为不受影响。"
+                )
+                SettingsSwitchRow(
+                    title: "显示其他异常提示",
+                    isOn: Binding(
+                        get: { AppSettings.shared.qqMusicShowGeneralNotices },
+                        set: { AppSettings.shared.qqMusicShowGeneralNotices = $0 }
+                    ),
+                    detail: "加载失败、导入失败等提示。关闭后同样不再显示。"
+                )
+            }
+            .padding(SettingsStyleTokens.groupPadding)
+            .background(sectionBackground)
+        }
+    }
+
     /// Circuit breaker controls.
     ///
     /// The breaker exists so a failing upstream is not hammered; the defaults
@@ -540,8 +583,7 @@ struct QQMusicSettingsView: View {
     /// depends on the account and connection, and because waiting out an
     /// automatic cooldown is pointless when the upstream is already reachable.
     private var circuitBreakerSection: some View {
-        let settings = AppSettings.shared
-        return VStack(alignment: .leading, spacing: SettingsStyleTokens.groupSpacing) {
+        VStack(alignment: .leading, spacing: SettingsStyleTokens.groupSpacing) {
             SettingsHeaderLabel(title: "熔断", systemImage: "bolt.horizontal.circle")
 
             VStack(alignment: .leading, spacing: 12) {
@@ -560,41 +602,47 @@ struct QQMusicSettingsView: View {
                 SettingsSwitchRow(
                     title: "启用自动熔断",
                     isOn: Binding(
-                        get: { settings.qqMusicCircuitBreakerEnabled },
-                        set: { settings.qqMusicCircuitBreakerEnabled = $0 }
+                        get: { AppSettings.shared.qqMusicCircuitBreakerEnabled },
+                        set: { AppSettings.shared.qqMusicCircuitBreakerEnabled = $0 }
                     ),
                     detail: "连续请求失败达到阈值时暂停一段时间，避免持续冲击上游。关闭后每个请求都会尝试。"
                 )
 
-                if settings.qqMusicCircuitBreakerEnabled {
+                if AppSettings.shared.qqMusicCircuitBreakerEnabled {
                     Divider().opacity(0.4)
                     stepperRow(
                         title: "失败次数阈值",
-                        value: settings.qqMusicCircuitFailureThreshold,
+                        value: Binding(
+                            get: { AppSettings.shared.qqMusicCircuitFailureThreshold },
+                            set: { AppSettings.shared.qqMusicCircuitFailureThreshold = $0 }
+                        ),
                         range: 1...20,
                         unit: "次",
-                        detail: "统计窗口内累计失败达到该次数即暂停。",
-                        set: { settings.qqMusicCircuitFailureThreshold = $0 }
+                        detail: "统计窗口内累计失败达到该次数即暂停。"
                     )
                     Divider().opacity(0.4)
                     stepperRow(
                         title: "统计窗口",
-                        value: settings.qqMusicCircuitFailureWindowSeconds,
+                        value: Binding(
+                            get: { AppSettings.shared.qqMusicCircuitFailureWindowSeconds },
+                            set: { AppSettings.shared.qqMusicCircuitFailureWindowSeconds = $0 }
+                        ),
                         range: 10...600,
                         unit: "秒",
                         step: 10,
-                        detail: "只统计这段时间内的失败，更早的失败会被忽略。",
-                        set: { settings.qqMusicCircuitFailureWindowSeconds = $0 }
+                        detail: "只统计这段时间内的失败，更早的失败会被忽略。"
                     )
                     Divider().opacity(0.4)
                     stepperRow(
                         title: "暂停时长",
-                        value: settings.qqMusicCircuitOpenSeconds,
+                        value: Binding(
+                            get: { AppSettings.shared.qqMusicCircuitOpenSeconds },
+                            set: { AppSettings.shared.qqMusicCircuitOpenSeconds = $0 }
+                        ),
                         range: 10...1800,
                         unit: "秒",
                         step: 30,
-                        detail: "触发后暂停请求的时长。设为较小值配合登录使用效果更好。",
-                        set: { settings.qqMusicCircuitOpenSeconds = $0 }
+                        detail: "触发后暂停请求的时长。设为较小值配合登录使用效果更好。"
                     )
                 }
             }
@@ -603,24 +651,29 @@ struct QQMusicSettingsView: View {
         }
     }
 
+    /// A stepper row bound to a `@AppStorage`-backed setting.
+    ///
+    /// The binding is passed in rather than a value plus setter: taking a
+    /// `value` snapshot meant the row kept rendering the value captured when
+    /// the section was built, so pressing the stepper changed the setting but
+    /// the displayed number never moved.
     private func stepperRow(
         title: String,
-        value: Int,
+        value: Binding<Int>,
         range: ClosedRange<Int>,
         unit: String,
         step: Int = 1,
-        detail: String,
-        set: @escaping (Int) -> Void
+        detail: String
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
                 Text(title)
                     .settingsRowLabelStyle()
                 Spacer(minLength: 12)
-                Text("\(value) \(unit)")
+                Text("\(value.wrappedValue) \(unit)")
                     .font(.system(size: 12).monospacedDigit())
                     .foregroundStyle(.secondary)
-                Stepper("", value: Binding(get: { value }, set: set), in: range, step: step)
+                Stepper("", value: value, in: range, step: step)
                     .labelsHidden()
             }
             Text(detail)
@@ -725,6 +778,7 @@ struct QQMusicSettingsView: View {
     /// appear to do nothing until the next app launch.
     private func pushCircuitConfiguration() async {
         let settings = AppSettings.shared
+        await helper.applyIdleTimeout(TimeInterval(settings.qqMusicHelperIdleSeconds))
         await helper.applyCircuitConfiguration(
             isEnabled: settings.qqMusicCircuitBreakerEnabled,
             threshold: settings.qqMusicCircuitFailureThreshold,

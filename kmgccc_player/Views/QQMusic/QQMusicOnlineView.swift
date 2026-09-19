@@ -113,8 +113,16 @@ struct QQMusicOnlineView: View {
         // Driven by `section` rather than by the selector's setter: the setter
         // only fires on a user tap, so a section restored or defaulted to would
         // never load — which is how the "我的" page ended up permanently empty.
-        .task(id: section) {
-            await loadContent(for: section)
+        // Deliberately NOT `.task(id:)`: that ties the request to this view's
+        // task, so switching sections cancels an in-flight helper request and
+        // surfaces as "操作被取消". The loaders guard against duplicate work
+        // themselves, so firing and forgetting is safe.
+        .onAppear {
+            let target = section
+            Task { await loadContent(for: target) }
+        }
+        .onChange(of: section) { _, newValue in
+            Task { await loadContent(for: newValue) }
         }
 
     }
@@ -545,11 +553,16 @@ struct QQMusicOnlineView: View {
 
     private var currentTitle: String {
         if let drilledDownTitle { return drilledDownTitle }
-        if !coordinator.searchKeyword.isEmpty {
+        // Search state is only meaningful on the search page; showing it
+        // elsewhere made results follow the user across tabs.
+        if isOnSearchPage, !coordinator.searchKeyword.isEmpty {
             return "搜索：\(coordinator.searchKeyword)"
         }
         return section.title
     }
+
+    /// Whether the search page is the one on screen.
+    private var isOnSearchPage: Bool { section == .search }
 
     /// Leave whichever drill-down is active.
     private func closeDrillDown() {
@@ -562,16 +575,14 @@ struct QQMusicOnlineView: View {
 
     private var isShowingTrackList: Bool {
         drilledDownTitle != nil
-            || !coordinator.searchKeyword.isEmpty
+            || (isOnSearchPage && !coordinator.searchKeyword.isEmpty)
             || section == .recommend
     }
 
     /// True when the recommend feed is the list on screen, which is the only
     /// pageable (endless) list.
     private var isShowingRecommendFeed: Bool {
-        coordinator.loadedPlaylistTitle.isEmpty
-            && coordinator.searchKeyword.isEmpty
-            && section == .recommend
+        drilledDownTitle == nil && section == .recommend
     }
 
     private var currentTrackList: [QQMusicOnlineTrack] {
@@ -579,7 +590,7 @@ struct QQMusicOnlineView: View {
             // Both playlist and station tracks live in `playlistTracks`.
             return coordinator.playlistTracks
         }
-        if !coordinator.searchKeyword.isEmpty {
+        if isOnSearchPage, !coordinator.searchKeyword.isEmpty {
             return coordinator.searchResults
         }
         return coordinator.recommendFeed
@@ -594,8 +605,6 @@ struct QQMusicOnlineView: View {
             } else {
                 radioTrackList
             }
-        } else if !coordinator.searchKeyword.isEmpty {
-            trackList(coordinator.searchResults, loading: coordinator.isSearching)
         } else {
             switch section {
             case .recommend:
