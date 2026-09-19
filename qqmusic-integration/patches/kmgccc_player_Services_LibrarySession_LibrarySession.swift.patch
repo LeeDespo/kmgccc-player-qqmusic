@@ -1,0 +1,71 @@
+diff --git a/kmgccc_player/Services/LibrarySession/LibrarySession.swift b/kmgccc_player/Services/LibrarySession/LibrarySession.swift
+index 8f975be4..186f6c01 100644
+--- a/kmgccc_player/Services/LibrarySession/LibrarySession.swift
++++ b/kmgccc_player/Services/LibrarySession/LibrarySession.swift
+@@ -19,6 +19,9 @@ final class LibrarySession: LibrarySessionLifecycle {
+     let libraryViewModel: LibraryViewModel
+     let importEnrichmentService: ImportEnrichmentService
+     let fileImportService: FileImportService
++    /// Online QQ Music browsing plus download-into-library. Session-scoped so a
++    /// download always lands in the library that is currently open.
++    let qqMusicOnlineCoordinator: QQMusicOnlineCoordinator
+     let storageBackend: any LibraryStorageBackend
+     let referencedSourceStore: ReferencedSourceStore?
+     let referencedSourceScope: ReferencedSourceScope?
+@@ -98,6 +101,45 @@ final class LibrarySession: LibrarySessionLifecycle {
+         self.playbackCoordinator = playbackCoordinator
+         self.lyricsViewModel = lyricsViewModel
+         self.ledMeterProvider = ledMeterProvider
++
++        // Constructed here rather than injected so the online source always
++        // targets this session's library, player and staging root.
++        let onlineCoordinator = QQMusicOnlineCoordinator()
++        onlineCoordinator.importService = fileImportService
++        onlineCoordinator.paths = context.paths
++        onlineCoordinator.playerViewModel = playerViewModel
++        // Settings live on the main actor; the helper owns them locally so its
++        // breaker can be consulted without hopping actors on every request.
++        let settings = AppSettings.shared
++        let circuit = (
++            isEnabled: settings.qqMusicCircuitBreakerEnabled,
++            threshold: settings.qqMusicCircuitFailureThreshold,
++            window: TimeInterval(settings.qqMusicCircuitFailureWindowSeconds),
++            open: TimeInterval(settings.qqMusicCircuitOpenSeconds)
++        )
++        Task {
++            await QQMusicHelperProcess.shared.applyIdleTimeout(
++                TimeInterval(settings.qqMusicHelperIdleSeconds)
++            )
++            await QQMusicHelperProcess.shared.applyCircuitConfiguration(
++                isEnabled: circuit.isEnabled,
++                threshold: circuit.threshold,
++                failureWindow: circuit.window,
++                openDuration: circuit.open
++            )
++        }
++        onlineCoordinator.libraryViewModel = libraryViewModel
++        self.qqMusicOnlineCoordinator = onlineCoordinator
++    }
++
++    /// Warm the online source in the background when the user has asked for it.
++    ///
++    /// Runs after the library itself is up so it never delays local content.
++    func preloadQQMusicIfEnabled() {
++        guard AppSettings.shared.qqMusicPreloadOnLaunch else { return }
++        Task { [qqMusicOnlineCoordinator] in
++            await qqMusicOnlineCoordinator.preloadAtLaunch()
++        }
+     }
+ 
+     func load() async throws {
+@@ -135,6 +177,10 @@ final class LibrarySession: LibrarySessionLifecycle {
+             try await startManagedLibraryMonitor(libraryChangeMonitor)
+         }
+         isLoaded = true
++
++        // Started only after the library is up, so warming the online source
++        // can never delay local content.
++        preloadQQMusicIfEnabled()
+     }
+ 
+     /// Switch-time first reconcile contract: every known source is attempted

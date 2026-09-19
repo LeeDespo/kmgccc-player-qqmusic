@@ -1,0 +1,7 @@
+diff --git a/Tools/QQMusicHelper/requirements.txt b/Tools/QQMusicHelper/requirements.txt
+index 028db04d..eaa5715e 100644
+--- a/Tools/QQMusicHelper/requirements.txt
++++ b/Tools/QQMusicHelper/requirements.txt
+@@ -1 +1 @@
+-qqmusic-api-python==0.5.3
++qqmusic-api-python==0.7.3

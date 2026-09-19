@@ -1,0 +1,29 @@
+diff --git a/kmgccc_player/AppKit/AppKitMainSplitPanes.swift b/kmgccc_player/AppKit/AppKitMainSplitPanes.swift
+index 48ab26f6..015eb1f7 100644
+--- a/kmgccc_player/AppKit/AppKitMainSplitPanes.swift
++++ b/kmgccc_player/AppKit/AppKitMainSplitPanes.swift
+@@ -293,6 +293,16 @@ struct AppKitMainContentPaneRoot: View {
+                     }
+                     .ignoresSafeArea(.container, edges: .top)
+                     .id("appkit-main-nowplaying")
++                case .qqMusicOnline:
++                    if let qqMusicOnlineCoordinator = appSession.qqMusicOnlineCoordinator {
++                        QQMusicOnlineView()
++                            .environment(qqMusicOnlineCoordinator)
++                            .environment(\.qqMusicArtworkLoader, qqMusicOnlineCoordinator.artworkLoader)
++                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
++                            .id("appkit-main-qqmusic-online")
++                    } else {
++                        Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
++                    }
+                 }
+               }
+             }
+@@ -300,6 +310,7 @@ struct AppKitMainContentPaneRoot: View {
+             if !FullscreenWindowManager.shared.isWindowedFullscreenActive {
+                 GeometryReader { proxy in
+                     MiniPlayerView()
++                        .environment(appSession.qqMusicOnlineCoordinator)
+                         .onGeometryChange(for: CGRect.self) { geometry in
+                             geometry.frame(in: .global)
+                         } action: { newRect in

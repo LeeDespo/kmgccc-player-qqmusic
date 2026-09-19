@@ -1,0 +1,62 @@
+diff --git a/kmgccc_player/Services/Import/FileImportService.swift b/kmgccc_player/Services/Import/FileImportService.swift
+index 0fc6e17a..3ae73536 100644
+--- a/kmgccc_player/Services/Import/FileImportService.swift
++++ b/kmgccc_player/Services/Import/FileImportService.swift
+@@ -381,6 +381,57 @@ final class FileImportService: FileImportServiceProtocol {
+         return tracks
+     }
+ 
++    /// Import audio this app produced itself into managed storage.
++    ///
++    /// Used by online-source downloads: the file is already on disk, so the
++    /// input scan and security-scope authorization that `importAutomatically`
++    /// performs are unnecessary. Metadata, sidecars, dedup and visibility all
++    /// run through the normal pipeline.
++    ///
++    /// Only valid for managed libraries. A referenced library would record a
++    /// locator pointing back at the caller's staging file, which the caller
++    /// then deletes — the track would break the moment it was imported.
++    var supportsProducedAudioImport: Bool { storageBackend.mode == .managed }
++
++    @discardableResult
++    func importProducedAudio(
++        at audioURL: URL,
++        metadataOverride: ImportMetadataOverride?,
++        origin: LibraryImportOrigin = .onlineDownload
++    ) async -> [Track] {
++        guard supportsProducedAudioImport else {
++            Log.error(
++                "[Import] importProducedAudio requires a managed library; current mode is \(storageBackend.mode.rawValue)",
++                category: .import
++            )
++            return []
++        }
++        let tracks = await importURLs(
++            [audioURL],
++            to: nil,
++            metadataOverride: metadataOverride,
++            presentation: .automatic,
++            isManualSelection: false,
++            origin: origin
++        )
++        publishImportFailuresIfNeeded(lastImportFailures, origin: origin)
++        return tracks
++    }
++
++    /// Record which online source a track came from and persist it.
++    ///
++    /// Kept separate from the import transaction so a provenance write failure
++    /// cannot roll back a successfully imported file.
++    func applyProvenance(_ provenance: OnlineImportProvenance, to tracks: [Track]) async {
++        guard !tracks.isEmpty else { return }
++        for track in tracks {
++            track.qqMusicSongMid = provenance.songMid
++            track.metadataSource = provenance.source
++            track.metadataFetchedAt = Date()
++        }
++        await repository.persistTrackMetaOnly(tracks, reason: "online-import-provenance")
++    }
++
+     /// Setup entry. The caller retains `selection` across this entire call so the
+     /// backend can sign durable folder/file bookmarks before picker access expires.
+     func importInitialSelection(_ selection: LibraryInitialImportSelection) async -> LibraryInitialImportResult {

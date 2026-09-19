@@ -1,0 +1,17 @@
+diff --git a/kmgccc_player/ViewModels/AppSessionHost.swift b/kmgccc_player/ViewModels/AppSessionHost.swift
+index 425749ce..a9e69db2 100644
+--- a/kmgccc_player/ViewModels/AppSessionHost.swift
++++ b/kmgccc_player/ViewModels/AppSessionHost.swift
+@@ -55,6 +55,12 @@ final class AppSessionHost: ObservableObject {
+         activeLibraryBinding.activeSession?.cacheServices
+     }
+ 
++    /// Online QQ Music browsing and download. Nil until a library session is
++    /// active, because a download has nowhere to land without one.
++    var qqMusicOnlineCoordinator: QQMusicOnlineCoordinator? {
++        activeLibraryBinding.activeSession?.qqMusicOnlineCoordinator
++    }
++
+     var homeVM: HomeViewModel {
+         activeLibraryBinding.activeSession?.homeViewModel ?? placeholderHomeViewModel
+     }

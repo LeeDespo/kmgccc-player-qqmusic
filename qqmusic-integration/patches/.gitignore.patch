@@ -1,0 +1,12 @@
+diff --git a/.gitignore b/.gitignore
+index c3238624..fdee352b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -102,3 +102,7 @@ superteam/
+ 
+ # Repo-root reference screenshots (kept locally, not published)
+ /screenshots/
++
++# Local development notes for the QQ Music source (design docs, plans, logs).
++# Kept out of the repository per project convention.
++/docs/qqmusic/

@@ -1,0 +1,13 @@
+diff --git a/scripts/components/qqmusic-helper.sh b/scripts/components/qqmusic-helper.sh
+index e1114b09..3c7b0a79 100644
+--- a/scripts/components/qqmusic-helper.sh
++++ b/scripts/components/qqmusic-helper.sh
+@@ -4,7 +4,7 @@ QQMUSIC_COMPONENT="QQMusicHelper"
+ QQMUSIC_SOURCE="$ROOT/Tools/QQMusicHelper"
+ QQMUSIC_PRODUCT="$PRODUCTS_DIR/qqmusic-helper"
+ QQMUSIC_BUILD_DIR="$WORK_DIR/qqmusic-helper"
+-QQMUSIC_API_VERSION="0.5.3"
++QQMUSIC_API_VERSION="0.7.3"
+ QQMUSIC_PYINSTALLER_VERSION="6.21.0"
+ 
+ qqmusic_stamp_value() {

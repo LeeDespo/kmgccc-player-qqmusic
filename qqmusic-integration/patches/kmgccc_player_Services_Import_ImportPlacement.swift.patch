@@ -1,0 +1,20 @@
+diff --git a/kmgccc_player/Services/Import/ImportPlacement.swift b/kmgccc_player/Services/Import/ImportPlacement.swift
+index cf14c1b0..c988a4c5 100644
+--- a/kmgccc_player/Services/Import/ImportPlacement.swift
++++ b/kmgccc_player/Services/Import/ImportPlacement.swift
+@@ -17,6 +17,15 @@ nonisolated enum LibraryImportOrigin: String, Sendable, Equatable {
+     case playlistDrop
+     case setup
+     case sourceMonitor
++    /// Audio downloaded from an online source and imported by the app itself.
++    case onlineDownload
++}
++
++/// Identifies the online source a downloaded track came from, so the track and
++/// its sidecar keep the upstream id after import.
++nonisolated struct OnlineImportProvenance: Sendable, Equatable {
++    let source: String
++    let songMid: String
+ }
+ 
+ /// Immutable context captured at the instant an import starts. The target is

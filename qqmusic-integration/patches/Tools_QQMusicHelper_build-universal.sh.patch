@@ -1,0 +1,27 @@
+diff --git a/Tools/QQMusicHelper/build-universal.sh b/Tools/QQMusicHelper/build-universal.sh
+index 7e327006..b7424cca 100755
+--- a/Tools/QQMusicHelper/build-universal.sh
++++ b/Tools/QQMusicHelper/build-universal.sh
+@@ -50,12 +50,19 @@ install_and_build_arch() {
+     --workpath "${work_root}" \
+     --specpath "${BUILD_DIR}" \
+     --collect-all qqmusic_api \
+-    --collect-all tarsio \
+     --collect-all pydantic \
+-    --collect-all httpx \
+-    --collect-all httpcore \
++    --collect-all niquests \
++    --collect-all urllib3_future \
++    --collect-all orjson \
++    --collect-all jsonpath_ng \
++    --collect-all paho \
+     --hidden-import qqmusic_api.core.client \
+     --hidden-import qqmusic_api.modules.search \
++    --hidden-import qqmusic_api.modules.song \
++    --hidden-import qqmusic_api.modules.songlist \
++    --hidden-import qqmusic_api.modules.recommend \
++    --hidden-import qqmusic_api.modules.top \
++    --hidden-import qqmusic_api.modules.lyric \
+     --hidden-import qqmusic_api.models.search \
+     "${SCRIPT_DIR}/main.py"
+ }

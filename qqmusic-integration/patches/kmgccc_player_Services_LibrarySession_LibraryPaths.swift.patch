@@ -1,0 +1,36 @@
+diff --git a/kmgccc_player/Services/LibrarySession/LibraryPaths.swift b/kmgccc_player/Services/LibrarySession/LibraryPaths.swift
+index 143ae6ff..b9bda815 100644
+--- a/kmgccc_player/Services/LibrarySession/LibraryPaths.swift
++++ b/kmgccc_player/Services/LibrarySession/LibraryPaths.swift
+@@ -26,6 +26,21 @@ nonisolated struct LibraryPaths: Sendable, Equatable {
+     var upgradeJournalURL: URL { settingsRootURL.appendingPathComponent("library-upgrade.json") }
+     var writerLockURL: URL { settingsRootURL.appendingPathComponent(".writer.lock") }
+ 
++    /// Data produced by the online QQ Music source.
++    ///
++    /// Kept as its own top-level folder rather than mixed into `Cache` so the
++    /// app's own cache eviction can never delete it, and so everything this
++    /// feature produced can be inspected or removed in one place.
++    var qqMusicRootURL: URL { directory("QQMusic") }
++    /// Cached catalogue payloads (recommendations, playlists, rankings).
++    var qqMusicCatalogCacheURL: URL {
++        qqMusicRootURL.appendingPathComponent("Catalog", isDirectory: true)
++    }
++    /// Cached artwork for online tracks and playlists.
++    var qqMusicArtworkCacheURL: URL {
++        qqMusicRootURL.appendingPathComponent("Artwork", isDirectory: true)
++    }
++
+     var transactionsRootURL: URL { directory("Transactions") }
+     var pendingTransactionsRootURL: URL {
+         transactionsRootURL.appendingPathComponent("Pending", isDirectory: true)
+@@ -209,6 +224,9 @@ nonisolated struct LibraryPaths: Sendable, Equatable {
+             importStagingRootURL,
+             libraryScanCacheRootURL,
+             sourceScanCacheRootURL,
++            qqMusicRootURL,
++            qqMusicCatalogCacheURL,
++            qqMusicArtworkCacheURL,
+         ]
+     }
+ 

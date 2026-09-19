@@ -1,0 +1,13 @@
+diff --git a/kmgccc_player/Views/Library/TrackRowView.swift b/kmgccc_player/Views/Library/TrackRowView.swift
+index c47a7acd..3ba2073f 100644
+--- a/kmgccc_player/Views/Library/TrackRowView.swift
++++ b/kmgccc_player/Views/Library/TrackRowView.swift
+@@ -580,7 +580,7 @@ struct TrackRowView<MenuContent: View>: View {
+     }
+ }
+ 
+-private struct TrackRowSelectionBackgroundShape: Shape {
++private nonisolated struct TrackRowSelectionBackgroundShape: Shape {
+     let continuity: TrackRowSelectionContinuity
+     let cornerRadius: CGFloat
+ 

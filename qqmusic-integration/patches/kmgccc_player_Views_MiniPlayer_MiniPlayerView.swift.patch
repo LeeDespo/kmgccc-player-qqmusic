@@ -1,0 +1,72 @@
+diff --git a/kmgccc_player/Views/MiniPlayer/MiniPlayerView.swift b/kmgccc_player/Views/MiniPlayer/MiniPlayerView.swift
+index 23e52580..e9022424 100644
+--- a/kmgccc_player/Views/MiniPlayer/MiniPlayerView.swift
++++ b/kmgccc_player/Views/MiniPlayer/MiniPlayerView.swift
+@@ -21,6 +21,9 @@ struct MiniPlayerView: View {
+     @Environment(LibraryViewModel.self) private var libraryVM
+     @Environment(LibraryCacheServices.self) private var cacheServices
+     @Environment(UIStateViewModel.self) private var uiState
++    /// Optional: present only when a library session is active. Drives the
++    /// favorite button for online-sourced tracks.
++    @Environment(QQMusicOnlineCoordinator.self) private var qqMusicCoordinator: QQMusicOnlineCoordinator?
+     @Environment(\.colorScheme) private var colorScheme
+     @EnvironmentObject private var themeStore: ThemeStore
+     @ObservedObject private var fullscreenWindowManager = FullscreenWindowManager.shared
+@@ -224,9 +227,57 @@ struct MiniPlayerView: View {
+                 disabledColor: controlDisabledColor,
+                 action: { playbackCoordinator.next() }
+             )
++
++            // Favorite. Only shown for online-sourced tracks when enabled in
++            // QQ Music settings: a local file has no upstream id to write to.
++            if settings.qqMusicShowLikeButton, let track = likeableTrack(presentation) {
++                likeButton(for: track)
++            }
+         }
+     }
+ 
++    /// The current track, when it is an online-sourced one that can be liked.
++    private func likeableTrack(_ presentation: NowPlayingPresentation) -> Track? {
++        guard presentation.source == .local,
++              let track = playerVM.currentTrack,
++              track.qqMusicSongMid?.isEmpty == false
++        else { return nil }
++        return track
++    }
++
++    /// Favorite toggle, styled to match the transport controls.
++    ///
++    /// The upstream applies the write asynchronously, so the optimistic state
++    /// flips immediately and reverts if the request is refused.
++    private func likeButton(for track: Track) -> some View {
++        let coordinator = qqMusicCoordinator
++        let isLiked = coordinator?.isLiked(track) ?? false
++        let isPending = coordinator?.isLikePending(track) ?? false
++        return Button {
++            guard let coordinator else { return }
++            Task { await coordinator.toggleLike(track) }
++        } label: {
++            Group {
++                if isPending {
++                    ProgressView()
++                        .controlSize(.small)
++                        .frame(width: 18, height: 18)
++                } else {
++                    Image(systemName: isLiked ? "heart.fill" : "heart")
++                        .font(.system(size: 15, weight: .medium))
++                        .foregroundStyle(isLiked ? themeStore.accentColor : controlPrimaryColor)
++                        .contentTransition(.symbolEffect(.replace))
++                }
++            }
++            .frame(width: 22, height: 22)
++            .contentShape(Rectangle())
++        }
++        .buttonStyle(.plain)
++        .disabled(isPending)
++        .help(isLiked ? "取消收藏" : "收藏到「我喜欢」")
++        .animation(.snappy(duration: 0.2), value: isLiked)
++    }
++
+     private func currentPlaybackMode(for presentation: NowPlayingPresentation) -> PlaybackOrderMode {
+         presentation.localPlaybackOrderMode ?? settings.playbackOrderMode
+     }
