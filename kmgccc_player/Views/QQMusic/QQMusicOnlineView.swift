@@ -86,28 +86,37 @@ struct QQMusicOnlineView: View {
     }
 
     var body: some View {
+        Group {
+            if let artist = openedArtist {
+                // A full page in place of the browse surface, mirroring how the
+                // library swaps in its artist/album detail pages.
+                QQMusicArtistDetailView(artist: artist) {
+                    openedArtist = nil
+                }
+                .environment(coordinator)
+                .environmentObject(themeStore)
+                .environment(\.qqMusicArtworkLoader, coordinator.artworkLoader)
+            } else {
+                browseBody
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var browseBody: some View {
         VStack(spacing: 0) {
             header
             statusBanner
             Divider().opacity(0.3)
             content
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         // Driven by `section` rather than by the selector's setter: the setter
         // only fires on a user tap, so a section restored or defaulted to would
         // never load — which is how the "我的" page ended up permanently empty.
         .task(id: section) {
             await loadContent(for: section)
         }
-        // A separate page rather than a mode of the browse list: the artist
-        // view has its own sub-navigation and should not disturb the section
-        // the user came from.
-        .sheet(item: $openedArtist) { artist in
-            QQMusicArtistDetailView(artist: artist)
-                .environment(coordinator)
-                .environmentObject(themeStore)
-                .environment(\.qqMusicArtworkLoader, coordinator.artworkLoader)
-        }
+
     }
 
     // MARK: - Header

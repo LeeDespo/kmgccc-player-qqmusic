@@ -210,6 +210,20 @@ final class QQMusicOnlineCoordinator {
     // fails. Clearing the list would look like the content vanished, which is
     // exactly what a transient upstream rejection must not do.
 
+    /// Warm the browse surfaces at launch.
+    ///
+    /// Runs the same loaders the pages use, so anything already fetched is a
+    /// cache hit by the time the user opens the tab. Deliberately sequential:
+    /// firing every request at once is the fastest way to trip upstream
+    /// throttling, and this is background work that nothing is waiting on.
+    func preloadAtLaunch() async {
+        guard AppSettings.shared.qqMusicPreloadOnLaunch else { return }
+        Log.info("[QQMusicOnline] preloading at launch", category: .import)
+        await loadInitialContentIfNeeded()
+        await loadNewSongs(region: newSongsRegion)
+        await loadRadioStations()
+    }
+
     func loadInitialContentIfNeeded() async {
         guard recommendFeed.isEmpty, toplistGroups.isEmpty else { return }
         async let feed: Void = loadRecommendFeed()
