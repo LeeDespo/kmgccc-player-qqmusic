@@ -1,5 +1,5 @@
 diff --git a/Tools/QQMusicHelper/main.py b/Tools/QQMusicHelper/main.py
-index 318e53ab..a564fa85 100644
+index 318e53ab..d344dc25 100644
 --- a/Tools/QQMusicHelper/main.py
 +++ b/Tools/QQMusicHelper/main.py
 @@ -1,5 +1,5 @@
@@ -74,7 +74,7 @@ index 318e53ab..a564fa85 100644
 +    "search_artist_artwork",
 +    "search_track_artwork",
 +    "search_album_artwork",
-+    "fetch_artist_detail",
++    "fetch_artist_biography",
 +    "fetch_album_detail",
 +    "fetch_song_detail",
 +)

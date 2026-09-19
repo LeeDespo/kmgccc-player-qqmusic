@@ -2,42 +2,94 @@
 
 本目录让「把 QQ 音乐功能植入一个更新后的 kmgccc_player」变成一条命令的事。
 
-**基线**：`b0de7aa6`（上游 `docs: reorganize public technical architecture documentation (#47)`）
-**已验证**：在一份干净的 `b0de7aa6` 检出上执行 `./apply.sh` 后，产物与开发分支**逐字节一致**，且**构建成功**。
+- **基线**：`b0de7aa6`（上游 `docs: reorganize public technical architecture documentation (#47)`），记录在 `BASE`
+- **已验证**：在一份干净的 `b0de7aa6` 检出上重放后，产物与开发分支**逐字节一致**，且**构建成功、应用能启动**
+
+> 改动了 QQ 音乐功能之后，怎么让这个包跟上？见 **`GUIDE.md`**。
+> 那个文件是本机开发流程说明，按约定不进仓库；这份 README 则是补丁包的一部分。
 
 ---
 
 ## 一、用法
 
+三种场景，选一种。
+
+### 场景 A：本机完整验证（最常用）
+
+在仓库根目录，一条命令走完「清理 → 重放 → 构建 → 启动」：
+
 ```sh
-# 1. 拿到上游新版本（例如已 clone 到 /path/to/kmgccc_player）
-#    把本目录复制进去（或直接在本仓库里执行）
+./qqmusic-integration/test-cycle.sh --sync
+```
+
+- 从 `upstream/`（未改动的原应用）重建 `testarea/`
+- 在测试区重放补丁包并做内容校验
+- 构建 helper 与应用（签名 team 自动从钥匙串取）
+- 启动应用给你测试
+
+调试补丁时只跑一部分：
+
+```sh
+./qqmusic-integration/test-cycle.sh --steps reset,apply          # 只看能否重放
+./qqmusic-integration/test-cycle.sh --steps build --no-launch    # 只构建
+```
+
+### 场景 B：把功能植入别人的 / 新版本的上游
+
+```sh
 cp -R qqmusic-integration /path/to/kmgccc_player/
-
-# 2. 植入
 cd /path/to/kmgccc_player
-./qqmusic-integration/apply.sh --repo .
+./qqmusic-integration/apply.sh --repo . --verify
 
-# 3. 构建
 ./scripts/bootstrap.sh --component qqmusic-helper
 ./scripts/build_and_run.sh
 ```
 
-先看会做什么、不实际改动：
+目标目录**不需要是 git 仓库**。先看会做什么、不实际改动：
 
 ```sh
 ./qqmusic-integration/apply.sh --repo . --dry-run
 ```
 
+### 场景 C：改动后同步补丁包
+
+```sh
+./qqmusic-integration/sync.sh          # 从开发树重新生成 modules/ + patches/
+./qqmusic-integration/sync.sh --check  # 只检查有没有落后（落后则非零退出）
+```
+
 ---
 
-## 二、两类改动，行为完全不同
+## 二、目录结构
 
-理解这一点，就能看懂脚本的输出。
+```
+qqmusic-integration/
+├── README.md    本文件（进仓库）
+├── GUIDE.md     维护指南：如何给补丁包加改动、上游升级时怎么办（不进仓库）
+├── BASE         补丁针对哪个上游提交切的
+├── sync.sh      从开发树重新生成补丁包
+├── apply.sh     把补丁包应用到一份源码上（--reset / --dry-run / --verify）
+├── test-cycle.sh 重置 → 重放 → 构建 → 启动
+├── modules/     新增文件，直接复制
+└── patches/     上游文件补丁，可能需要人工合并
+```
+
+配套的两个目录在仓库根目录（都不进仓库）：
+
+| 目录 | 角色 | 纪律 |
+|---|---|---|
+| `upstream/` | 未改动的原应用源码，冻结参照；带自己的 git 仓库供 `--3way` 使用 | **永不改动** |
+| `testarea/` | 测试区，每次测试从 `upstream/` 整体重建 | **永不在此改代码** |
+
+---
+
+## 三、两类改动，行为完全不同
+
+理解这一点就能看懂脚本的输出。
 
 ### 第一类：`modules/` — 新增文件（10 个）
 
-上游**没有**这些文件，所以直接复制，**永远不会冲突**：
+上游**没有**这些文件，直接复制，**永远不会冲突**：
 
 ```
 kmgccc_player/Services/QQMusic/
@@ -57,25 +109,22 @@ kmgccc_player/Views/Settings/
 
 ### 第二类：`patches/` — 修改上游文件（20 个）
 
-这些文件上游**也有**，改动以 diff 形式存放。**它们只在周围代码仍然匹配时才能干净应用。**
+上游**也有**这些文件，改动以 diff 形式保存。**它们只在周围代码仍然匹配时才能干净应用。**
 
 上游一旦改了这些文件，补丁可能失败——**这是预期行为，不是工具坏了**。
 
 ---
 
-## 三、补丁失败时怎么办
+## 四、补丁失败时怎么办
 
-脚本会继续执行并汇总需要处理的文件。失败意味着**上游改动了那个文件**，需要人工移植意图：
+脚本会继续执行并汇总需要处理的文件。失败意味着**上游改动了那个文件**，
+需要人工移植意图——具体步骤见 `GUIDE.md` 第四节。
 
-```sh
-# 看这个补丁想做什么
-cat qqmusic-integration/patches/kmgccc_player_Views_Sidebar_SidebarView.swift.patch
+要点：看懂补丁想做什么，在**新版**上游代码上手工实现同样的意图，
+把合并结果固化回开发树并重新 `sync.sh`。
 
-# 在新代码里手工实现同样的意图，然后重跑
-./qqmusic-integration/apply.sh --repo .
-```
-
-**不要**用 `git apply --force` 硬来，也不要直接把补丁里的旧代码整段覆盖上去——那会把上游的新改动抹掉。
+**不要**用 `git apply --force` 硬来，也不要把补丁里的旧代码整段覆盖上去——
+那会把上游的新改动抹掉。
 
 ### 补丁清单与改动性质
 
@@ -100,7 +149,7 @@ cat qqmusic-integration/patches/kmgccc_player_Views_Sidebar_SidebarView.swift.pa
 
 ---
 
-## 四、两个已知的上游差异点（可以先检查再决定要不要打）
+## 五、两个已知的上游差异点（可以先检查再决定要不要打）
 
 1. **`Shape` 的 `nonisolated`（2 个文件，4 处）**
    这是**上游既有代码在 Xcode 27 下的编译错误**，与 QQ 音乐功能无关。工程面向 Xcode 26.2，其 `Shape` 协议的 actor 隔离检查更宽松。
@@ -116,12 +165,14 @@ cat qqmusic-integration/patches/kmgccc_player_Views_Sidebar_SidebarView.swift.pa
 
 ---
 
-## 五、构建前置条件
+## 六、构建前置条件
 
 - **helper 必须重建**：`./scripts/bootstrap.sh --component qqmusic-helper`。
-  外部目录（`~/Library/Application Support/kmgccc.player/QQMusicHelper/`）优先于 bundle 内副本，替换该目录即可更新，无需重建应用。
+  外部目录（`~/Library/Application Support/kmgccc.player/QQMusicHelper/`）优先于 bundle 内副本，
+  替换该目录即可更新，无需重建应用。`test-cycle.sh` 的 build 阶段会自动同步过去。
 - **AMLL 子模块**：`git submodule update --init --recursive`。
-- **签名**：原工程用作者自己的 team（`TYU73KR9WW`）。本机构建需覆盖：
+- **签名**：原工程用作者自己的 team（`TYU73KR9WW`），本机无法使用。
+  `test-cycle.sh` 会自动从钥匙串取本机 team id；手工构建时覆盖：
   ```sh
   xcodebuild ... DEVELOPMENT_TEAM=<你的teamID>
   ```
@@ -129,42 +180,25 @@ cat qqmusic-integration/patches/kmgccc_player_Views_Sidebar_SidebarView.swift.pa
 
 ---
 
-## 六、植入后验证清单
+## 七、植入后验证清单
 
 按顺序做，前一项不过就不要往后走：
 
-1. **构建通过**：`./scripts/build_and_run.sh`
-2. **应用启动**，本地曲库、播放、歌词、频谱、全屏、设置**与原来一致**（这是最重要的一条：新功能不得损害原有行为）
-3. Debug 构建通过 → 侧边栏底部出现地球按钮 → 打开 QQ 音乐窗口
-4. 切到「猜你喜欢」有内容；「我的」能读到收藏与自建歌单
-5. 点播一首 → 下载 → 入库 → 播放；播放栏出现收藏按钮
-6. 排行榜点进去能加载（这条曾因 stdout 分块解码 bug 失败）
-7. 搜索页搜索后切换标签，其他标签**不再显示搜索结果**
-
----
-
-## 七、目录结构
-
-```
-qqmusic-integration/
-├── README.md        本文件
-├── apply.sh         一键植入脚本（支持 --dry-run）
-├── modules/         10 个新增文件，直接复制
-└── patches/         20 个上游文件补丁，可能需要人工合并
-```
+1. `./qqmusic-integration/sync.sh --check` 通过（补丁包没落后）
+2. **构建通过**：`test-cycle.sh` 走完
+3. **应用启动**，本地曲库、播放、歌词、频谱、全屏、设置**与原来一致**
+   （这是最重要的一条：新功能不得损害原有行为）
+4. 侧边栏底部出现地球按钮 → 打开 QQ 音乐窗口
+5. 切到「猜你喜欢」有内容；「我的」能读到收藏与自建歌单
+6. 点播一首 → 下载 → 入库 → 播放；播放栏出现收藏按钮
+7. 排行榜点进去能加载（这条曾因 stdout 分块解码 bug 失败）
+8. 搜索页搜索后切换标签，其他标签**不再显示搜索结果**
 
 ---
 
 ## 八、维护约定
 
-- **改动了任意一处，请同步更新本目录**：新文件放进 `modules/`，上游文件改动重新生成补丁。
-  重新生成全部补丁（在开发分支上，`BASE` 为上游基线提交）：
-  ```sh
-  BASE=b0de7aa6
-  for f in $(git diff --name-status $BASE HEAD | grep "^M" | awk '{print $2}'); do
-    safe=$(echo "$f" | tr '/' '_')
-    git diff $BASE HEAD -- "$f" > "qqmusic-integration/patches/${safe}.patch"
-  done
-  ```
+- **改了任意一处，跑 `sync.sh`。** 忘了同步，补丁包会安静地停在旧版本，
+  下次测试会给你「构建成功但行为是旧的」的假象。详见 `GUIDE.md`。
 - **不要把本目录加进 `.gitignore`**：它是给未来的自己用的工具，应当随仓库走。
-  （与之相反，`docs/qqmusic/` 是开发笔记，按约定不进仓库。）
+  （`GUIDE.md`、`docs/qqmusic/` 是开发笔记，按约定不进仓库。）
