@@ -1,0 +1,29 @@
+diff --git a/kmgccc_player/ViewModels/UIStateViewModel.swift b/kmgccc_player/ViewModels/UIStateViewModel.swift
+index 827cfacf..9b5b60a0 100644
+--- a/kmgccc_player/ViewModels/UIStateViewModel.swift
++++ b/kmgccc_player/ViewModels/UIStateViewModel.swift
+@@ -19,6 +19,10 @@ enum ContentMode: Equatable {
+     case library
+     case playbackHistory
+     case nowPlaying
++    /// Online QQ Music browsing. A separate mode rather than a
++    /// `LibrarySelection` case: online rows are not library tracks, carry no
++    /// local file, and must not enter library sort or import flows.
++    case qqMusicOnline
+ }
+ 
+ enum SidebarNoticeStyle: Sendable {
+@@ -389,6 +393,13 @@ final class UIStateViewModel {
+         }
+     }
+ 
++    func showQQMusicOnline() {
++        withAnimation(.easeInOut(duration: 0.3)) {
++            playbackHistoryDate = nil
++            contentMode = .qqMusicOnline
++        }
++    }
++
+     /// Called continuously by library list to keep the latest visible anchor snapshot.
+     func rememberLibraryContext(
+         playlistID: UUID?,

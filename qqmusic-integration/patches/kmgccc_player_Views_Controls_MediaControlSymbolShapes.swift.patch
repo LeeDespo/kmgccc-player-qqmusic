@@ -1,0 +1,31 @@
+diff --git a/kmgccc_player/Views/Controls/MediaControlSymbolShapes.swift b/kmgccc_player/Views/Controls/MediaControlSymbolShapes.swift
+index 884d889b..e4f95b3b 100644
+--- a/kmgccc_player/Views/Controls/MediaControlSymbolShapes.swift
++++ b/kmgccc_player/Views/Controls/MediaControlSymbolShapes.swift
+@@ -38,7 +38,7 @@ private enum SvgPathMap {
+ // MARK: - Play triangle
+ 
+ /// Solid play triangle, matching the demo's rounded-leading-edge outline.
+-struct MediaControlPlaySymbol: Shape {
++nonisolated struct MediaControlPlaySymbol: Shape {
+     func path(in rect: CGRect) -> Path {
+         let vb: CGFloat = 38
+         var path = Path()
+@@ -104,7 +104,7 @@ struct MediaControlPlaySymbol: Shape {
+ // MARK: - Pause bars
+ 
+ /// Solid pause bars (two rounded vertical capsules), demo outline.
+-struct MediaControlPauseSymbol: Shape {
++nonisolated struct MediaControlPauseSymbol: Shape {
+     func path(in rect: CGRect) -> Path {
+         let vb: CGFloat = 38
+         var path = Path()
+@@ -220,7 +220,7 @@ struct MediaControlPauseSymbol: Shape {
+ /// 48.785 — its mirrored counterpart 85.215) on the stage center, NOT the
+ /// viewBox center: the raw outline is off-center inside the 134 box, and a
+ /// viewBox-centered mapping made the previous button's pair visibly lopsided.
+-struct MediaControlSkipArrowSymbol: Shape {
++nonisolated struct MediaControlSkipArrowSymbol: Shape {
+     var mirrored: Bool = false
+ 
+     func path(in rect: CGRect) -> Path {
