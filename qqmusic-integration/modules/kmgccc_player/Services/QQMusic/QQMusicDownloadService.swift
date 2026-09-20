@@ -239,8 +239,21 @@ actor QQMusicDownloadService {
     /// pipeline, which writes them into the library alongside the audio. There
     /// is nothing worth caching separately: by the time lyrics are needed the
     /// track is already a local file with its own lyric asset.
+    ///
+    /// The direct HTTP client is tried first (roughly a quarter of the helper's
+    /// round trip) with the helper as the fallback, so a change in the web path
+    /// cannot cost an import its lyrics.
     private func fetchLyrics(for track: QQMusicOnlineTrack) async -> QQMusicLyricPayload? {
-        let payload = try? await helper.fetchLyric(songMid: track.songMid, songId: track.songId)
+        let payload: QQMusicLyricPayload?
+        do {
+            payload = try await QQMusicWebAPI.shared.fetchLyric(songMid: track.songMid)
+        } catch {
+            Log.warning(
+                "[QQMusicDownload] web lyric failed, falling back to helper: \(error)",
+                category: .import
+            )
+            payload = try? await helper.fetchLyric(songMid: track.songMid, songId: track.songId)
+        }
         guard let payload, !(payload.lyric ?? "").isEmpty else { return nil }
         return payload
     }
