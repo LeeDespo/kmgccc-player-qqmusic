@@ -196,23 +196,6 @@ struct QQMusicOnlineView: View {
                 .frame(maxWidth: .infinity)
                 .frame(height: 30)
 
-                // Controls that belong to a single section live on their own
-                // row so they cannot squeeze the selector.
-                if showsSectionControls {
-                    HStack(spacing: 8) {
-                        if section == .newSongs {
-                            regionPicker
-                        }
-                        if section == .search {
-                            searchKindSelector
-                        }
-                        if section == .mine {
-                            mineSubSelector
-                        }
-                        Spacer()
-                    }
-                }
-
                 // The keyword field belongs to the search page only; keeping it
                 // out of the other sections is what frees the width for the
                 // section selector.
@@ -223,13 +206,26 @@ struct QQMusicOnlineView: View {
                     }
                 }
 
-                // Sits under the tab bar rather than beside the title: it acts
-                // on whatever the tab is showing, and up in the title row it
-                // read as belonging to the page header instead.
-                if isShowingTrackList, !currentTrackList.isEmpty {
+                // Section-specific controls and the play-all action share one
+                // row, so the button sits at the trailing edge of whichever
+                // selector the current tab shows. It appears only when the tab
+                // has a playable list, and disappears with the selector when the
+                // tab changes.
+                if showsSectionControls || (isShowingTrackList && !currentTrackList.isEmpty) {
                     HStack(spacing: 8) {
-                        playAllButton
-                        Spacer()
+                        if section == .newSongs {
+                            regionPicker
+                        }
+                        if section == .search {
+                            searchKindSelector
+                        }
+                        if section == .mine {
+                            mineSubSelector
+                        }
+                        Spacer(minLength: 8)
+                        if isShowingTrackList, !currentTrackList.isEmpty {
+                            playAllButton
+                        }
                     }
                 }
             }
@@ -252,9 +248,6 @@ struct QQMusicOnlineView: View {
             HStack(spacing: 5) {
                 Image(systemName: "play.fill").font(.system(size: 12, weight: .semibold))
                 Text("播放全部").font(.system(size: 13, weight: .medium))
-                Text("\(currentTrackList.count)")
-                    .font(.system(size: 12).monospacedDigit())
-                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
@@ -698,6 +691,38 @@ struct QQMusicOnlineView: View {
                                 guard pageable, index >= tracks.count - 3 else { return }
                                 Task { await coordinator.extendRecommendFeed() }
                             }
+                        }
+
+                        // A long playlist returns one page at a time, so the rest
+                        // is offered once the end of the loaded part is reached
+                        // rather than leaving the list silently truncated.
+                        if !pageable, coordinator.hasMorePlaylistTracks {
+                            Button {
+                                Task { await coordinator.loadMorePlaylistTracks() }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    if coordinator.isLoadingMorePlaylistTracks {
+                                        ProgressView().controlSize(.small)
+                                        Text("正在加载…")
+                                    } else {
+                                        Image(systemName: "arrow.down.circle")
+                                        Text("加载更多（已载入 \(tracks.count) / \(coordinator.openedPlaylistTotal) 首）")
+                                    }
+                                }
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(coordinator.isLoadingMorePlaylistTracks)
+                        } else if !pageable, coordinator.openedPlaylistTotal > 0 {
+                            Text("已全部载入（\(tracks.count) 首）")
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
                         }
 
                         if pageable {

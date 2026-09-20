@@ -1,8 +1,43 @@
 diff --git a/kmgccc_player/Models/AppSettings.swift b/kmgccc_player/Models/AppSettings.swift
-index 6c11cee7..b4f57201 100644
+index 6c11cee7..4c9c8805 100644
 --- a/kmgccc_player/Models/AppSettings.swift
 +++ b/kmgccc_player/Models/AppSettings.swift
-@@ -1105,6 +1105,221 @@ public final class AppSettings {
+@@ -22,10 +22,24 @@ enum PlaybackStartPolicy: Equatable {
+     case useSavedMode
+     case forceSequentialTemporary
+     case forceShuffleTemporary
++    /// An external driver owns the playing order and feeds the queue itself, so
++    /// the engine must advance linearly and not second-guess it.
++    ///
++    /// Used by the online source: it knows the whole list, decides the order
++    /// (shuffling it when the user asked for shuffle), and hands tracks over one
++    /// at a time. Letting the engine shuffle as well would apply a second,
++    /// independent shuffle over the same tracks and inject its own picks from
++    /// whichever tracks happen to be queued — which played out as "shuffle only
++    /// covers what has been downloaded".
++    ///
++    /// Unlike the forced modes this does not override what the UI shows: the
++    /// user's chosen mode stays visible, because the ordering they asked for is
++    /// still what they get — it is just applied by the caller.
++    case externalOrder
+ 
+     var isTemporaryOverride: Bool {
+         switch self {
+-        case .useSavedMode:
++        case .useSavedMode, .externalOrder:
+             return false
+         case .forceSequentialTemporary, .forceShuffleTemporary:
+             return true
+@@ -36,7 +50,7 @@ enum PlaybackStartPolicy: Equatable {
+         switch self {
+         case .useSavedMode:
+             return settings.playbackOrderMode
+-        case .forceSequentialTemporary:
++        case .forceSequentialTemporary, .externalOrder:
+             return .sequence
+         case .forceShuffleTemporary:
+             return .shuffle
+@@ -1105,6 +1119,221 @@ public final class AppSettings {
          static let sourcePreferences = "externalPlaybackSourcePreferences"
      }
  
