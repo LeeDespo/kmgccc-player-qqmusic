@@ -1,8 +1,62 @@
 diff --git a/kmgccc_player/Services/Audio/AVAudioPlaybackService.swift b/kmgccc_player/Services/Audio/AVAudioPlaybackService.swift
-index e4fa1ce6..6c2020b2 100644
+index e4fa1ce6..14df1ceb 100644
 --- a/kmgccc_player/Services/Audio/AVAudioPlaybackService.swift
 +++ b/kmgccc_player/Services/Audio/AVAudioPlaybackService.swift
-@@ -1637,6 +1637,11 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
+@@ -151,6 +151,16 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
+     private var lastProgressScheduledToken: UUID?
+     private var lastKnownShuffleEnabled = AppSettings.shared.shuffleEnabled
+     private var activePlaybackOrderModeOverride: PlaybackOrderMode?
++    /// Set while an external driver (the online source) owns the playing order.
++    ///
++    /// The engine then advances linearly and never enables its own shuffle, even
++    /// if the user's saved mode says shuffle — the caller has already applied
++    /// that mode to the order it is feeding. Separate from
++    /// `activePlaybackOrderModeOverride` because the UI must keep reporting the
++    /// user's real mode: `currentPlaybackOrderMode` feeds the mode button, and
++    /// showing "sequential" there while the user selected shuffle would be
++    /// wrong.
++    private var isExternallyOrdered = false
+     private static let fixedAudioOutputDelaySeconds: Double = 0.18
+     private static let outputLatencyRefreshInterval: TimeInterval = 0.25
+     private var outputLatencySnapshot = AudioOutputLatencySnapshot.zero
+@@ -172,7 +182,11 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
+     }
+ 
+     var currentPlaybackOrderMode: PlaybackOrderMode {
+-        effectivePlaybackOrderMode
++        // The UI's mode button reflects the user's choice, not the engine's
++        // internal routing. While an external driver owns the order the engine
++        // runs sequentially, but showing "sequential" would contradict the
++        // button the user just pressed.
++        displayedPlaybackOrderMode
+     }
+ 
+     // MARK: - Off-Main Preparation
+@@ -1069,11 +1083,23 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
+     private func applyPlaybackStartPolicy(_ policy: PlaybackStartPolicy) -> PlaybackOrderMode {
+         let mode = policy.resolvedMode()
+         activePlaybackOrderModeOverride = policy.isTemporaryOverride ? mode : nil
++        // An external order is the caller's own sequence; the engine must not
++        // shuffle on top of it.
++        isExternallyOrdered = (policy == .externalOrder)
+         lastKnownShuffleEnabled = AppSettings.shared.shuffleEnabled
+         return mode
+     }
+ 
++    /// What the engine is actually ordered to do. Differs from the user's mode
++    /// only while an external driver owns the order.
+     private var effectivePlaybackOrderMode: PlaybackOrderMode {
++        if isExternallyOrdered { return .sequence }
++        return activePlaybackOrderModeOverride ?? AppSettings.shared.playbackOrderMode
++    }
++
++    /// What the UI should show: the user's own choice, never the engine's
++    /// internal routing.
++    private var displayedPlaybackOrderMode: PlaybackOrderMode {
+         activePlaybackOrderModeOverride ?? AppSettings.shared.playbackOrderMode
+     }
+ 
+@@ -1637,6 +1663,11 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
          smartController.insertTracksAfterCurrent(tracks)
      }
  
@@ -14,3 +68,27 @@ index e4fa1ce6..6c2020b2 100644
      func refreshTracks(_ tracks: [Track]) {
          let refreshedByID = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
          guard !refreshedByID.isEmpty else { return }
+@@ -1668,6 +1699,9 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
+ 
+     private func syncShuffleStateIfNeeded() {
+         guard activePlaybackOrderModeOverride == nil else { return }
++        // An external driver owns the order; flipping the engine into shuffle
++        // here would layer a second shuffle over the caller's sequence.
++        guard !isExternallyOrdered else { return }
+         let enabled = AppSettings.shared.shuffleEnabled
+         guard enabled != lastKnownShuffleEnabled else { return }
+ 
+@@ -2529,7 +2563,12 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
+         activePlaybackOrderModeOverride = nil
+         AppSettings.shared.shuffleEnabled = enabled
+         lastKnownShuffleEnabled = enabled
+-        smartController.setShuffle(enabled)
++        // While an external driver owns the order, this toggle is a *preference*
++        // that the driver applies to its own sequence — the online coordinator
++        // listens for the mode change and rebuilds its order. Switching the
++        // engine's shuffle on here as well would shuffle the driver's sequence a
++        // second time, which is the bug being fixed.
++        smartController.setShuffle(isExternallyOrdered ? false : enabled)
+     }
+ 
+     func discardCurrentPlaybackSessionStatsOnce() {

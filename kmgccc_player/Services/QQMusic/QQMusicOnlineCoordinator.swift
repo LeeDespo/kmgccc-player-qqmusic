@@ -202,10 +202,27 @@ final class QQMusicOnlineCoordinator {
     /// Whether `playbackOrder` came from a shuffle, so a redundant rebuild can
     /// be skipped.
     private var orderIsShuffled = false
+    /// Whether this session's list is itself a radio feed.
+    ///
+    /// A radio (猜你喜欢, a station's tracks) is already a random draw from the
+    /// catalogue, so applying shuffle on top changes nothing audible — the user
+    /// is right that "shuffle and sequential sound the same" there. Recording it
+    /// lets the order skip the reshuffle and keeps the two modes honest: the
+    /// list plays in the order the radio produced, which is what the upstream
+    /// considers the sequence.
+    private var sessionIsRadio = false
     /// Tracks this session could not download, so the prefetch loop stops
     /// picking them. Without this an unplayable track is never queued, so it
     /// would be chosen again on every pass and retried forever.
     private var skippedSongMids: Set<String> = []
+    /// The playlist currently open in the drill-down, so its next page can be
+    /// requested. Nil for a ranking, which pages differently.
+    private var openedPlaylistID: Int?
+    private var openedPlaylistIsToplist = false
+    /// The open playlist's own track count. Drives whether another page exists;
+    /// 0 means unknown, which simply disables paging.
+    private(set) var openedPlaylistTotal = 0
+    private(set) var isLoadingMorePlaylistTracks = false
     /// Whether the prefetch loop is currently running. Explicit, because a
     /// *finished* `Task` is neither nil nor cancelled, so task identity cannot
     /// answer "is it still feeding the queue?".
@@ -1285,15 +1302,56 @@ final class QQMusicOnlineCoordinator {
     }
 
     func openPlaylist(id: Int, title: String) async {
+        openedPlaylistID = id
+        openedPlaylistIsToplist = false
+        openedPlaylistTotal = 0
         await loadPlaylistTracks(cacheKey: "songlist-\(id)", title: title) {
             try await self.helper.fetchPlaylistTracks(songlistId: id, limit: 100)
         }
     }
 
     func openToplist(id: Int, title: String) async {
+        openedPlaylistID = nil
+        openedPlaylistIsToplist = true
+        openedPlaylistTotal = 0
         await loadPlaylistTracks(cacheKey: "toplist-\(id)", title: title) {
             try await self.helper.fetchPlaylistTracks(topId: id, limit: 100)
         }
+    }
+
+    /// Load the next page of the open playlist, if it has one.
+    ///
+    /// A playlist routinely holds more tracks than one request returns (the
+    /// upstream caps a page at 100), so the list used to stop at that cap with
+    /// no indication there was more. The web client reports the folder's own
+    /// total, which makes "is there another page?" answerable without guessing.
+    func loadMorePlaylistTracks() async {
+        guard !isLoadingMorePlaylistTracks, hasMorePlaylistTracks else { return }
+        guard let id = openedPlaylistID, !openedPlaylistIsToplist else { return }
+        isLoadingMorePlaylistTracks = true
+        defer { isLoadingMorePlaylistTracks = false }
+
+        let offset = playlistTracks.count
+        do {
+            let page = try await webAPI.fetchPlaylistTracks(songlistId: id, offset: offset, limit: 100)
+            openedPlaylistTotal = page.total
+            let known = Set(playlistTracks.map(\.songMid))
+            let fresh = page.tracks.filter { !known.contains($0.songMid) }
+            guard !fresh.isEmpty else { return }
+            playlistTracks.append(contentsOf: fresh)
+            // Cached as a whole, so reopening the playlist shows what was
+            // already paged in rather than dropping back to page one.
+            await storeTracks(playlistTracks, category: .playlistTracks, key: "songlist-\(id)")
+        } catch {
+            Log.warning("[QQMusicOnline] playlist paging failed: \(error)", category: .import)
+        }
+    }
+
+    /// Whether the open playlist has tracks beyond what is loaded.
+    var hasMorePlaylistTracks: Bool {
+        guard !openedPlaylistIsToplist, openedPlaylistID != nil else { return false }
+        guard openedPlaylistTotal > 0 else { return false }
+        return playlistTracks.count < openedPlaylistTotal
     }
 
     private func loadPlaylistTracks(
@@ -1312,11 +1370,15 @@ final class QQMusicOnlineCoordinator {
             if let cached = await cachedTracks(.playlistTracks, key: cacheKey, force: false) {
                 playlistTracks = cached
                 report(nil)
+                // Still ask the upstream for the total so paging can be offered;
+                // a cached first page must not hide the rest of the playlist.
+                await refreshOpenedPlaylistTotal()
                 return
             }
             let fetched = try await fetch()
             await storeTracks(fetched, category: .playlistTracks, key: cacheKey)
             playlistTracks = fetched
+            await refreshOpenedPlaylistTotal()
             report(nil)
         } catch {
             // Deliberately keep `playlistTracks` as-is. A failed open must not
@@ -1326,9 +1388,28 @@ final class QQMusicOnlineCoordinator {
         }
     }
 
+    /// Learn how many tracks the open playlist holds.
+    ///
+    /// Asked separately from the track page because the helper's route does not
+    /// report it. Failure leaves the total at 0, which just means the "load
+    /// more" affordance stays hidden rather than the page breaking.
+    private func refreshOpenedPlaylistTotal() async {
+        guard let id = openedPlaylistID, !openedPlaylistIsToplist else { return }
+        do {
+            let page = try await webAPI.fetchPlaylistTracks(songlistId: id, offset: 0, limit: 1)
+            openedPlaylistTotal = page.total
+        } catch {
+            openedPlaylistTotal = 0
+            Log.warning("[QQMusicOnline] playlist total unavailable: \(error)", category: .import)
+        }
+    }
+
     func closePlaylist() {
         playlistTracks = []
         loadedPlaylistTitle = ""
+        openedPlaylistID = nil
+        openedPlaylistIsToplist = false
+        openedPlaylistTotal = 0
     }
 
     /// Queue an online track to play right after the current one.
@@ -1391,7 +1472,13 @@ final class QQMusicOnlineCoordinator {
         stopPrefetch()
         sessionTracks = playable
         sessionSupportsPaging = pageable
+        // A radio's own rotation is already a random draw from the catalogue, so
+        // shuffling it changes nothing audible. Derived from live radio state
+        // rather than a parameter, so every entry point gets it right without
+        // having to remember.
+        sessionIsRadio = pageable || !radioStationTitle.isEmpty || activeRadioStationID != nil
         sessionQueueSongMids = playable.map(\.songMid)
+        skippedSongMids = []
         // Everything on screen counts as seen, so a later refresh cannot
         // re-queue a track the session already holds.
         seenFeedSongMids.formUnion(playable.map(\.songMid))
@@ -1413,8 +1500,11 @@ final class QQMusicOnlineCoordinator {
 
         guard let first = await materialize(seed) else { return }
 
-        // Start the tapped track, then let the queue grow behind it.
-        playerViewModel.playTracks([first], startingAt: 0)
+        // `externalOrder`: this session feeds the queue itself, so the engine
+        // must advance linearly rather than shuffling the very same tracks a
+        // second time. The user's mode is still honoured — it decided the order
+        // above.
+        playerViewModel.playTracks([first], startingAt: 0, startPolicy: .externalOrder)
         activePlayingSongMid = seed.songMid
         report(playbackStatusMessage(for: seed))
 
@@ -1473,7 +1563,7 @@ final class QQMusicOnlineCoordinator {
             return
         }
 
-        let shuffle = wantsShuffle
+        let shuffle = wantsShuffle && !sessionIsRadio
         // The anchor is the playing track; without one, fall back to the head.
         let anchor = currentMid.flatMap { mids.contains($0) ? $0 : nil } ?? mids[0]
         let anchorIndex = mids.firstIndex(of: anchor) ?? 0
@@ -1542,11 +1632,19 @@ final class QQMusicOnlineCoordinator {
     }
 
     /// Message shown when a session starts, so the user knows the shuffle range.
+    /// Message shown when a session starts.
+    ///
+    /// States the shuffle range explicitly, because "shuffle" means different
+    /// things depending on what was played: shuffling inside 我喜欢 walks that
+    /// list, while a radio is already random and shuffling it changes nothing.
     private func playbackStatusMessage(for track: QQMusicOnlineTrack) -> String {
+        if sessionIsRadio {
+            return "正在播放：\(track.title)（电台随机推荐）"
+        }
         guard wantsShuffle, sessionAllSongMids.count > 1 else {
             return "正在播放：\(track.title)"
         }
-        return "正在播放：\(track.title)（随机播放，共 \(sessionAllSongMids.count) 首）"
+        return "正在播放：\(track.title)（在本列表 \(sessionAllSongMids.count) 首内随机）"
     }
 
     /// Download `track` (or reuse an already-imported copy) and return its
@@ -1732,16 +1830,49 @@ final class QQMusicOnlineCoordinator {
         guard !sessionTracks.isEmpty else { return }
         let mid = playerViewModel?.currentTrack?.qqMusicSongMid
         activePlayingSongMid = mid
+
+        // Playback moved to something outside this session. That happens when
+        // the user plays from a local library page, and it is the signal to hand
+        // the queue back to the app's own logic: this session stops feeding, so
+        // the player's normal sequential/shuffle behaviour takes over from here.
+        //
+        // Only a track that is genuinely *not* part of the session counts. A
+        // brief nil `currentTrack` during a swap, or a track the session is
+        // still about to reach, must not end it.
+        guard let mid else { return }
+        guard sessionTracks.contains(where: { $0.songMid == mid }) else {
+            releaseSessionForExternalPlayback()
+            return
+        }
+
         // The player moved on; make sure the next tracks are queued.
         //
         // Liveness is tracked with a flag rather than by inspecting the task:
         // a *finished* task is neither nil nor cancelled, so the old check
         // (`prefetchTask == nil || isCancelled`) could never restart a loop that
         // had exited — playback would simply stop for good.
-        guard let mid, sessionTracks.contains(where: { $0.songMid == mid }) else { return }
         if !isPrefetching {
             beginPrefetch()
         }
+    }
+
+    /// Stop owning the queue because playback moved to a non-session track.
+    ///
+    /// Clears the session state but leaves the already-imported tracks and the
+    /// queue untouched: whatever is playing keeps playing, and the app's own
+    /// playback logic resumes control of the order from the current track on.
+    private func releaseSessionForExternalPlayback() {
+        stopPrefetch()
+        sessionTracks = []
+        sessionAllSongMids = []
+        playbackOrder = []
+        orderIsShuffled = false
+        sessionQueueSongMids = []
+        sessionIsRadio = false
+        Log.info(
+            "[QQMusicOnline] session released; playback continues under the app's own queue logic",
+            category: .import
+        )
     }
 
     // MARK: - Download & import

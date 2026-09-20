@@ -163,12 +163,70 @@ nonisolated struct QQMusicWebAPI: Sendable {
             return QQMusicOnlinePlaylist(
                 id: id,
                 title: (entry["dissname"] as? String) ?? "未命名歌单",
-                coverURL: entry["logo"] as? String,
+                coverURL: Self.normalizedArtworkURL(entry["logo"] as? String),
                 creator: (entry["nickname"] as? String) ?? "",
                 songCount: Self.parseInt(entry["songnum"]),
                 playCount: Self.parseInt(entry["listennum"])
             )
         }
+    }
+
+    /// One page of a playlist's tracks, plus the list's own total.
+    ///
+    /// A playlist routinely holds more than the upstream's per-request cap, so
+    /// the caller needs the total to know whether to keep paging. Returning it
+    /// with the page keeps that decision here rather than making the caller
+    /// guess by fetching until a short page.
+    func fetchPlaylistTracks(
+        songlistId: Int,
+        offset: Int,
+        limit: Int
+    ) async throws -> (tracks: [QQMusicOnlineTrack], total: Int) {
+        guard let credential = loadCredential() else {
+            throw QQMusicWebAPIError.noCredential
+        }
+        let request = makeRequest(
+            credential: credential,
+            module: "music.srfDissInfo.DissInfo",
+            method: "CgiGetDiss",
+            param: [
+                "disstid": songlistId,
+                "tag": true,
+                "song_begin": offset,
+                "song_num": limit,
+                "userinfo": true,
+            ]
+        )
+        let data = try Self.payload(try await send(request))
+        let tracks = (data["songlist"] as? [[String: Any]] ?? []).compactMap(Self.decodeTrack)
+        let total = Self.parseInt((data["dirinfo"] as? [String: Any])?["songnum"]) ?? tracks.count
+        return (tracks, total)
+    }
+
+    /// One page of a ranking's tracks.
+    ///
+    /// A separate call because rankings live on a different module and return a
+    /// differently shaped payload (an offset-based window rather than a folder
+    /// listing).
+    func fetchToplistTracks(
+        topId: Int,
+        offset: Int,
+        limit: Int
+    ) async throws -> [QQMusicOnlineTrack] {
+        guard let credential = loadCredential() else {
+            throw QQMusicWebAPIError.noCredential
+        }
+        let request = makeRequest(
+            credential: credential,
+            module: "musicToplist.ToplistInfoServer",
+            method: "GetDetail",
+            param: ["topid": topId, "offset": offset, "num": limit, "period": ""]
+        )
+        let data = try Self.payload(try await send(request))
+        // `data.data.song` holds the rows, unlike the playlist response.
+        let nested = data["data"] as? [String: Any]
+        let rows = (nested?["song"] as? [[String: Any]]) ?? (data["songInfoList"] as? [[String: Any]]) ?? []
+        return rows.compactMap(Self.decodeTrack)
     }
 
     /// Lyrics for a track, plus translation and romanization when the upstream
@@ -351,11 +409,13 @@ nonisolated struct QQMusicWebAPI: Sendable {
         let file = raw["file"] as? [String: Any]
 
         // The album cover follows a stable URL pattern from the album mid, which
-        // saves a second request per track just to obtain artwork.
+        // saves a second request per track just to obtain artwork. Run through
+        // the normalizer like every other cover, so a future change to this
+        // pattern cannot reintroduce an http:// URL that ATS would refuse.
         let albumMid = album?["mid"] as? String
-        let imageURL = albumMid.map {
-            "https://y.gtimg.cn/music/photo_new/T002R800x800M000\($0).jpg"
-        }
+        let imageURL = Self.normalizedArtworkURL(
+            albumMid.map { "https://y.gtimg.cn/music/photo_new/T002R800x800M000\($0).jpg" }
+        )
 
         // `pay` is a nested object in the CGI payload (`pay.pay_play`), not a
         // flat key, so the nested form is checked first and the flat one is
@@ -409,6 +469,24 @@ nonisolated struct QQMusicWebAPI: Sendable {
     private static func albumCoverURL(mid: String?) -> String? {
         guard let mid, !mid.isEmpty else { return nil }
         return "https://y.gtimg.cn/music/photo_new/T002R800x800M000\(mid).jpg"
+    }
+
+    /// Force artwork URLs onto HTTPS.
+    ///
+    /// The upstream hands back `http://y.gtimg.cn/...` and `http://qpic.y.qq.com/...`
+    /// and both hosts serve the same image over TLS. The app has no App Transport
+    /// Security exception, so an `http://` URL is refused outright and the cover
+    /// silently stays blank — which is exactly how playlist covers were broken
+    /// while the (already-https) album covers worked.
+    private static func normalizedArtworkURL(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return nil }
+        if value.hasPrefix("https://") { return value }
+        if value.hasPrefix("http://") {
+            return "https://" + value.dropFirst("http://".count)
+        }
+        // Protocol-relative, as the upstream also emits for some CDN hosts.
+        if value.hasPrefix("//") { return "https:" + value }
+        return value
     }
 
     /// The album list reports `pubtime` as a Unix timestamp; the app displays a
