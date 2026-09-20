@@ -109,6 +109,9 @@ superteam/
 # Plan documents written before a non-trivial change. They live at the repo root
 # for convenience but are working notes, not part of the published source.
 /*-plan-*.md
+# API implementation notes: describes how the online source talks to QQ Music
+# (which component does what, wire formats, gotchas). Working notes, same rule.
+/QQMUSIC-API-NOTES.md
 
 # Local-only working copies for the QQ Music patch package.
 #   upstream/  pristine upstream source, the reference "unmodified app"
