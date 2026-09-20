@@ -442,7 +442,7 @@ struct QQMusicSettingsView: View {
             .tint(themeStore.accentColor)
             Text(settings.qqMusicPrefetchDepth == 0
                  ? "不预取：只下载你实际播放的那一首，播放下一首时需要等待下载。"
-                 : "播放当前歌曲时，后台提前下载接下来的 \(settings.qqMusicPrefetchDepth) 首，播完自动续上。")
+                 : "播放当前歌曲时，后台按播放顺序提前下载接下来的 \(settings.qqMusicPrefetchDepth) 首，播完自动续上。随机播放时这个值越大越不容易在切歌时等待。")
                 .settingsDescriptionStyle()
         }
     }
