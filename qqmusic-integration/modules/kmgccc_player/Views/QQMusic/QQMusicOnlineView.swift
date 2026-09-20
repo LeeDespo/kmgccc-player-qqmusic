@@ -278,6 +278,16 @@ struct QQMusicOnlineView: View {
         }
     }
 
+    /// Blank space below the last row of every list.
+    ///
+    /// The playback bar floats over the content, so without this the final row
+    /// or the "load more" control sits underneath it and cannot be read or
+    /// clicked. Matches the app's own detail lists, which reserve the same kind
+    /// of gap.
+    private var listBottomInset: CGFloat {
+        GlassStyleTokens.miniPlayerHeight + 70
+    }
+
     private var showsSectionControls: Bool {
         section == .newSongs || section == .search || section == .mine
     }
@@ -430,6 +440,7 @@ struct QQMusicOnlineView: View {
                                 .buttonStyle(.plain)
                             }
                         }
+                        Color.clear.frame(height: listBottomInset)
                     }
                 }
                 .padding(.vertical, 10)
@@ -463,6 +474,7 @@ struct QQMusicOnlineView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
                         }
+                        Color.clear.frame(height: listBottomInset)
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -509,6 +521,7 @@ struct QQMusicOnlineView: View {
                                 openedArtist = artist
                             }
                         }
+                        Color.clear.frame(height: listBottomInset)
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -688,8 +701,17 @@ struct QQMusicOnlineView: View {
                             )
                             .onAppear {
                                 // Pull the next page as the end comes into view.
-                                guard pageable, index >= tracks.count - 3 else { return }
-                                Task { await coordinator.extendRecommendFeed() }
+                                // Both kinds of long list page here: the endless
+                                // radio feed and a playlist longer than one
+                                // request. A playlist only exposes the total
+                                // once it has been queried, so the loaded-count
+                                // check is what prevents asking past the end.
+                                guard index >= tracks.count - 3 else { return }
+                                if pageable {
+                                    Task { await coordinator.extendRecommendFeed() }
+                                } else if coordinator.hasMorePlaylistTracks {
+                                    Task { await coordinator.loadMorePlaylistTracks() }
+                                }
                             }
                         }
 
@@ -735,6 +757,7 @@ struct QQMusicOnlineView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
                         }
+                        Color.clear.frame(height: listBottomInset)
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -764,6 +787,7 @@ struct QQMusicOnlineView: View {
                                 Task { await coordinator.openPlaylist(id: playlist.id, title: playlist.title) }
                             }
                         }
+                        Color.clear.frame(height: listBottomInset)
                     }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
@@ -856,6 +880,7 @@ struct QQMusicOnlineView: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
                         }
+                        Color.clear.frame(height: listBottomInset)
                     }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
@@ -876,6 +901,7 @@ struct QQMusicOnlineView: View {
                                 Task { await coordinator.openAlbum(id: album.id, title: album.title) }
                             }
                         }
+                        Color.clear.frame(height: listBottomInset)
                     }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
@@ -896,6 +922,7 @@ struct QQMusicOnlineView: View {
                                 Task { await coordinator.openPlaylist(id: playlist.id, title: playlist.title) }
                             }
                         }
+                        Color.clear.frame(height: listBottomInset)
                     }
                     .padding(.horizontal, 18)
                     .padding(.vertical, 14)
@@ -944,6 +971,7 @@ struct QQMusicOnlineView: View {
                                 }
                             }
                         }
+                        Color.clear.frame(height: listBottomInset)
                     }
                     .padding(.vertical, 10)
                 }
