@@ -312,6 +312,36 @@ final class QQMusicOnlineCoordinator {
         )
     }
 
+    /// One page of a playlist's tracks, web-first with a helper fallback.
+    ///
+    /// The helper can serve a *page* (its route takes `page`), so unlike the
+    /// ranking path below there is something to fall back to. The helper does
+    /// not report the list's total, so a page served this way reports the
+    /// count it actually received — which understates the total and simply
+    /// stops paging rather than breaking the list.
+    private func fetchPlaylistPage(
+        songlistId: Int,
+        offset: Int,
+        limit: Int
+    ) async throws -> (tracks: [QQMusicOnlineTrack], total: Int) {
+        try await webFirst(
+            "playlist-page",
+            web: { try await self.webAPI.fetchPlaylistTracks(songlistId: songlistId, offset: offset, limit: limit) },
+            helper: {
+                // The helper pages by number, not by offset. Deriving the page
+                // from the offset keeps the two paths consistent at the page
+                // size both use.
+                let page = max(1, offset / max(1, limit) + 1)
+                let tracks = try await self.helper.fetchPlaylistTracks(
+                    songlistId: songlistId,
+                    limit: limit,
+                    page: page
+                )
+                return (tracks, offset + tracks.count)
+            }
+        )
+    }
+
     // MARK: - Status
 
     private func report(_ message: String?, isError: Bool = false) {
@@ -1365,10 +1395,13 @@ final class QQMusicOnlineCoordinator {
             let tracks: [QQMusicOnlineTrack]
             let total: Int
             if let id = openedPlaylistID {
-                let page = try await webAPI.fetchPlaylistTracks(songlistId: id, offset: offset, limit: 100)
+                let page = try await fetchPlaylistPage(songlistId: id, offset: offset, limit: 100)
                 tracks = page.tracks
                 total = page.total
             } else if let topId = openedToplistID {
+                // Rankings have no helper fallback: the helper's route takes no
+                // page/offset, so it can only ever return the first batch. If
+                // the web call fails there is nothing to fall back to.
                 let page = try await webAPI.fetchToplistTracks(topId: topId, offset: offset, limit: 100)
                 tracks = page.tracks
                 total = page.total
@@ -1445,7 +1478,7 @@ final class QQMusicOnlineCoordinator {
     private func refreshOpenedPlaylistTotal() async {
         do {
             if let id = openedPlaylistID {
-                let page = try await webAPI.fetchPlaylistTracks(songlistId: id, offset: 0, limit: 1)
+                let page = try await fetchPlaylistPage(songlistId: id, offset: 0, limit: 1)
                 openedPlaylistTotal = page.total
             } else if let topId = openedToplistID {
                 let page = try await webAPI.fetchToplistTracks(topId: topId, offset: 0, limit: 1)
