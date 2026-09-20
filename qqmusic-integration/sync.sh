@@ -56,9 +56,14 @@ git -C "$FROM" cat-file -e "${BASE}^{commit}" 2>/dev/null \
 # then planted it at the root of the target checkout.
 #
 # The toolkit's own directories are excluded by not appearing here at all.
+#
+# `kmgccc_playerTests/` is included on purpose: the tests that pin the online
+# source's behaviour (shuffle order, sustained queue feeding) are part of the
+# feature, not scratch work. They caught a regression that reading the code did
+# not, so they have to travel with it.
 is_shippable_path() {
   case "$1" in
-    kmgccc_player/*|Tools/QQMusicHelper/*|scripts/components/qqmusic-helper.sh|.gitignore) return 0 ;;
+    kmgccc_player/*|kmgccc_playerTests/*|Tools/QQMusicHelper/*|scripts/components/qqmusic-helper.sh|.gitignore) return 0 ;;
     *) return 1 ;;
   esac
 }

@@ -112,10 +112,10 @@ final class QQMusicOnlineCoordinator {
     /// Direct HTTP access to the web endpoints, for the read paths that are
     /// worth avoiding a helper round trip for.
     private let webAPI: QQMusicWebAPI
-    /// Whether the web path has ever worked. Read only to decide whether a
-    /// fallback is worth logging: a user who is simply not logged in would
-    /// otherwise get a warning on every call.
-    private var webLikedSongsSucceeded = false
+    /// Which reads the web path has previously served. Used only to decide
+    /// whether a fallback is worth a warning — it never gates the fallback
+    /// itself, which is always taken on failure.
+    private var webReadsSucceeded: Set<String> = []
 
     /// On-disk cache for catalogue payloads and artwork. Nil until a library
     /// session supplies paths, which also disables caching rather than failing.
@@ -202,9 +202,17 @@ final class QQMusicOnlineCoordinator {
     /// Whether `playbackOrder` came from a shuffle, so a redundant rebuild can
     /// be skipped.
     private var orderIsShuffled = false
-    /// Song mids already handed to the player queue this session. Keeps the
-    /// prefetch loop from re-inserting a track that is already queued ahead.
-    private var queuedSongMids: Set<String> = []
+    /// Tracks this session could not download, so the prefetch loop stops
+    /// picking them. Without this an unplayable track is never queued, so it
+    /// would be chosen again on every pass and retried forever.
+    private var skippedSongMids: Set<String> = []
+    /// Whether the prefetch loop is currently running. Explicit, because a
+    /// *finished* `Task` is neither nil nor cancelled, so task identity cannot
+    /// answer "is it still feeding the queue?".
+    private var isPrefetching = false
+    /// Bumped whenever a loop starts or is stopped, so a finishing loop can tell
+    /// whether the flag still belongs to it.
+    private var prefetchGeneration: UInt64 = 0
 
     init(
         helper: QQMusicHelperProcess = .shared,
@@ -216,31 +224,73 @@ final class QQMusicOnlineCoordinator {
         self.webAPI = webAPI
     }
 
-    /// Fetch one page of "我喜欢", preferring the direct HTTP path.
+    /// Run a read through the direct HTTP client, falling back to the helper.
     ///
-    /// Pilot for moving read paths off the helper: the same endpoint answers a
-    /// plain HTTPS request in about a quarter of the time the helper takes,
-    /// because the helper pays for a process and a fresh client per call.
+    /// The web client answers in roughly a quarter of the time the helper takes,
+    /// because the helper pays for a process and a fresh client per call. These
+    /// are all read paths that the browse pages hit constantly.
     ///
-    /// The helper remains the fallback, and is still the only thing that can log
-    /// in. If the web path fails for any reason — credential file unreadable,
-    /// upstream shape changed, transport error — the call silently falls back
-    /// rather than surfacing a failure the user cannot act on.
-    private func fetchLikedSongs(page: Int, limit: Int) async throws -> QQMusicLikedSongs {
+    /// The helper stays the fallback and is still the only thing that can log in.
+    /// Any web-path failure — credential file unreadable, upstream shape changed,
+    /// transport error, session expired — degrades to the old behaviour instead
+    /// of surfacing an error the user cannot act on.
+    ///
+    /// A failure is logged only once the web path has previously worked, so a
+    /// user who is simply signed out does not get a warning on every call.
+    private func webFirst<T>(
+        _ label: String,
+        web: () async throws -> T,
+        helper: () async throws -> T
+    ) async throws -> T {
         do {
-            let result = try await webAPI.fetchLikedSongs(page: page, limit: limit)
-            webLikedSongsSucceeded = true
+            let result = try await web()
+            webReadsSucceeded.insert(label)
             return result
         } catch {
-            if webLikedSongsSucceeded {
+            if webReadsSucceeded.contains(label) {
                 Log.warning(
-                    "[QQMusicOnline] web liked-songs failed, falling back to helper: \(error)",
+                    "[QQMusicOnline] web \(label) failed, falling back to helper: \(error)",
                     category: .import
                 )
             }
-            webLikedSongsSucceeded = false
-            return try await helper.fetchLikedSongs(page: page, limit: limit)
+            webReadsSucceeded.remove(label)
+            return try await helper()
         }
+    }
+
+    private func fetchLikedSongs(page: Int, limit: Int) async throws -> QQMusicLikedSongs {
+        try await webFirst(
+            "liked-songs",
+            web: { try await self.webAPI.fetchLikedSongs(page: page, limit: limit) },
+            helper: { try await self.helper.fetchLikedSongs(page: page, limit: limit) }
+        )
+    }
+
+    private func fetchLikedAlbums(limit: Int = 30) async throws -> [QQMusicOnlineAlbum] {
+        try await webFirst(
+            "liked-albums",
+            web: { try await self.webAPI.fetchLikedAlbums(limit: limit) },
+            helper: { try await self.helper.fetchLikedAlbums(limit: limit) }
+        )
+    }
+
+    private func fetchUserPlaylists() async throws -> [QQMusicOnlinePlaylist] {
+        try await webFirst(
+            "user-playlists",
+            web: { try await self.webAPI.fetchUserPlaylists() },
+            helper: { try await self.helper.fetchUserPlaylists() }
+        )
+    }
+
+    private func fetchLyric(
+        songMid: String,
+        songId: Int?
+    ) async throws -> QQMusicLyricPayload {
+        try await webFirst(
+            "lyric",
+            web: { try await self.webAPI.fetchLyric(songMid: songMid) },
+            helper: { try await self.helper.fetchLyric(songMid: songMid, songId: songId) }
+        )
     }
 
     // MARK: - Status
@@ -671,7 +721,7 @@ final class QQMusicOnlineCoordinator {
         isLoadingLikedAlbums = true
         defer { isLoadingLikedAlbums = false }
         do {
-            let albums = try await helper.fetchLikedAlbums()
+            let albums = try await fetchLikedAlbums()
             await cacheAlbums(albums)
             // Only replace what is on screen when the list actually differs —
             // the albums set changes rarely, and swapping it needlessly makes
@@ -721,7 +771,7 @@ final class QQMusicOnlineCoordinator {
         isLoadingUserPlaylists = true
         defer { isLoadingUserPlaylists = false }
         do {
-            let playlists = try await helper.fetchUserPlaylists()
+            let playlists = try await fetchUserPlaylists()
             await cacheUserPlaylists(playlists)
             // Compare by id and track count: a playlist gaining a track should
             // refresh, but an unchanged list should not be re-rendered.
@@ -1338,7 +1388,7 @@ final class QQMusicOnlineCoordinator {
         guard playable.indices.contains(index) else { return }
 
         // A new session replaces the previous prefetch loop.
-        prefetchTask?.cancel()
+        stopPrefetch()
         sessionTracks = playable
         sessionSupportsPaging = pageable
         sessionQueueSongMids = playable.map(\.songMid)
@@ -1353,11 +1403,9 @@ final class QQMusicOnlineCoordinator {
         // queue, is what makes shuffle cover every track instead of the handful
         // downloaded so far.
         //
-        // `queuedSongMids` is cleared first, and the rebuild is forced, because
-        // this is a new session: keeping either from the previous one would make
-        // the prefetch loop believe tracks were already queued and decline to
-        // feed them.
-        queuedSongMids = []
+        // The rebuild is forced rather than incremental: this is a new session,
+        // and leaving the previous order in place would make the preview below
+        // skip the rebuild entirely.
         playbackOrder = []
         orderIsShuffled = !wantsShuffle  // forces the rebuild below to take effect
         sessionAllSongMids = playable.map(\.songMid)
@@ -1382,8 +1430,7 @@ final class QQMusicOnlineCoordinator {
 
     /// Stop feeding the queue and forget the online session.
     func endSession() {
-        prefetchTask?.cancel()
-        prefetchTask = nil
+        stopPrefetch()
         playbackModeObserver?.cancel()
         playbackModeObserver = nil
         sessionTracks = []
@@ -1391,7 +1438,6 @@ final class QQMusicOnlineCoordinator {
         sessionAllSongMids = []
         playbackOrder = []
         orderIsShuffled = false
-        queuedSongMids = []
         activePlayingSongMid = nil
     }
 
@@ -1470,12 +1516,6 @@ final class QQMusicOnlineCoordinator {
         playbackOrder.append(contentsOf: additions)
     }
 
-    /// Where the current track sits in the playing order.
-    private func orderPosition(of songMid: String?) -> Int? {
-        guard let songMid else { return nil }
-        return playbackOrder.firstIndex(of: songMid)
-    }
-
     /// React to the user switching shuffle on or off mid-session.
     ///
     /// Without this the order would keep following whatever it was built with,
@@ -1532,10 +1572,30 @@ final class QQMusicOnlineCoordinator {
     // MARK: - Background prefetch
 
     private func beginPrefetch() {
-        prefetchTask?.cancel()
+        // Never run two loops: they would race to insert the same tracks, and a
+        // loop left over from a replaced session would insert its own order.
+        guard !isPrefetching else { return }
+        isPrefetching = true
+        prefetchGeneration &+= 1
+        let generation = prefetchGeneration
         prefetchTask = Task { [weak self] in
             await self?.runPrefetchLoop()
+            // Cleared on every exit path, including cancellation. Guarded by the
+            // generation so a finishing loop cannot clear the flag belonging to
+            // a newer one that already started.
+            await MainActor.run {
+                guard let self, self.prefetchGeneration == generation else { return }
+                self.isPrefetching = false
+            }
         }
+    }
+
+    /// Stop feeding the queue and mark the loop not running.
+    private func stopPrefetch() {
+        prefetchTask?.cancel()
+        prefetchTask = nil
+        prefetchGeneration &+= 1
+        isPrefetching = false
     }
 
     /// Feed the player queue along `playbackOrder`.
@@ -1546,30 +1606,76 @@ final class QQMusicOnlineCoordinator {
     /// play that order — the coordinator decides, the engine just advances. This
     /// is also why the previous code was wrong in a subtle way: it inserted in
     /// list order, which is what made shuffle indistinguishable from sequential.
+    /// Feed the player queue so it always holds the next tracks of our order.
+    ///
+    /// Two things this deliberately does *not* do, both of which caused playback
+    /// to stop dead before:
+    ///
+    /// 1. It reads the **player's real queue** to decide whether more is needed,
+    ///    never a private ledger of what it thinks it inserted. A ledger drifts
+    ///    the moment anything is refused or fails, and a drifted ledger makes the
+    ///    loop believe the queue is deeper than it is — so it waits forever while
+    ///    playback starves.
+    ///
+    /// 2. It never exits on a transient condition. `currentTrack` is briefly nil
+    ///    while a track is being swapped, and the loop used to treat that as "the
+    ///    user left the session" and return. A finished task is neither nil nor
+    ///    cancelled, so the restart check could not bring it back and playback
+    ///    stopped for good. Transient conditions now sleep and retry; only a
+    ///    cancelled task (session replaced, or user left) ends the loop.
     private func runPrefetchLoop() async {
         guard let playerViewModel else { return }
 
-        while !Task.isCancelled {
-            // The user moved to a different source; stop feeding this queue.
-            guard let playingMid = playerViewModel.currentTrack?.qqMusicSongMid,
-                  let playingPosition = orderPosition(of: playingMid) else { return }
+        // Consecutive iterations with no online track playing. Used to tell
+        // "a track swap is in progress" (recoverable, a few hundred ms) from
+        // "the user left this session" (permanent). Returning on the first nil
+        // is what killed the loop before: a finished task is neither nil nor
+        // cancelled, so the restart check could never revive it.
+        var idleTicks = 0
+        let idleTicksBeforeGivingUp = 10   // ~3s at 300ms per tick
 
+        while !Task.isCancelled {
             let depth = max(0, AppSettings.shared.qqMusicPrefetchDepth)
             guard depth > 0 else { return }
 
-            // How much of our order is already sitting in the queue ahead.
-            let ahead = playbackOrder[(playingPosition + 1)...]
-            let queuedAhead = ahead.reduce(0) { $0 + (queuedSongMids.contains($1) ? 1 : 0) }
-            if queuedAhead >= depth {
-                // The queue is deep enough; wait for playback to consume some
-                // rather than downloading the whole list.
-                try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard let playingMid = playerViewModel.currentTrack?.qqMusicSongMid else {
+                idleTicks += 1
+                if idleTicks >= idleTicksBeforeGivingUp { return }
+                try? await Task.sleep(nanoseconds: 300_000_000)
                 continue
             }
+            idleTicks = 0
 
-            guard let nextMid = ahead.first(where: { !queuedSongMids.contains($0) }) else {
-                // Everything in the known order is queued. A pageable feed can
-                // supply more; a fixed list is finished, so the loop stops.
+            // Ask the player what it is actually holding, rather than trusting a
+            // private ledger of what we think we inserted. A ledger drifts as
+            // soon as an insert is refused or a download fails, and a drifted
+            // ledger makes the loop wait forever on a queue that is in fact
+            // starved.
+            let queue = playerViewModel.currentQueueTracks
+            let queuedMids = queue.compactMap(\.qqMusicSongMid)
+            let queuedSet = Set(queuedMids)
+
+            if let currentIndex = queuedMids.firstIndex(of: playingMid) {
+                let aheadInQueue = queuedMids.count - (currentIndex + 1)
+                if aheadInQueue >= depth {
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    continue
+                }
+            }
+
+            // The next track of our order that the queue does not hold yet.
+            // Searched across the whole order, not just what follows the current
+            // track: the engine may advance onto a track it picked itself, and
+            // that must not stop us from feeding the rest.
+            //
+            // `skippedSongMids` is excluded because a track that cannot be
+            // downloaded never enters the queue, so without this it would be
+            // chosen again on every pass and retried forever.
+            guard let nextMid = playbackOrder.first(where: {
+                !queuedSet.contains($0) && !skippedSongMids.contains($0)
+            }) else {
+                // Everything known is queued or unplayable. A pageable feed can
+                // supply more; a fixed list is finished.
                 guard sessionSupportsPaging else { return }
                 let added = await extendRecommendFeed()
                 if added.isEmpty {
@@ -1578,17 +1684,30 @@ final class QQMusicOnlineCoordinator {
                 continue
             }
 
-            // Mark before downloading: a failure must not make the loop retry
-            // the same track forever. It is skipped and the order moves on.
-            queuedSongMids.insert(nextMid)
-            guard let online = trackInSession(nextMid) else { continue }
-            guard let imported = await materialize(online) else { continue }
+            guard let online = trackInSession(nextMid) else {
+                // Reachable if paging grew the order but not `sessionTracks` yet.
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                continue
+            }
+            guard let imported = await materialize(online) else {
+                // Unplayable for this account (VIP, region, delisted). Recorded
+                // so the loop moves on instead of retrying it every pass; the
+                // queue must not stall on one track.
+                skippedSongMids.insert(nextMid)
+                continue
+            }
             guard !Task.isCancelled else { return }
 
-            // Inserted one at a time, in order. Each insert lands immediately
-            // after the current track (or after the previously inserted one),
-            // so the queue builds up in exactly `playbackOrder` sequence.
-            playerViewModel.insertTracksAfterCurrent([imported])
+            // One at a time, in order. Each insert lands directly after the
+            // current track, so the queue ends up in `playbackOrder` sequence —
+            // which is what makes the engine play our shuffled order.
+            let inserted = playerViewModel.insertTracksAfterCurrent([imported])
+            if inserted == 0 {
+                // Refused, typically because a track swap has the current track
+                // briefly unset. Retry rather than treating it as queued — that
+                // assumption is what starved the queue before.
+                try? await Task.sleep(nanoseconds: 300_000_000)
+            }
         }
     }
 
@@ -1614,10 +1733,14 @@ final class QQMusicOnlineCoordinator {
         let mid = playerViewModel?.currentTrack?.qqMusicSongMid
         activePlayingSongMid = mid
         // The player moved on; make sure the next tracks are queued.
-        if let mid, sessionTracks.contains(where: { $0.songMid == mid }) {
-            if prefetchTask == nil || prefetchTask?.isCancelled == true {
-                beginPrefetch()
-            }
+        //
+        // Liveness is tracked with a flag rather than by inspecting the task:
+        // a *finished* task is neither nil nor cancelled, so the old check
+        // (`prefetchTask == nil || isCancelled`) could never restart a loop that
+        // had exited — playback would simply stop for good.
+        guard let mid, sessionTracks.contains(where: { $0.songMid == mid }) else { return }
+        if !isPrefetching {
+            beginPrefetch()
         }
     }
 
@@ -1719,3 +1842,4 @@ final class QQMusicOnlineCoordinator {
         return lyric + "\n" + translation
     }
 }
+

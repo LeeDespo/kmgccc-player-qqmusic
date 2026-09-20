@@ -129,6 +129,115 @@ nonisolated struct QQMusicWebAPI: Sendable {
         return try Self.decodeLikedSongs(payload)
     }
 
+    /// Favorited albums.
+    ///
+    /// Goes through the legacy `c.y.qq.com` endpoint rather than a `musicu.fcg`
+    /// module: the modern candidates answer 80000 for this account, and the
+    /// helper reached the same conclusion (see its `fetch_user_playlists` note,
+    /// which records 40000 for the module it tried).
+    func fetchLikedAlbums(limit: Int = 30) async throws -> [QQMusicOnlineAlbum] {
+        let data = try await fetchProfileAssets(reqtype: 2, limit: limit)
+        let raw = data["albumlist"] as? [[String: Any]] ?? []
+        return raw.compactMap { entry in
+            guard let id = Self.parseInt(entry["albumid"]) else { return nil }
+            return QQMusicOnlineAlbum(
+                id: id,
+                title: (entry["albumname"] as? String) ?? "未知专辑",
+                albumMid: entry["albummid"] as? String,
+                coverURL: Self.albumCoverURL(mid: entry["albummid"] as? String),
+                artist: entry["singername"] as? String,
+                releaseDate: Self.parseTimestamp(entry["pubtime"])
+            )
+        }
+    }
+
+    /// The account's own playlists (created and favorited).
+    func fetchUserPlaylists(limit: Int = 100) async throws -> [QQMusicOnlinePlaylist] {
+        let data = try await fetchProfileAssets(reqtype: 3, limit: limit)
+        let raw = data["cdlist"] as? [[String: Any]] ?? []
+        return raw.compactMap { entry in
+            // This endpoint mixes in the reserved folders (the liked-songs
+            // folder answers `dirid: 201` with no `dissid`), so an entry without
+            // a real playlist id is skipped rather than shown as a playlist.
+            guard let id = Self.parseInt(entry["dissid"]), id > 0 else { return nil }
+            return QQMusicOnlinePlaylist(
+                id: id,
+                title: (entry["dissname"] as? String) ?? "未命名歌单",
+                coverURL: entry["logo"] as? String,
+                creator: (entry["nickname"] as? String) ?? "",
+                songCount: Self.parseInt(entry["songnum"]),
+                playCount: Self.parseInt(entry["listennum"])
+            )
+        }
+    }
+
+    /// Lyrics for a track, plus translation and romanization when the upstream
+    /// has them.
+    ///
+    /// `crypt: 0` asks for the plaintext base64 form. The alternative
+    /// (`crypt: 1`) returns a triple-DES payload that would have to be
+    /// decrypted here; the plaintext path avoids porting that algorithm.
+    func fetchLyric(songMid: String, translation: Bool = true) async throws -> QQMusicLyricPayload {
+        guard let credential = loadCredential() else {
+            throw QQMusicWebAPIError.noCredential
+        }
+        let request = makeRequest(
+            credential: credential,
+            module: "music.musichallSong.PlayLyricInfo",
+            method: "GetPlayLyricInfo",
+            param: [
+                "songMID": songMid,
+                "songID": 0,
+                "format": "json",
+                "crypt": 0,
+                "qrc": 0,
+                "trans": translation ? 1 : 0,
+                "roma": translation ? 1 : 0,
+            ]
+        )
+        let data = try Self.payload(try await send(request))
+        return QQMusicLyricPayload(
+            lyric: Self.decodeBase64Text(data["lyric"]),
+            translation: Self.decodeBase64Text(data["trans"]),
+            romanization: Self.decodeBase64Text(data["roma"])
+        )
+    }
+
+    /// Shared call to the legacy profile-assets endpoint used by favourites.
+    ///
+    /// `reqtype` selects the collection: 2 is albums, 3 is playlists. This is
+    /// the endpoint the helper also uses, and its numeric fields come back as
+    /// strings (`songnum: "241"`), which `parseInt` handles.
+    private func fetchProfileAssets(reqtype: Int, limit: Int) async throws -> [String: Any] {
+        guard let credential = loadCredential() else {
+            throw QQMusicWebAPIError.noCredential
+        }
+        var components = URLComponents(string: "https://c.y.qq.com/fav/fcgi-bin/fcg_get_profile_order_asset.fcg")!
+        components.queryItems = [
+            URLQueryItem(name: "ct", value: "20"),
+            URLQueryItem(name: "cid", value: "205360956"),
+            URLQueryItem(name: "userid", value: credential.musicID),
+            URLQueryItem(name: "reqtype", value: String(reqtype)),
+            URLQueryItem(name: "sin", value: "0"),
+            URLQueryItem(name: "ein", value: String(limit)),
+            URLQueryItem(name: "format", value: "json"),
+        ]
+        var request = URLRequest(url: components.url!)
+        request.httpMethod = "GET"
+        request.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
+        request.setValue(Self.cookieHeader(credential), forHTTPHeaderField: "Cookie")
+
+        let response = try await send(request)
+        // This endpoint nests everything under `data` and reports failures with
+        // `code`, so an empty `data` is the thing to reject.
+        guard let data = response["data"] as? [String: Any], !data.isEmpty else {            throw QQMusicWebAPIError.upstream(
+                code: Self.parseInt(response["code"]) ?? -1,
+                message: (response["subcode"] as? String) ?? ""
+            )
+        }
+        return data
+    }
+
     // MARK: - Request construction
 
     private func makeRequest(
@@ -143,6 +252,7 @@ nonisolated struct QQMusicWebAPI: Sendable {
         // Sent because the upstream is known to vary its response (and has
         // returned an obfuscated payload) by caller identity.
         request.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
+        request.setValue(Self.cookieHeader(credential), forHTTPHeaderField: "Cookie")
 
         let body: [String: Any] = [
             "comm": [
@@ -165,6 +275,13 @@ nonisolated struct QQMusicWebAPI: Sendable {
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
         return request
+    }
+
+    /// Both cookie spellings, because the upstream reads the legacy `uin` on one
+    /// path and `qqmusic_uin` on another.
+    private static func cookieHeader(_ credential: QQMusicWebCredential) -> String {
+        "uin=\(credential.musicID); qm_keyst=\(credential.musicKey)"
+            + "; qqmusic_key=\(credential.musicKey); qqmusic_uin=\(credential.musicID)"
     }
 
     private func send(_ request: URLRequest) async throws -> [String: Any] {
@@ -274,5 +391,33 @@ nonisolated struct QQMusicWebAPI: Sendable {
         case let text as String: return Int(text)
         default: return nil
         }
+    }
+
+    /// Lyrics arrive base64-encoded even in plaintext mode. A payload that does
+    /// not decode is treated as absent rather than surfaced as a failure: a
+    /// track without lyrics is normal, and the caller shows an empty panel.
+    private static func decodeBase64Text(_ value: Any?) -> String? {
+        guard let encoded = value as? String, !encoded.isEmpty else { return nil }
+        guard let data = Data(base64Encoded: encoded) else { return nil }
+        let text = String(data: data, encoding: .utf8)
+        return (text?.isEmpty ?? true) ? nil : text
+    }
+
+    /// Album covers follow a fixed pattern from the album mid, which is how the
+    /// liked-songs path already builds them. Falls back to nil so the view can
+    /// use its placeholder.
+    private static func albumCoverURL(mid: String?) -> String? {
+        guard let mid, !mid.isEmpty else { return nil }
+        return "https://y.gtimg.cn/music/photo_new/T002R800x800M000\(mid).jpg"
+    }
+
+    /// The album list reports `pubtime` as a Unix timestamp; the app displays a
+    /// plain date string.
+    private static func parseTimestamp(_ value: Any?) -> String? {
+        guard let seconds = parseInt(value), seconds > 0 else { return nil }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter.string(from: Date(timeIntervalSince1970: TimeInterval(seconds)))
     }
 }
