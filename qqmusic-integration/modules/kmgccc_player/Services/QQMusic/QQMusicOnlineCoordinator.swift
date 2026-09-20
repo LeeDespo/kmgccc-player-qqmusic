@@ -218,7 +218,9 @@ final class QQMusicOnlineCoordinator {
     /// The playlist currently open in the drill-down, so its next page can be
     /// requested. Nil for a ranking, which pages differently.
     private var openedPlaylistID: Int?
-    private var openedPlaylistIsToplist = false
+    /// The ranking currently open, when the drill-down is a ranking rather
+    /// than a playlist. Paging needs its id, so a flag is not enough.
+    private var openedToplistID: Int?
     /// The open playlist's own track count. Drives whether another page exists;
     /// 0 means unknown, which simply disables paging.
     private(set) var openedPlaylistTotal = 0
@@ -639,8 +641,13 @@ final class QQMusicOnlineCoordinator {
         do {
             // Always revalidate, cache hit or not, so the page cannot drift.
             let page = try await fetchLikedSongs(page: 1, limit: 100)
+            // The cover is compared too, for the same reason as the playlists:
+            // it is derived, so a change in how it is produced must be able to
+            // supersede what is cached rather than being dismissed as "same
+            // tracks, nothing changed".
             let changed = page.total != likedSongsTotal
                 || page.tracks.map(\.songMid) != likedSongs.map(\.songMid)
+                || page.tracks.map(\.imageURL) != likedSongs.map(\.imageURL)
             await cacheLikedSongs(page, page: 1)
             if changed || !servedFromCache {
                 likedSongs = page.tracks
@@ -742,8 +749,10 @@ final class QQMusicOnlineCoordinator {
             await cacheAlbums(albums)
             // Only replace what is on screen when the list actually differs —
             // the albums set changes rarely, and swapping it needlessly makes
-            // covers flicker.
-            if !servedFromCache || albums.map(\.identity) != likedAlbums.map(\.identity) {
+            // covers flicker. The cover is included so a change in how covers
+            // are derived is not mistaken for "nothing changed" (see the
+            // playlist comparison key for the same reasoning).
+            if !servedFromCache || albums.map(Self.albumComparisonKey) != likedAlbums.map(Self.albumComparisonKey) {
                 likedAlbums = albums
             }
             userLibraryNeedsLogin = false
@@ -757,6 +766,11 @@ final class QQMusicOnlineCoordinator {
             }
             Log.warning("[QQMusicOnline] liked albums failed: \(error)", category: .import)
         }
+    }
+
+    /// Identity of everything about a shown album that affects rendering.
+    private static func albumComparisonKey(_ album: QQMusicOnlineAlbum) -> String {
+        "\(album.identity):\(album.coverURL ?? "")"
     }
 
     private func cachedAlbums(force: Bool) async -> [QQMusicOnlineAlbum]? {
@@ -792,8 +806,14 @@ final class QQMusicOnlineCoordinator {
             await cacheUserPlaylists(playlists)
             // Compare by id and track count: a playlist gaining a track should
             // refresh, but an unchanged list should not be re-rendered.
-            let changed = playlists.map { "\($0.id):\($0.songCount ?? -1)" }
-                != userPlaylists.map { "\($0.id):\($0.songCount ?? -1)" }
+            //
+            // The cover is part of the comparison too. Leaving it out meant a
+            // cached list kept its stored cover URLs forever, because ids and
+            // counts never change — so a fix to how covers are derived (such as
+            // the http-to-https upgrade) could never reach the screen. Anything
+            // that decides what is displayed has to take part in "did it change".
+            let changed = playlists.map(Self.playlistComparisonKey)
+                != userPlaylists.map(Self.playlistComparisonKey)
             if !servedFromCache || changed {
                 userPlaylists = playlists
             }
@@ -808,6 +828,15 @@ final class QQMusicOnlineCoordinator {
             }
             Log.warning("[QQMusicOnline] user playlists failed: \(error)", category: .import)
         }
+    }
+
+    /// Identity of everything about a shown playlist that affects rendering.
+    ///
+    /// Used to decide whether a cached list needs replacing. Cover URLs belong
+    /// here: they are derived, so a change in how they are produced has to be
+    /// able to supersede what is already on screen and in the cache.
+    private static func playlistComparisonKey(_ playlist: QQMusicOnlinePlaylist) -> String {
+        "\(playlist.id):\(playlist.songCount ?? -1):\(playlist.coverURL ?? "")"
     }
 
     private func cachedUserPlaylists(force: Bool) async -> [QQMusicOnlinePlaylist]? {
@@ -1303,7 +1332,7 @@ final class QQMusicOnlineCoordinator {
 
     func openPlaylist(id: Int, title: String) async {
         openedPlaylistID = id
-        openedPlaylistIsToplist = false
+        openedToplistID = nil
         openedPlaylistTotal = 0
         await loadPlaylistTracks(cacheKey: "songlist-\(id)", title: title) {
             try await self.helper.fetchPlaylistTracks(songlistId: id, limit: 100)
@@ -1312,46 +1341,66 @@ final class QQMusicOnlineCoordinator {
 
     func openToplist(id: Int, title: String) async {
         openedPlaylistID = nil
-        openedPlaylistIsToplist = true
+        openedToplistID = id
         openedPlaylistTotal = 0
         await loadPlaylistTracks(cacheKey: "toplist-\(id)", title: title) {
             try await self.helper.fetchPlaylistTracks(topId: id, limit: 100)
         }
     }
 
-    /// Load the next page of the open playlist, if it has one.
+    /// Load the next page of the open playlist or ranking, if it has one.
     ///
-    /// A playlist routinely holds more tracks than one request returns (the
+    /// Both kinds routinely hold more tracks than one request returns (the
     /// upstream caps a page at 100), so the list used to stop at that cap with
-    /// no indication there was more. The web client reports the folder's own
-    /// total, which makes "is there another page?" answerable without guessing.
+    /// no indication there was more. The web client reports the list's own
+    /// total for both, which makes "is there another page?" answerable without
+    /// guessing.
     func loadMorePlaylistTracks() async {
         guard !isLoadingMorePlaylistTracks, hasMorePlaylistTracks else { return }
-        guard let id = openedPlaylistID, !openedPlaylistIsToplist else { return }
         isLoadingMorePlaylistTracks = true
         defer { isLoadingMorePlaylistTracks = false }
 
         let offset = playlistTracks.count
         do {
-            let page = try await webAPI.fetchPlaylistTracks(songlistId: id, offset: offset, limit: 100)
-            openedPlaylistTotal = page.total
+            let tracks: [QQMusicOnlineTrack]
+            let total: Int
+            if let id = openedPlaylistID {
+                let page = try await webAPI.fetchPlaylistTracks(songlistId: id, offset: offset, limit: 100)
+                tracks = page.tracks
+                total = page.total
+            } else if let topId = openedToplistID {
+                let page = try await webAPI.fetchToplistTracks(topId: topId, offset: offset, limit: 100)
+                tracks = page.tracks
+                total = page.total
+            } else {
+                return
+            }
+            openedPlaylistTotal = total
             let known = Set(playlistTracks.map(\.songMid))
-            let fresh = page.tracks.filter { !known.contains($0.songMid) }
+            let fresh = tracks.filter { !known.contains($0.songMid) }
             guard !fresh.isEmpty else { return }
             playlistTracks.append(contentsOf: fresh)
-            // Cached as a whole, so reopening the playlist shows what was
-            // already paged in rather than dropping back to page one.
-            await storeTracks(playlistTracks, category: .playlistTracks, key: "songlist-\(id)")
+            // Cached as a whole, so reopening the list shows what was already
+            // paged in rather than dropping back to page one.
+            await storeTracks(playlistTracks, category: .playlistTracks, key: openedListCacheKey)
         } catch {
-            Log.warning("[QQMusicOnline] playlist paging failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] list paging failed: \(error)", category: .import)
         }
     }
 
-    /// Whether the open playlist has tracks beyond what is loaded.
+    /// Whether the open list has tracks beyond what is loaded.
     var hasMorePlaylistTracks: Bool {
-        guard !openedPlaylistIsToplist, openedPlaylistID != nil else { return false }
+        guard openedPlaylistID != nil || openedToplistID != nil else { return false }
         guard openedPlaylistTotal > 0 else { return false }
         return playlistTracks.count < openedPlaylistTotal
+    }
+
+    /// Cache key for the list currently open, so a paged-in list is stored under
+    /// the same key it was loaded with.
+    private var openedListCacheKey: String {
+        if let id = openedPlaylistID { return "songlist-\(id)" }
+        if let topId = openedToplistID { return "toplist-\(topId)" }
+        return "unknown"
     }
 
     private func loadPlaylistTracks(
@@ -1388,19 +1437,23 @@ final class QQMusicOnlineCoordinator {
         }
     }
 
-    /// Learn how many tracks the open playlist holds.
+    /// Learn how many tracks the open list holds.
     ///
     /// Asked separately from the track page because the helper's route does not
     /// report it. Failure leaves the total at 0, which just means the "load
     /// more" affordance stays hidden rather than the page breaking.
     private func refreshOpenedPlaylistTotal() async {
-        guard let id = openedPlaylistID, !openedPlaylistIsToplist else { return }
         do {
-            let page = try await webAPI.fetchPlaylistTracks(songlistId: id, offset: 0, limit: 1)
-            openedPlaylistTotal = page.total
+            if let id = openedPlaylistID {
+                let page = try await webAPI.fetchPlaylistTracks(songlistId: id, offset: 0, limit: 1)
+                openedPlaylistTotal = page.total
+            } else if let topId = openedToplistID {
+                let page = try await webAPI.fetchToplistTracks(topId: topId, offset: 0, limit: 1)
+                openedPlaylistTotal = page.total
+            }
         } catch {
             openedPlaylistTotal = 0
-            Log.warning("[QQMusicOnline] playlist total unavailable: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] list total unavailable: \(error)", category: .import)
         }
     }
 
@@ -1408,7 +1461,7 @@ final class QQMusicOnlineCoordinator {
         playlistTracks = []
         loadedPlaylistTitle = ""
         openedPlaylistID = nil
-        openedPlaylistIsToplist = false
+        openedToplistID = nil
         openedPlaylistTotal = 0
     }
 

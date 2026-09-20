@@ -203,16 +203,16 @@ nonisolated struct QQMusicWebAPI: Sendable {
         return (tracks, total)
     }
 
-    /// One page of a ranking's tracks.
+    /// One page of a ranking's tracks, plus the ranking's own total.
     ///
     /// A separate call because rankings live on a different module and return a
     /// differently shaped payload (an offset-based window rather than a folder
-    /// listing).
+    /// listing). The total sits under `data.data.totalNum`.
     func fetchToplistTracks(
         topId: Int,
         offset: Int,
         limit: Int
-    ) async throws -> [QQMusicOnlineTrack] {
+    ) async throws -> (tracks: [QQMusicOnlineTrack], total: Int) {
         guard let credential = loadCredential() else {
             throw QQMusicWebAPIError.noCredential
         }
@@ -223,10 +223,15 @@ nonisolated struct QQMusicWebAPI: Sendable {
             param: ["topid": topId, "offset": offset, "num": limit, "period": ""]
         )
         let data = try Self.payload(try await send(request))
-        // `data.data.song` holds the rows, unlike the playlist response.
         let nested = data["data"] as? [String: Any]
-        let rows = (nested?["song"] as? [[String: Any]]) ?? (data["songInfoList"] as? [[String: Any]]) ?? []
-        return rows.compactMap(Self.decodeTrack)
+        // The rows under `data.data.song` are a *presentation* list: rank, title
+        // and a cover, but no song mid — so they cannot be played or downloaded.
+        // `songInfoList` carries the real track payload (mid, singers, album,
+        // file sizes), so that is the one to read. Verified against a live
+        // ranking, where the presentation rows decoded to nothing.
+        let rows = data["songInfoList"] as? [[String: Any]] ?? []
+        let total = Self.parseInt(nested?["totalNum"]) ?? rows.count
+        return (rows.compactMap(Self.decodeTrack), total)
     }
 
     /// Lyrics for a track, plus translation and romanization when the upstream
@@ -487,6 +492,12 @@ nonisolated struct QQMusicWebAPI: Sendable {
         // Protocol-relative, as the upstream also emits for some CDN hosts.
         if value.hasPrefix("//") { return "https:" + value }
         return value
+    }
+
+    /// Exposed so the cover normalisation can be tested directly. Behaviour is
+    /// identical to `normalizedArtworkURL`.
+    nonisolated static func normalizedArtworkURLForTesting(_ value: String?) -> String? {
+        normalizedArtworkURL(value)
     }
 
     /// The album list reports `pubtime` as a Unix timestamp; the app displays a
