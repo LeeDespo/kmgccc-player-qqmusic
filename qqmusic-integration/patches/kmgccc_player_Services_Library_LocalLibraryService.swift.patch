@@ -1,0 +1,49 @@
+diff --git a/kmgccc_player/Services/Library/LocalLibraryService.swift b/kmgccc_player/Services/Library/LocalLibraryService.swift
+index 742aad3d..50292228 100644
+--- a/kmgccc_player/Services/Library/LocalLibraryService.swift
++++ b/kmgccc_player/Services/Library/LocalLibraryService.swift
+@@ -112,6 +112,8 @@ nonisolated struct TrackPersistenceSnapshot: Sendable {
+     let labelOrCompany: String
+     let releaseDate: Date?
+     let qqMusicSongMid: String?
++    let qqMusicDownloadOrigin: String?
++    let qqMusicDownloadedAt: Date?
+     let metadataSource: String?
+     let metadataFetchedAt: Date?
+     let metadataConfidence: Double?
+@@ -147,6 +149,8 @@ nonisolated struct TrackPersistenceSnapshot: Sendable {
+         labelOrCompany = track.labelOrCompany
+         releaseDate = track.releaseDate
+         qqMusicSongMid = track.qqMusicSongMid
++        qqMusicDownloadOrigin = track.qqMusicDownloadOrigin
++        qqMusicDownloadedAt = track.qqMusicDownloadedAt
+         metadataSource = track.metadataSource
+         metadataFetchedAt = track.metadataFetchedAt
+         metadataConfidence = track.metadataConfidence
+@@ -730,6 +734,8 @@ final class LocalLibraryService {
+             }(),
+             releaseDate: track.releaseDate,
+             qqMusicSongMid: track.qqMusicSongMid,
++            qqMusicDownloadOrigin: track.qqMusicDownloadOrigin,
++            qqMusicDownloadedAt: track.qqMusicDownloadedAt,
+             metadataSource: track.metadataSource,
+             metadataFetchedAt: track.metadataFetchedAt,
+             metadataConfidence: track.metadataConfidence,
+@@ -796,6 +802,8 @@ final class LocalLibraryService {
+             }(),
+             releaseDate: snapshot.releaseDate,
+             qqMusicSongMid: snapshot.qqMusicSongMid,
++            qqMusicDownloadOrigin: snapshot.qqMusicDownloadOrigin,
++            qqMusicDownloadedAt: snapshot.qqMusicDownloadedAt,
+             metadataSource: snapshot.metadataSource,
+             metadataFetchedAt: snapshot.metadataFetchedAt,
+             metadataConfidence: snapshot.metadataConfidence,
+@@ -2381,6 +2389,8 @@ final class LocalLibraryService {
+                 labelOrCompany: sidecar.labelOrCompany ?? "",
+                 releaseDate: sidecar.releaseDate,
+                 qqMusicSongMid: sidecar.qqMusicSongMid,
++                qqMusicDownloadOrigin: sidecar.qqMusicDownloadOrigin,
++                qqMusicDownloadedAt: sidecar.qqMusicDownloadedAt,
+                 metadataSource: sidecar.metadataSource,
+                 metadataFetchedAt: sidecar.metadataFetchedAt,
+                 metadataConfidence: sidecar.metadataConfidence,

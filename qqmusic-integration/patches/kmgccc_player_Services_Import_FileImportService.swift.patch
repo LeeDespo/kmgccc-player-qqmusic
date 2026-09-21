@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/Services/Import/FileImportService.swift b/kmgccc_player/Services/Import/FileImportService.swift
-index 0fc6e17a..3ae73536 100644
+index 0fc6e17a..d5471906 100644
 --- a/kmgccc_player/Services/Import/FileImportService.swift
 +++ b/kmgccc_player/Services/Import/FileImportService.swift
-@@ -381,6 +381,57 @@ final class FileImportService: FileImportServiceProtocol {
+@@ -381,6 +381,68 @@ final class FileImportService: FileImportServiceProtocol {
          return tracks
      }
  
@@ -55,6 +55,17 @@ index 0fc6e17a..3ae73536 100644
 +            track.metadataFetchedAt = Date()
 +        }
 +        await repository.persistTrackMetaOnly(tracks, reason: "online-import-provenance")
++    }
++
++    /// Persist a change to why an online track's audio is on disk.
++    ///
++    /// Used for the automatic-to-manual transition, where the audio is already
++    /// imported and only its ownership changes. The caller has already mutated
++    /// the model; this writes it through, so the change survives a restart
++    /// instead of living only in memory.
++    func persistOnlineDownloadOrigin(_ tracks: [Track]) async {
++        guard !tracks.isEmpty else { return }
++        await repository.persistTrackMetaOnly(tracks, reason: "online-download-origin")
 +    }
 +
      /// Setup entry. The caller retains `selection` across this entire call so the

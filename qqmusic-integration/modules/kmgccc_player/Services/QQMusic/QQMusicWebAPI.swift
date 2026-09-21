@@ -129,6 +129,55 @@ nonisolated struct QQMusicWebAPI: Sendable {
         return try Self.decodeLikedSongs(payload)
     }
 
+    /// Fetch *all* of the account's "我喜欢" in one round trip.
+    ///
+    /// The folder's size is known from the first page, so the remaining pages
+    /// are requested together as `req_1..req_N` in a single request rather than
+    /// one after another. Measured: 471 tracks in ~0.6s, against roughly 0.5s
+    /// per page when fetched sequentially.
+    ///
+    /// Note `total` can exceed the number of playable tracks the folder reports:
+    /// it counts rows, and some rows carry no song mid at all (observed 472 rows
+    /// → 471 unique playable tracks). Callers must therefore treat "loaded
+    /// everything we can" as reaching that count, not exceeding the total.
+    func fetchAllLikedSongs(pageSize: Int = 100, maxPages: Int = 20) async throws -> QQMusicLikedSongs {
+        let first = try await fetchLikedSongs(page: 1, limit: pageSize)
+        // A folder that fits in one page needs no second request.
+        guard first.total > first.tracks.count else { return first }
+
+        let remainingPages = min(maxPages, Int(ceil(Double(first.total) / Double(pageSize)))) - 1
+        guard remainingPages > 0 else { return first }
+
+        let calls = (0..<remainingPages).map { index -> BatchCall in
+            BatchCall(
+                slot: "req_\(index)",
+                module: "music.srfDissInfo.DissInfo",
+                method: "CgiGetDiss",
+                param: [
+                    "disstid": 0,
+                    "dirid": Self.likedSongsDirectoryID,
+                    "tag": true,
+                    "song_begin": (index + 1) * pageSize,
+                    "song_num": pageSize,
+                    "userinfo": true,
+                    "orderlist": true,
+                ]
+            )
+        }
+        let slots = try await sendBatch(calls)
+
+        var tracks = first.tracks
+        var seen = Set(tracks.map(\.songMid))
+        // Slots are reassembled in order so the folder's own ordering survives.
+        for index in 0..<remainingPages {
+            guard let data = slots["req_\(index)"] else { continue }
+            for track in (data["songlist"] as? [[String: Any]] ?? []).compactMap(Self.decodeTrack) {
+                if seen.insert(track.songMid).inserted { tracks.append(track) }
+            }
+        }
+        return QQMusicLikedSongs(title: first.title, total: first.total, tracks: tracks)
+    }
+
     /// Favorited albums.
     ///
     /// Goes through the legacy `c.y.qq.com` endpoint rather than a `musicu.fcg`
@@ -303,12 +352,88 @@ nonisolated struct QQMusicWebAPI: Sendable {
 
     // MARK: - Request construction
 
+    /// One call in a batch: the slot it occupies, and what to ask for.
+    ///
+    /// `req_0..req_N` can be submitted in a single request, so several unrelated
+    /// reads cost one round trip instead of N. Measured at 0.18s for six calls
+    /// versus roughly 0.3s each when sent separately.
+    ///
+    /// The parameter is held as pre-encoded JSON because `[String: Any]` is not
+    /// `Sendable`, and this value crosses into the request-building code.
+    nonisolated struct BatchCall: Sendable {
+        let slot: String
+        let module: String
+        let method: String
+        let jsonParam: Data
+
+        init(slot: String, module: String, method: String, param: [String: Any]) {
+            self.slot = slot
+            self.module = module
+            self.method = method
+            self.jsonParam = (try? JSONSerialization.data(withJSONObject: param)) ?? Data("{}".utf8)
+        }
+
+        /// The call as the wire envelope expects it.
+        var envelope: [String: Any] {
+            let decoded = (try? JSONSerialization.jsonObject(with: jsonParam)) as? [String: Any] ?? [:]
+            return ["module": module, "method": method, "param": decoded]
+        }
+    }
+
+    /// Send several calls in one round trip.
+    ///
+    /// Returns each slot's payload keyed by slot name. A slot that failed is
+    /// simply absent — the upstream reports per-slot codes, and one bad slot
+    /// must not discard the others, since the whole point is to amortise
+    /// unrelated reads.
+    func sendBatch(_ calls: [BatchCall]) async throws -> [String: [String: Any]] {
+        guard !calls.isEmpty else { return [:] }
+        guard let credential = loadCredential() else {
+            throw QQMusicWebAPIError.noCredential
+        }
+        let request = makeBatchRequest(credential: credential, calls: calls)
+        let response = try await send(request)
+
+        var result: [String: [String: Any]] = [:]
+        for call in calls {
+            guard let data = try? Self.payload(response, slot: call.slot) else { continue }
+            result[call.slot] = data
+        }
+        return result
+    }
+
+    private func makeBatchRequest(
+        credential: QQMusicWebCredential,
+        calls: [BatchCall]
+    ) -> URLRequest {
+        var request = baseRequest(credential: credential)
+        var body = Self.comm(credential: credential)
+        for call in calls {
+            body[call.slot] = call.envelope
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
     private func makeRequest(
         credential: QQMusicWebCredential,
         module: String,
         method: String,
         param: [String: Any]
     ) -> URLRequest {
+        var request = baseRequest(credential: credential)
+        let body: [String: Any] = Self.comm(credential: credential).merging([
+            "req_0": [
+                "module": module,
+                "method": method,
+                "param": param,
+            ],
+        ]) { _, new in new }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        return request
+    }
+
+    private func baseRequest(credential: QQMusicWebCredential) -> URLRequest {
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -316,8 +441,12 @@ nonisolated struct QQMusicWebAPI: Sendable {
         // returned an obfuscated payload) by caller identity.
         request.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
         request.setValue(Self.cookieHeader(credential), forHTTPHeaderField: "Cookie")
+        return request
+    }
 
-        let body: [String: Any] = [
+    /// The shared `comm` envelope every request carries.
+    private static func comm(credential: QQMusicWebCredential) -> [String: Any] {
+        [
             "comm": [
                 "cv": 4747474,
                 "ct": 24,
@@ -330,14 +459,7 @@ nonisolated struct QQMusicWebAPI: Sendable {
                 "uin": credential.musicID,
                 "g_tk": credential.gtK,
             ],
-            "req_0": [
-                "module": module,
-                "method": method,
-                "param": param,
-            ],
         ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-        return request
     }
 
     /// Both cookie spellings, because the upstream reads the legacy `uin` on one

@@ -72,6 +72,11 @@ struct QQMusicSettingsView: View {
 
     // Cache
     @State private var cacheSizeText = "计算中…"
+    /// Usage strings for the two budgets. Kept as state so the numbers shown
+    /// next to the limits are the ones the limits are applied to.
+    @State private var songCacheUsageText = "计算中…"
+    @State private var otherCacheUsageText = "计算中…"
+    @State private var isReclaiming = false
     @State private var circuitState: QQMusicCircuitState?
     /// What the helper process reports it is actually using, so a setting that
     /// never reaches it is visible rather than silent.
@@ -732,13 +737,110 @@ struct QQMusicSettingsView: View {
                 Text("在线内容的歌单、推荐、排行榜和封面会缓存在本地，避免重复请求上游（也是触发风控的主要原因）。缓存独立存放在下面这个目录，与应用自身的缓存分开管理。")
                     .settingsDescriptionStyle()
 
-                labeledValue("缓存占用", cacheSizeText)
                 labeledValue("缓存目录", cacheDirectoryPath ?? "资料库未就绪", monospaced: true)
 
                 HStack(spacing: 8) {
-                    Button("清除缓存") { Task { await clearCache() } }
+                    Button("立即回收") { Task { await reclaimNow() } }
+                        .disabled(isReclaiming)
+                    Button("清除内容缓存") { Task { await clearCache() } }
                     Button("在访达中显示") { revealCacheDirectory() }
                     Spacer()
+                }
+            }
+            .padding(SettingsStyleTokens.groupPadding)
+            .background(sectionBackground)
+
+            cacheBudgetSection(
+                title: "歌曲缓存",
+                subtitle: "播放时后台自动下载的歌曲。你自己点过播放或下载的歌曲属于曲库内容，不在这个上限之内，也不会被回收。",
+                usage: songCacheUsageText,
+                enabled: Binding(
+                    get: { AppSettings.shared.qqMusicSongCacheLimitEnabled },
+                    set: { AppSettings.shared.qqMusicSongCacheLimitEnabled = $0 }
+                ),
+                limitGB: Binding(
+                    get: { AppSettings.shared.qqMusicSongCacheLimitGB },
+                    set: { AppSettings.shared.qqMusicSongCacheLimitGB = $0 }
+                ),
+                reclaimPercent: Binding(
+                    get: { AppSettings.shared.qqMusicSongCacheReclaimPercent },
+                    set: { AppSettings.shared.qqMusicSongCacheReclaimPercent = $0 }
+                )
+            )
+
+            cacheBudgetSection(
+                title: "其他缓存",
+                subtitle: "歌单、推荐、排行榜等目录数据与封面图片。这些内容都能重新获取，回收只会让下次加载稍慢。",
+                usage: otherCacheUsageText,
+                enabled: Binding(
+                    get: { AppSettings.shared.qqMusicOtherCacheLimitEnabled },
+                    set: { AppSettings.shared.qqMusicOtherCacheLimitEnabled = $0 }
+                ),
+                limitGB: Binding(
+                    get: { AppSettings.shared.qqMusicOtherCacheLimitGB },
+                    set: { AppSettings.shared.qqMusicOtherCacheLimitGB = $0 }
+                ),
+                reclaimPercent: Binding(
+                    get: { AppSettings.shared.qqMusicOtherCacheReclaimPercent },
+                    set: { AppSettings.shared.qqMusicOtherCacheReclaimPercent = $0 }
+                )
+            )
+        }
+    }
+
+    /// One cache budget: enable switch, size limit, and reclaim target.
+    ///
+    /// The reclaim percentage is the interesting control. Trimming only to the
+    /// limit would evict again on the very next download, so the cache would
+    /// churn continuously; reclaiming to a lower water mark makes it occasional.
+    private func cacheBudgetSection(
+        title: String,
+        subtitle: String,
+        usage: String,
+        enabled: Binding<Bool>,
+        limitGB: Binding<Double>,
+        reclaimPercent: Binding<Int>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: SettingsStyleTokens.groupSpacing) {
+            HStack(spacing: 8) {
+                Image(systemName: "externaldrive.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(themeStore.accentColor)
+                Text(title)
+                    .font(.headline)
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Text(subtitle)
+                    .settingsDescriptionStyle()
+
+                labeledValue("当前占用", usage)
+
+                SettingsSwitchRow(
+                    title: "限制大小",
+                    isOn: enabled,
+                    detail: "关闭时不限制大小，也不回收。"
+                )
+
+                if enabled.wrappedValue {
+                    Divider().opacity(0.4)
+
+                    HStack(spacing: 12) {
+                        Text("上限")
+                            .settingsRowLabelStyle()
+                        Spacer(minLength: 12)
+                        DecimalSettingField(value: limitGB, range: 0.01...500, unit: "GB", fractionDigits: 2)
+                    }
+
+                    HStack(spacing: 12) {
+                        Text("回收至上限的")
+                            .settingsRowLabelStyle()
+                        Spacer(minLength: 12)
+                        NumericSettingField(value: reclaimPercent, range: 0...90, unit: "%")
+                    }
+
+                    Text("超过上限时回收，直到降到上限的这个百分比为止。留出余量是为了不必每下载一首就回收一次。90% 表示几乎贴着上限，0% 表示清空可回收的部分。")
+                        .settingsDescriptionStyle()
                 }
             }
             .padding(SettingsStyleTokens.groupPadding)
@@ -817,10 +919,25 @@ struct QQMusicSettingsView: View {
     private func refreshCacheSize() async {
         guard let store = coordinator?.cacheStore else {
             cacheSizeText = coordinator == nil ? "资料库未就绪" : "不可用"
+            songCacheUsageText = cacheSizeText
+            otherCacheUsageText = cacheSizeText
             return
         }
         let bytes = await store.diskUsageBytes()
-        cacheSizeText = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        cacheSizeText = QQMusicBytes.formatted(bytes)
+        otherCacheUsageText = QQMusicBytes.formatted(await store.nonAudioUsageBytes())
+
+        // Song usage is measured from the library's own files: only the
+        // automatic downloads count, and the count is taken over everything the
+        // budget would consider reclaimable.
+        if let libraryViewModel = coordinator?.libraryViewModel {
+            let (songBytes, cached) = QQMusicCacheBudget.shared.songCacheUsage(
+                tracks: libraryViewModel.allTracks
+            )
+            songCacheUsageText = "\(QQMusicBytes.formatted(songBytes))（\(cached.count) 首）"
+        } else {
+            songCacheUsageText = "资料库未就绪"
+        }
     }
 
     private func clearCache() async {
@@ -829,6 +946,25 @@ struct QQMusicSettingsView: View {
         await refreshCacheSize()
         statusIsError = false
         statusText = "缓存已清除"
+    }
+
+    /// Apply the limits now, so the effect can be seen without waiting for a
+    /// download to cross one.
+    private func reclaimNow() async {
+        guard let coordinator else { return }
+        isReclaiming = true
+        defer { isReclaiming = false }
+        let outcome = await coordinator.enforceCacheLimits()
+        await refreshCacheSize()
+        statusIsError = false
+        if outcome.removedTrackCount > 0 {
+            statusText = "已回收 \(outcome.removedTrackCount) 首自动下载的歌曲，"
+                + "释放 \(QQMusicBytes.formatted(outcome.reclaimedBytes))"
+        } else if outcome.stillOverLimit {
+            statusText = "可回收的内容已清空，占用仍超过上限（其余是曲库内容）"
+        } else {
+            statusText = "未超过上限，无需回收"
+        }
     }
 
     private func startLogin(_ type: QQMusicLoginType) async {
@@ -1019,5 +1155,71 @@ private struct NumericSettingField: View {
         if parsed != value { value = parsed }
         // Normalise what is shown, so "007" becomes "7".
         text = String(value)
+    }
+}
+
+/// A decimal setting shown as an editable field with its unit.
+///
+/// Separate from `NumericSettingField` because the cache limits need decimals —
+/// a whole-GB granularity cannot express 0.5 GB, and a default of 1 GB with only
+/// integer steps makes small limits impossible to set.
+private struct DecimalSettingField: View {
+
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let unit: String
+    let fractionDigits: Int
+
+    @State private var text: String = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 4) {
+            TextField("", text: $text)
+                .textFieldStyle(.plain)
+                .multilineTextAlignment(.trailing)
+                .font(.system(size: 12).monospacedDigit())
+                .frame(width: 58)
+                .focused($isFocused)
+                .onSubmit(commit)
+                .onChange(of: isFocused) { _, focused in
+                    if !focused { commit() }
+                }
+            Text(unit)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(Color.primary.opacity(isFocused ? 0.10 : 0.06))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Color.primary.opacity(isFocused ? 0.25 : 0.10), lineWidth: 0.5)
+        )
+        .onAppear { text = formatted(value) }
+        .onChange(of: value) { _, newValue in
+            // Don't fight the user while they are typing.
+            if !isFocused { text = formatted(newValue) }
+        }
+    }
+
+    private func formatted(_ number: Double) -> String {
+        String(format: "%.\(fractionDigits)f", number)
+    }
+
+    private func commit() {
+        // Reject rather than clamp: silently turning a typo like "500" into the
+        // maximum would look like the value was accepted.
+        guard let parsed = Double(text.trimmingCharacters(in: .whitespacesAndNewlines)),
+              range.contains(parsed)
+        else {
+            text = formatted(value)
+            return
+        }
+        if abs(parsed - value) > 1e-9 { value = parsed }
+        text = formatted(value)
     }
 }

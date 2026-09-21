@@ -29,6 +29,15 @@ struct QQMusicOnlineView: View {
     @State private var openedArtist: QQMusicOnlineArtist?
     @State private var section: Section = .recommend
 
+    /// Batch download selection.
+    ///
+    /// Only entered by an explicit tap, and only offered on finite lists: an
+    /// endless radio has no "all", so offering select-all there would promise
+    /// something that cannot be delivered.
+    @State private var isSelecting = false
+    @State private var selectedSongMids: Set<String> = []
+    @State private var isDownloadingSelection = false
+
     private enum Section: String, CaseIterable, Identifiable {
         case mine
         case recommend
@@ -223,8 +232,15 @@ struct QQMusicOnlineView: View {
                             mineSubSelector
                         }
                         Spacer(minLength: 8)
-                        if isShowingTrackList, !currentTrackList.isEmpty {
-                            playAllButton
+                        if isSelecting {
+                            selectionControls
+                        } else {
+                            if canSelectTrackList {
+                                selectButton
+                            }
+                            if isShowingTrackList, !currentTrackList.isEmpty {
+                                playAllButton
+                            }
                         }
                     }
                 }
@@ -233,6 +249,106 @@ struct QQMusicOnlineView: View {
         .padding(.horizontal, 20)
         .padding(.top, 14)
         .padding(.bottom, 10)
+    }
+
+    /// Whether this list can offer batch download.
+    ///
+    /// Only finite lists. An endless radio (guess-you-like, a station's
+    /// rotation) has no "all", so a select-all there would promise something
+    /// that cannot be delivered — the same reason the whole-list load is skipped
+    /// for them.
+    private var canSelectTrackList: Bool {
+        isShowingTrackList && !currentTrackList.isEmpty && !isShowingRecommendFeed && !coordinator.isRadioSession
+    }
+
+    private var selectButton: some View {
+        Button {
+            isSelecting = true
+            selectedSongMids = []
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "checkmark.circle").font(.system(size: 12))
+                Text("选择下载").font(.system(size: 13))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(Color.primary.opacity(0.08)))
+        }
+        .buttonStyle(.plain)
+        .help("进入选择模式，可批量下载")
+    }
+
+    /// The controls shown while selecting: select all, invert, cancel, download.
+    @ViewBuilder
+    private var selectionControls: some View {
+        HStack(spacing: 8) {
+            Text("已选 \(selectedSongMids.count) 首")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+
+            Button("全选") {
+                selectedSongMids = Set(currentTrackList.map(\.songMid))
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12))
+
+            Button("反选") {
+                let all = Set(currentTrackList.map(\.songMid))
+                selectedSongMids = all.subtracting(selectedSongMids)
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12))
+
+            Button("取消") {
+                isSelecting = false
+                selectedSongMids = []
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 12))
+
+            Button {
+                Task { await downloadSelection() }
+            } label: {
+                HStack(spacing: 5) {
+                    if isDownloadingSelection {
+                        ProgressView().controlSize(.small)
+                    }
+                    Image(systemName: "arrow.down.circle.fill").font(.system(size: 12))
+                    Text("下载所选").font(.system(size: 13, weight: .medium))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(themeStore.accentColor.opacity(0.24)))
+            }
+            .buttonStyle(.plain)
+            .disabled(selectedSongMids.isEmpty || isDownloadingSelection)
+        }
+    }
+
+    /// Download everything selected, then report what happened.
+    ///
+    /// The selection is cleared and selection mode left on success, so a repeat
+    /// download of the same batch takes a deliberate second action.
+    private func downloadSelection() async {
+        let chosen = currentTrackList.filter { selectedSongMids.contains($0.songMid) }
+        guard !chosen.isEmpty else { return }
+        isDownloadingSelection = true
+        defer { isDownloadingSelection = false }
+
+        let result = await coordinator.downloadSelected(chosen)
+        if result.failed == 0 {
+            coordinator.report(
+                "已下载 \(result.downloaded) 首",
+                isError: false
+            )
+            isSelecting = false
+            selectedSongMids = []
+        } else {
+            coordinator.report(
+                "已下载 \(result.downloaded) 首，\(result.failed) 首失败",
+                isError: true
+            )
+        }
     }
 
     private var playAllButton: some View {
@@ -269,6 +385,9 @@ struct QQMusicOnlineView: View {
         switch section {
         case .mine:
             await coordinator.loadUserLibraryIfNeeded()
+            // The folder reports its size, so the rest is fetched in one
+            // batched round trip rather than page-by-page on scroll.
+            Task { await coordinator.loadAllLikedSongs() }
         case .newSongs:
             await coordinator.loadNewSongs(region: coordinator.newSongsRegion)
         case .radio:
@@ -697,6 +816,15 @@ struct QQMusicOnlineView: View {
                                             pageable: pageable
                                         )
                                     }
+                                },
+                                isSelecting: isSelecting,
+                                isSelected: selectedSongMids.contains(track.songMid),
+                                onToggleSelection: {
+                                    if selectedSongMids.contains(track.songMid) {
+                                        selectedSongMids.remove(track.songMid)
+                                    } else {
+                                        selectedSongMids.insert(track.songMid)
+                                    }
                                 }
                             )
                             .onAppear {
@@ -861,12 +989,25 @@ struct QQMusicOnlineView: View {
                         .padding(.horizontal, 8)
 
                         ForEach(Array(coordinator.likedSongs.enumerated()), id: \.element.id) { index, track in
-                            QQMusicOnlineTrackRow(track: track) {
-                                Task { await coordinator.startPlayback(coordinator.likedSongs, startingAt: index) }
-                            }
+                            QQMusicOnlineTrackRow(
+                                track: track,
+                                onPlay: {
+                                    Task { await coordinator.startPlayback(coordinator.likedSongs, startingAt: index) }
+                                },
+                                isSelecting: isSelecting,
+                                isSelected: selectedSongMids.contains(track.songMid),
+                                onToggleSelection: {
+                                    if selectedSongMids.contains(track.songMid) {
+                                        selectedSongMids.remove(track.songMid)
+                                    } else {
+                                        selectedSongMids.insert(track.songMid)
+                                    }
+                                }
+                            )
                             .onAppear {
-                                // "我喜欢" can run to hundreds of tracks, so page
-                                // rather than fetching it all up front.
+                                // Paging is a safety net only: the whole list is
+                                // already fetched in one batched round trip after
+                                // the section loads, so this normally does nothing.
                                 guard index >= coordinator.likedSongs.count - 5 else { return }
                                 Task { await coordinator.loadMoreLikedSongs() }
                             }
@@ -1004,6 +1145,11 @@ struct QQMusicOnlineTrackRow: View {
 
     let track: QQMusicOnlineTrack
     let onPlay: () -> Void
+    /// Selection-mode inputs. Defaulted so the row still works where selection
+    /// is not offered (radio, artist pages).
+    var isSelecting: Bool = false
+    var isSelected: Bool = false
+    var onToggleSelection: (() -> Void)? = nil
 
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
     @EnvironmentObject private var themeStore: ThemeStore
@@ -1016,6 +1162,14 @@ struct QQMusicOnlineTrackRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            if isSelecting {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 15))
+                    .foregroundStyle(isSelected ? themeStore.accentColor : Color.secondary)
+                    .frame(width: 18)
+                    .contentShape(Rectangle())
+            }
+
             artwork
 
             VStack(alignment: .leading, spacing: 2) {
@@ -1044,6 +1198,12 @@ struct QQMusicOnlineTrackRow: View {
         .padding(.vertical, 6)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { onPlay() }
+        // While selecting, a single tap toggles instead of doing nothing: the
+        // row is the obvious target and requiring the checkbox itself would be
+        // needlessly fiddly.
+        .onTapGesture {
+            if isSelecting { onToggleSelection?() }
+        }
         .contextMenu {
             Button {
                 onPlay()
@@ -1056,6 +1216,16 @@ struct QQMusicOnlineTrackRow: View {
             } label: {
                 Label("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward")
             }
+
+            Button {
+                Task { await coordinator.downloadOne(track) }
+            } label: {
+                Label(
+                    isImported ? "已在曲库（转为手动下载）" : "下载",
+                    systemImage: "arrow.down.circle"
+                )
+            }
+            .disabled(track.songMid.isEmpty || phase.isBusy)
 
             Divider()
 

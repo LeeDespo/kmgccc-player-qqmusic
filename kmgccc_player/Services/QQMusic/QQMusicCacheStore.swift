@@ -178,6 +178,62 @@ actor QQMusicCacheStore {
         return total
     }
 
+    /// Bytes held by the catalogue and artwork caches — the "other" budget.
+    ///
+    /// Audio is excluded on purpose: it is counted by the song budget, from the
+    /// library side, because a downloaded track's size is a property of the
+    /// track rather than of this cache directory.
+    func nonAudioUsageBytes() -> Int64 {
+        var total: Int64 = 0
+        for directory in [paths.qqMusicCatalogCacheURL, paths.qqMusicArtworkCacheURL] {
+            guard let enumerator = fileManager.enumerator(
+                at: directory,
+                includingPropertiesForKeys: [.fileSizeKey]
+            ) else { continue }
+            for case let url as URL in enumerator {
+                total += Int64((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0)
+            }
+        }
+        return total
+    }
+
+    /// Drop cached catalogue payloads and artwork, oldest first, until the given
+    /// number of bytes has been released.
+    ///
+    /// Age comes from the file's modification date, which is written when the
+    /// payload is stored — so "oldest" means least recently fetched, which is
+    /// the right thing to discard first.
+    ///
+    /// Returns the bytes actually freed. The in-memory mirrors are dropped with
+    /// it, so a later read does not resurrect what was just deleted.
+    @discardableResult
+    func reclaimNonAudio(bytes target: Int64) -> Int64 {
+        guard target > 0 else { return 0 }
+
+        var entries: [(url: URL, size: Int64, modified: Date)] = []
+        for directory in [paths.qqMusicCatalogCacheURL, paths.qqMusicArtworkCacheURL] {
+            guard let enumerator = fileManager.enumerator(
+                at: directory,
+                includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey]
+            ) else { continue }
+            for case let url as URL in enumerator {
+                let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+                guard let size = values?.fileSize, size > 0 else { continue }
+                entries.append((url, Int64(size), values?.contentModificationDate ?? .distantPast))
+            }
+        }
+
+        var freed: Int64 = 0
+        for entry in entries.sorted(by: { $0.modified < $1.modified }) {
+            guard freed < target else { break }
+            guard (try? fileManager.removeItem(at: entry.url)) != nil else { continue }
+            freed += entry.size
+        }
+        // Every in-memory entry may now point at a deleted file.
+        memoryCatalog.removeAll()
+        return freed
+    }
+
     /// Remove every cached payload, keeping the folder itself.
     func clearAll() {
         memoryCatalog.removeAll()
