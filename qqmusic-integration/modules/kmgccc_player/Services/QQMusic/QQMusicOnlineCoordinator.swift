@@ -2168,6 +2168,17 @@ final class QQMusicOnlineCoordinator {
         importedSongMids.contains(songMid) || existingTrack(for: songMid) != nil
     }
 
+    /// Whether this track is already the user's own download.
+    ///
+    /// Distinct from `isImported`, which is also true for a track a prefetch
+    /// happened to fetch — that one is still cache, so downloading it is
+    /// meaningful (it converts it to the user's). Only a track the user already
+    /// asked for has nothing left to do.
+    func isUserDownloaded(_ songMid: String) -> Bool {
+        guard let track = existingTrack(for: songMid) else { return false }
+        return track.qqMusicOrigin == .userRequested
+    }
+
     func isPlaying(_ songMid: String) -> Bool {
         activePlayingSongMid == songMid
     }

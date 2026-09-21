@@ -287,14 +287,20 @@ struct QQMusicOnlineView: View {
                 .foregroundStyle(.secondary)
 
             Button("全选") {
-                selectedSongMids = Set(currentTrackList.map(\.songMid))
+                // Only what can actually be downloaded: including tracks the user
+                // already has would inflate the count and do nothing.
+                selectedSongMids = Set(
+                    currentTrackList.map(\.songMid).filter { !coordinator.isUserDownloaded($0) }
+                )
             }
             .buttonStyle(.plain)
             .font(.system(size: 12))
 
             Button("反选") {
-                let all = Set(currentTrackList.map(\.songMid))
-                selectedSongMids = all.subtracting(selectedSongMids)
+                let selectable = Set(
+                    currentTrackList.map(\.songMid).filter { !coordinator.isUserDownloaded($0) }
+                )
+                selectedSongMids = selectable.subtracting(selectedSongMids)
             }
             .buttonStyle(.plain)
             .font(.system(size: 12))
@@ -349,6 +355,17 @@ struct QQMusicOnlineView: View {
                 isError: true
             )
         }
+    }
+
+    /// Order rows for display, moving already-owned tracks to the end while
+    /// selecting.
+    ///
+    /// They cannot be selected, so leaving them interleaved would put inert
+    /// entries in the middle of the list the user is working through.
+    private func displayedTracks(_ tracks: [QQMusicOnlineTrack]) -> [QQMusicOnlineTrack] {
+        guard isSelecting else { return tracks }
+        return tracks.filter { !coordinator.isUserDownloaded($0.songMid) }
+            + tracks.filter { coordinator.isUserDownloaded($0.songMid) }
     }
 
     private var playAllButton: some View {
@@ -805,7 +822,7 @@ struct QQMusicOnlineView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 2) {
-                        ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                        ForEach(Array(displayedTracks(tracks).enumerated()), id: \.element.id) { index, track in
                             QQMusicOnlineTrackRow(
                                 track: track,
                                 onPlay: {
@@ -825,7 +842,8 @@ struct QQMusicOnlineView: View {
                                     } else {
                                         selectedSongMids.insert(track.songMid)
                                     }
-                                }
+                                },
+                                isAlreadyOwned: coordinator.isUserDownloaded(track.songMid)
                             )
                             .onAppear {
                                 // Pull the next page as the end comes into view.
@@ -1002,7 +1020,8 @@ struct QQMusicOnlineView: View {
                                     } else {
                                         selectedSongMids.insert(track.songMid)
                                     }
-                                }
+                                },
+                                isAlreadyOwned: coordinator.isUserDownloaded(track.songMid)
                             )
                             .onAppear {
                                 // Paging is a safety net only: the whole list is
@@ -1150,6 +1169,9 @@ struct QQMusicOnlineTrackRow: View {
     var isSelecting: Bool = false
     var isSelected: Bool = false
     var onToggleSelection: (() -> Void)? = nil
+    /// True when the user already downloaded this, so there is nothing to do.
+    /// Such a row is dimmed and cannot be selected.
+    var isAlreadyOwned: Bool = false
 
     /// The failure detail, shown only when the warning glyph is clicked.
     @State private var isShowingErrorDetail = false
@@ -1167,9 +1189,15 @@ struct QQMusicOnlineTrackRow: View {
     var body: some View {
         HStack(spacing: 10) {
             if isSelecting {
-                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                Image(systemName: isAlreadyOwned
+                      ? "checkmark.circle.fill"
+                      : (isSelected ? "checkmark.circle.fill" : "circle"))
                     .font(.system(size: 15))
-                    .foregroundStyle(isSelected ? themeStore.accentColor : Color.secondary)
+                    .foregroundStyle(
+                        isAlreadyOwned
+                            ? Color.secondary
+                            : (isSelected ? themeStore.accentColor : Color.secondary)
+                    )
                     .frame(width: 18)
                     .contentShape(Rectangle())
             }
@@ -1206,8 +1234,11 @@ struct QQMusicOnlineTrackRow: View {
         // row is the obvious target and requiring the checkbox itself would be
         // needlessly fiddly.
         .onTapGesture {
-            if isSelecting { onToggleSelection?() }
+            // A row that is already the user's cannot be selected, so tapping it
+            // does nothing rather than appearing to select and then not counting.
+            if isSelecting, !isAlreadyOwned { onToggleSelection?() }
         }
+        .opacity(isAlreadyOwned ? 0.45 : 1)
         .contextMenu {
             Button {
                 onPlay()
