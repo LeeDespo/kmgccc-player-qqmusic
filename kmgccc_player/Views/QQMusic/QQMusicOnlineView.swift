@@ -38,6 +38,13 @@ struct QQMusicOnlineView: View {
     @State private var selectedSongMids: Set<String> = []
     @State private var isDownloadingSelection = false
 
+    /// Landing layout or a pushed list. The home page is the default; a shelf's
+    /// "see all" sets this, and the back button clears it.
+    @State private var homeDestination: QQMusicHomeDestination?
+    /// Whether the home layout is showing (as opposed to a pushed list or a
+    /// drill-down).
+    @State private var isHomeVisible = true
+
     private enum Section: String, CaseIterable, Identifiable {
         case mine
         case recommend
@@ -105,11 +112,93 @@ struct QQMusicOnlineView: View {
                 .environment(coordinator)
                 .environmentObject(themeStore)
                 .environment(\.qqMusicArtworkLoader, coordinator.artworkLoader)
+            } else if isHomeVisible {
+                homeBody
             } else {
                 browseBody
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    /// The landing page: shelves, with search at the top right.
+    private var homeBody: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Text("QQ 音乐")
+                    .font(.title2.weight(.semibold))
+                Spacer()
+                searchButton
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
+
+            statusBanner
+            Divider().opacity(0.3)
+
+            QQMusicHomeView { destination in
+                isHomeVisible = false
+                homeDestination = destination
+                openHomeDestination(destination)
+            }
+        }
+        .onAppear {
+            // The shelves need every list they display.
+            Task { await loadHomeContent() }
+            Task { await coordinator.ensureLikedSongMidsIfNeeded() }
+        }
+    }
+
+    /// Open the full list behind a shelf.
+    ///
+    /// Reuses the existing section machinery rather than adding a parallel
+    /// browse path, so every list keeps its paging, selection and drill-down.
+    private func openHomeDestination(_ destination: QQMusicHomeDestination) {
+        switch destination {
+        case .likedSongs, .userPlaylists, .likedAlbums:
+            section = .mine
+            mineSection = destination == .likedSongs ? .likedSongs
+                : (destination == .userPlaylists ? .playlists : .albums)
+        case .newSongs:
+            section = .newSongs
+        case .toplists:
+            section = .toplists
+        case .radio:
+            section = .radio
+        case .recommend:
+            section = .recommend
+        }
+        Task { await loadContent(for: section) }
+    }
+
+    /// Load everything the shelves show.
+    private func loadHomeContent() async {
+        await coordinator.loadInitialContentIfNeeded()
+        await coordinator.loadUserLibraryIfNeeded()
+        Task { await coordinator.loadAllLikedSongs() }
+    }
+
+    /// Search lives at the top right of the landing page, as on the library's
+    /// home, and takes over the page when used.
+    private var searchButton: some View {
+        Button {
+            isHomeVisible = false
+            section = .search
+            Task { await loadContent(for: .search) }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                Text("搜索")
+                    .font(.system(size: 13))
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(Color.primary.opacity(0.08)))
+        }
+        .buttonStyle(.plain)
+        .help("搜索歌曲、歌手、歌单")
     }
 
     private var browseBody: some View {
@@ -144,22 +233,22 @@ struct QQMusicOnlineView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 10) {
-                if drilledDownTitle != nil {
-                    Button {
-                        closeDrillDown()
-                    } label: {
-                        HStack(spacing: 2) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 13, weight: .semibold))
-                            Text("返回")
-                                .font(.system(size: 13))
-                        }
-                        .foregroundStyle(themeStore.accentColor)
-                        .contentShape(Rectangle())
+                // Always offered: from a shelf list this returns to the landing
+                // page, from a drilled-down playlist it steps up one level.
+                Button {
+                    goBack()
+                } label: {
+                    HStack(spacing: 2) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 13, weight: .semibold))
+                        Text("返回")
+                            .font(.system(size: 13))
                     }
-                    .buttonStyle(.plain)
-                    .help("返回上一级")
+                    .foregroundStyle(themeStore.accentColor)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .help("返回上一级")
 
                 Text(currentTitle)
                     .font(.title2.weight(.semibold))
@@ -731,6 +820,20 @@ struct QQMusicOnlineView: View {
     private var isOnSearchPage: Bool { section == .search }
 
     /// Leave whichever drill-down is active.
+    /// Step up one level: a drilled-down list closes, then a shelf list returns
+    /// to the landing page.
+    private func goBack() {
+        if drilledDownTitle != nil {
+            closeDrillDown()
+            return
+        }
+        if !isHomeVisible {
+            isHomeVisible = true
+            homeDestination = nil
+            section = .recommend
+        }
+    }
+
     private func closeDrillDown() {
         if !coordinator.radioStationTitle.isEmpty {
             coordinator.closeRadioStation()
