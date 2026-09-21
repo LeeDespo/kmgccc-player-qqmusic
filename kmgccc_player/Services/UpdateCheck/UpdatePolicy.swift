@@ -165,27 +165,30 @@ enum UpdatePreferences {
     static func migrateIfNeeded(defaults: UserDefaults = .standard) {
         guard !defaults.bool(forKey: migrationCompletedKey) else { return }
 
-        let automaticUpdatesEnabled: Bool
-        if defaults.object(forKey: legacyLaunchCheckKey) != nil {
-            automaticUpdatesEnabled = defaults.bool(forKey: legacyLaunchCheckKey)
-        } else {
-            automaticUpdatesEnabled = true
-        }
+        // Always false: this fork does not consume the upstream update feed.
+        let automaticUpdatesEnabled = false
 
         defaults.set(automaticUpdatesEnabled, forKey: automaticUpdatesEnabledKey)
         defaults.set(true, forKey: migrationCompletedKey)
     }
 
+    /// Automatic updates are off and cannot be turned on in this build.
+    ///
+    /// The feed belongs to the upstream project, and this is a modified fork:
+    /// installing its releases would replace the app with one that lacks these
+    /// changes. Forced rather than defaulted because an existing install may
+    /// already have migrated the preference to `true`.
     static func automaticUpdatesEnabled(defaults: UserDefaults = .standard) -> Bool {
-        migrateIfNeeded(defaults: defaults)
-        return defaults.bool(forKey: automaticUpdatesEnabledKey)
+        false
     }
 
     static func setAutomaticUpdatesEnabled(
         _ enabled: Bool,
         defaults: UserDefaults = .standard
     ) {
-        defaults.set(enabled, forKey: automaticUpdatesEnabledKey)
+        // Recorded as off whatever the caller asks, so the stored value cannot
+        // disagree with what the app does.
+        defaults.set(false, forKey: automaticUpdatesEnabledKey)
         defaults.set(true, forKey: migrationCompletedKey)
     }
 

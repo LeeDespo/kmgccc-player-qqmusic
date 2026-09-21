@@ -78,14 +78,40 @@ final class QQMusicCacheBudgetTests: XCTestCase {
         XCTAssertEqual(cached.map(\.title), ["a"])
     }
 
-    /// Tracks with no recorded origin are treated as cache, so a limit can
-    /// actually be honoured — they are re-downloadable.
-    func testUnclassifiedDownloadsCountAsCache() throws {
+    /// Tracks with no recorded origin are treated as the user's own, so they are
+    /// never reclaimed. This is the regression that deleted real downloads: every
+    /// track fetched before the field existed is unrecorded, and the first version
+    /// classified exactly those as evictable.
+    func testUnclassifiedDownloadsAreTreatedAsUserOwned() throws {
         defer { disableLimits() }
         let unknown = try makeTrack("old", megabytes: 2, origin: nil)
         let (bytes, cached) = QQMusicCacheBudget.shared.songCacheUsage(tracks: [unknown])
-        XCTAssertEqual(bytes, 2_000_000)
-        XCTAssertEqual(cached.count, 1)
+        XCTAssertEqual(bytes, 0, "unrecorded downloads must not count as cache")
+        XCTAssertTrue(cached.isEmpty, "and must never be offered for reclamation")
+    }
+
+    /// The specific shape of the reported bug: a folder of pre-existing downloads
+    /// plus one genuine prefetch. Only the prefetch may be evicted.
+    func testOnlyExplicitPrefetchIsEverEvicted() async throws {
+        defer { disableLimits() }
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let legacyA = try makeTrack("legacy-a", megabytes: 4, origin: nil, downloadedAt: base)
+        let legacyB = try makeTrack("legacy-b", megabytes: 4, origin: nil, downloadedAt: base)
+        let prefetched = try makeTrack("prefetched", megabytes: 4, origin: .prefetch, downloadedAt: base)
+
+        // Limit far below the total, reclaim to zero: everything reclaimable
+        // must go, and nothing else may.
+        enableSongLimit(gb: 0.001, reclaimPercent: 0)
+
+        var deleted: [Track] = []
+        let outcome = await QQMusicCacheBudget.shared.reclaimSongsIfNeeded(
+            tracks: [legacyA, legacyB, prefetched],
+            playingAndQueued: [],
+            delete: { deleted.append(contentsOf: $0) }
+        )
+
+        XCTAssertEqual(deleted.map(\.title), ["prefetched"])
+        XCTAssertTrue(outcome.stillOverLimit, "the rest is user content, which is reported not deleted")
     }
 
     // MARK: - Reclamation

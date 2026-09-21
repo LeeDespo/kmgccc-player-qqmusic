@@ -263,7 +263,10 @@ nonisolated enum CrashReportPreferences {
     static let automaticUploadKey = "telemetry.automaticCrashReportUploadEnabled"
 
     static func automaticUploadEnabled(defaults: UserDefaults = .standard) -> Bool {
-        guard defaults.object(forKey: automaticUploadKey) != nil else { return true }
+        // Off unless explicitly enabled. This build is a modified fork, so
+        // reports would go to the upstream author's server rather than to
+        // anyone who could act on them.
+        guard defaults.object(forKey: automaticUploadKey) != nil else { return false }
         return defaults.bool(forKey: automaticUploadKey)
     }
 }
