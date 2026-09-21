@@ -22,12 +22,12 @@ final class QQMusicDownloadOriginTests: XCTestCase {
 
     // MARK: - Model semantics
 
-    func testOriginDefaultsToPrefetchWhenUnrecorded() {
-        // Files imported before the field existed cannot be classified. They must
-        // be treated as reclaimable, otherwise a cache limit could never be met.
+    func testOriginDefaultsToUserRequestedWhenUnrecorded() {
+        // Unrecorded files are the pre-existing backlog. Treating them as cache
+        // deleted the user's own downloads, so the default is now the safe one.
         let track = makeTrack(origin: nil)
-        XCTAssertEqual(track.qqMusicOrigin, .prefetch)
-        XCTAssertTrue(track.countsAsDownloadCache)
+        XCTAssertEqual(track.qqMusicOrigin, .userRequested)
+        XCTAssertFalse(track.countsAsDownloadCache)
     }
 
     func testUserRequestedIsNotCache() {

@@ -70,6 +70,9 @@ final class QQMusicOnlineCoordinator {
     /// first page can be shown immediately while the full set fills in.
     private var likedMidsCompletionTask: Task<Void, Never>?
     private var isRefreshingLikedMids = false
+    /// The row a like was issued from, so the liked list can be adjusted
+    /// without refetching it. Keyed by song mid; consumed on insert.
+    private var pendingLikeRow: [String: QQMusicOnlineTrack] = [:]
     /// Writes in flight, so the button can show progress and not double-fire.
     private(set) var pendingLikeSongMids: Set<String> = []
     private var isLoadingMoreLikedSongs = false
@@ -729,10 +732,18 @@ final class QQMusicOnlineCoordinator {
                 || page.tracks.map(\.songMid) != likedSongs.map(\.songMid)
                 || page.tracks.map(\.imageURL) != likedSongs.map(\.imageURL)
             await cacheLikedSongs(page, page: 1)
-            if changed || !servedFromCache {
+            if !servedFromCache {
+                // Nothing on screen yet: use the response as-is.
                 likedSongs = page.tracks
                 likedSongsTotal = page.total
                 likedSongsPage = 1
+            } else if changed {
+                // Something on screen and the upstream differs: reconcile in
+                // place so only the real additions and removals take effect. A
+                // wholesale replacement would blank and rebuild the list for a
+                // one-row change.
+                mergeLiked(page.tracks)
+                likedSongsTotal = page.total
             }
             // This response enumerates the folder, so it is the cheapest source
             // of the liked-mid set: seeding it here fills the hearts everywhere
@@ -789,6 +800,70 @@ final class QQMusicOnlineCoordinator {
         likedSongsPage = page
         likedSongsTotal = max(total, likedSongs.count)
         report(nil)
+    }
+
+    /// Apply a like or unlike to the loaded list without discarding it.
+    ///
+    /// Unlike needs only a removal. A like needs the track's row, which comes
+    /// from whatever list it was liked from; when that row is not at hand the
+    /// list is left for the next refresh to pick up rather than being cleared.
+    func applyLikeChange(songMid: String, liked: Bool) {
+        if !liked {
+            likedSongs.removeAll { $0.songMid == songMid }
+            likedSongsTotal = max(0, likedSongsTotal - 1)
+        } else if let row = pendingLikeRow[songMid] {
+            // Insert at the top: the folder is newest-first upstream, so that is
+            // where a fresh like appears.
+            likedSongs.insert(row, at: 0)
+            likedSongsTotal += 1
+            pendingLikeRow[songMid] = nil
+        } else {
+            // No row available (liked from a place that only knows the mid).
+            // Leave the list intact and let the next visit reconcile; a cleared
+            // list would be a worse answer than a momentarily stale one.
+            likedSongsTotal = max(likedSongsTotal, likedSongs.count)
+        }
+        // Rewrite the cache from the adjusted list, so the change survives a
+        // restart without a refetch.
+        let page = QQMusicLikedSongs(title: "我喜欢", total: likedSongsTotal, tracks: likedSongs)
+        Task { await self.cacheLikedSongs(page, page: 1) }
+    }
+
+    /// Reconcile a refreshed list with what is on screen, in place.
+    ///
+    /// A list that differs by one or two entries should not visibly empty and
+    /// refill. Entries that are still present keep their positions and their
+    /// already-decoded artwork; only genuine additions and removals are applied.
+    ///
+    /// Returns true when anything changed, so the caller can skip a needless
+    /// re-render.
+    @discardableResult
+    private func mergeLiked(_ incoming: [QQMusicOnlineTrack]) -> Bool {
+        let incomingMids = incoming.map(\.songMid)
+        guard incomingMids != likedSongs.map(\.songMid) else { return false }
+
+        let incomingSet = Set(incomingMids)
+        let removed = likedSongs.filter { !incomingSet.contains($0.songMid) }
+        var byMid = Dictionary(likedSongs.map { ($0.songMid, $0) }, uniquingKeysWith: { first, _ in first })
+        var merged: [QQMusicOnlineTrack] = []
+        for track in incoming {
+            // Reuse the existing row when present, so nothing is re-decoded.
+            if let existing = byMid[track.songMid] {
+                merged.append(existing)
+                byMid[track.songMid] = nil
+            } else {
+                merged.append(track)
+            }
+        }
+        if !removed.isEmpty || merged.count != likedSongs.count {
+            Log.info(
+                "[QQMusicOnline] liked list reconciled: +\(max(0, merged.count - likedSongs.count)) "
+                    + "-\(removed.count)",
+                category: .import
+            )
+        }
+        likedSongs = merged
+        return true
     }
 
     /// Read the first page of "我喜欢" regardless of age.
@@ -1238,8 +1313,11 @@ final class QQMusicOnlineCoordinator {
     /// The upstream applies the change asynchronously, so the local set is
     /// updated optimistically and rolled back if the write is rejected.
     @discardableResult
-    func toggleLike(songMid mid: String) async -> Bool {
+    func toggleLike(songMid mid: String, row: QQMusicOnlineTrack? = nil) async -> Bool {
         guard !mid.isEmpty else { return false }
+        // Remember where the like came from so the list can be adjusted in
+        // place. Only meaningful for a like; an unlike needs no row.
+        if let row { pendingLikeRow[mid] = row }
         guard !pendingLikeSongMids.contains(mid) else { return likedSongMids.contains(mid) }
 
         let target = !likedSongMids.contains(mid)
@@ -1258,16 +1336,14 @@ final class QQMusicOnlineCoordinator {
                 likedSongMids.remove(mid)
             }
             report(target ? "已收藏到「我喜欢」" : "已取消收藏")
-            // The change also invalidates the cached liked list.
-            if let store = cacheStore {
-                await store.invalidateCatalog(.likedSongs, key: "page-1")
-            }
-            // Cleared so the next visit refetches. The total has to be reset
-            // too: leaving the old one makes `hasMoreLikedSongs` briefly lie,
-            // which shows a "load more" affordance for a list that is gone.
-            likedSongs = []
-            likedSongsPage = 0
-            likedSongsTotal = 0
+            // Adjust the list in place rather than discarding it.
+            //
+            // This used to delete the cached page and clear the list, so the
+            // next visit refetched hundreds of tracks to reflect a one-row
+            // change — and the page visibly emptied in the meantime. A single
+            // like or unlike changes exactly one entry, so it is applied to the
+            // loaded list directly and the cache is rewritten from it.
+            applyLikeChange(songMid: mid, liked: target)
             return target
         } catch {
             report((error as? LocalizedError)?.errorDescription ?? "收藏操作失败", isError: true)

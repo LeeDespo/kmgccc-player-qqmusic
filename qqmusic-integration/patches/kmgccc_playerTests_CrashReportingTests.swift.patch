@@ -1,0 +1,27 @@
+diff --git a/kmgccc_playerTests/CrashReportingTests.swift b/kmgccc_playerTests/CrashReportingTests.swift
+index 6915474f..c5434b07 100644
+--- a/kmgccc_playerTests/CrashReportingTests.swift
++++ b/kmgccc_playerTests/CrashReportingTests.swift
+@@ -124,14 +124,19 @@ final class CrashReportDeliveryModelTests: XCTestCase {
+         XCTAssertNil(legacyDecoded.sessionID)
+     }
+ 
+-    func testAutomaticUploadDefaultsToEnabledAndCanBeDisabled() {
++    /// Automatic upload is off unless explicitly enabled. This fork would send
++    /// reports to the upstream author's server, where nobody could act on them.
++    func testAutomaticUploadDefaultsToDisabled() {
+         let suiteName = "CrashReportPreferencesTests-\(UUID().uuidString)"
+         let defaults = UserDefaults(suiteName: suiteName)!
+         defer { defaults.removePersistentDomain(forName: suiteName) }
+ 
+-        XCTAssertTrue(CrashReportPreferences.automaticUploadEnabled(defaults: defaults))
+-        defaults.set(false, forKey: CrashReportPreferences.automaticUploadKey)
+         XCTAssertFalse(CrashReportPreferences.automaticUploadEnabled(defaults: defaults))
++
++        // An explicit opt-in is still honoured, so the preference remains
++        // meaningful rather than being ignored outright.
++        defaults.set(true, forKey: CrashReportPreferences.automaticUploadKey)
++        XCTAssertTrue(CrashReportPreferences.automaticUploadEnabled(defaults: defaults))
+     }
+ 
+     func testRetryDelayIncreasesAndIsCapped() {

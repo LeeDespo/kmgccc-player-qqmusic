@@ -1,0 +1,40 @@
+diff --git a/kmgccc_player/Views/Settings/About/AboutSettingsView.swift b/kmgccc_player/Views/Settings/About/AboutSettingsView.swift
+index e08b8be8..7abec313 100644
+--- a/kmgccc_player/Views/Settings/About/AboutSettingsView.swift
++++ b/kmgccc_player/Views/Settings/About/AboutSettingsView.swift
+@@ -11,7 +11,6 @@ import SwiftUI
+ struct AboutSettingsView: View {
+     @EnvironmentObject private var themeStore: ThemeStore
+     @Environment(\.settingsAppForegroundColors) private var appColors
+-    @AppStorage(UpdatePreferences.automaticUpdatesEnabledKey) private var automaticUpdatesEnabled = true
+     @State private var aboutEasterEggTracker = AboutEasterEggTapTracker()
+     @State private var showEasterEggImage: Bool = false
+     @State private var page: AboutSettingsPage = .main
+@@ -127,14 +126,19 @@ struct AboutSettingsView: View {
+ 
+     private var updateCheckPreferenceSection: some View {
+         SettingsSection {
+-            SettingsSwitchRow(
+-                title: "自动更新",
+-                isOn: $automaticUpdatesEnabled,
+-                detail: "开启后会自动检查并在后台下载；退出 App 或点击“重启更新”时安装。"
+-            )
+-        }
+-        .onChange(of: automaticUpdatesEnabled) { _, enabled in
+-            UpdateCoordinator.shared.setAutomaticUpdatesEnabled(enabled)
++            VStack(alignment: .leading, spacing: 6) {
++                HStack(spacing: 12) {
++                    Text("自动更新")
++                        .settingsRowLabelStyle()
++                    Spacer(minLength: 16)
++                    Toggle("", isOn: .constant(false))
++                        .toggleStyle(.switch)
++                        .labelsHidden()
++                        .disabled(true)
++                }
++                Text("由于本版本是修改版，自动更新已停用且不可开启：更新源来自原项目，安装后会覆盖掉本版本的功能改动。")
++                    .settingsDescriptionStyle()
++            }
+         }
+     }
+ 

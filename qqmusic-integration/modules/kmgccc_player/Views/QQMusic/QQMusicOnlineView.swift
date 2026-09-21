@@ -1151,6 +1151,10 @@ struct QQMusicOnlineTrackRow: View {
     var isSelected: Bool = false
     var onToggleSelection: (() -> Void)? = nil
 
+    /// The failure detail, shown only when the warning glyph is clicked.
+    @State private var isShowingErrorDetail = false
+    @State private var errorDetail = ""
+
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
     @EnvironmentObject private var themeStore: ThemeStore
 
@@ -1230,7 +1234,7 @@ struct QQMusicOnlineTrackRow: View {
             Divider()
 
             Button {
-                Task { await coordinator.toggleLike(songMid: track.songMid) }
+                Task { await coordinator.toggleLike(songMid: track.songMid, row: track) }
             } label: {
                 Label(isLiked ? "取消收藏" : "收藏到「我喜欢」",
                       systemImage: isLiked ? "heart.slash" : "heart")
@@ -1248,7 +1252,7 @@ struct QQMusicOnlineTrackRow: View {
     private var likeButton: some View {
         if !track.songMid.isEmpty {
             Button {
-                Task { await coordinator.toggleLike(songMid: track.songMid) }
+                Task { await coordinator.toggleLike(songMid: track.songMid, row: track) }
             } label: {
                 Group {
                     if isLikePending {
@@ -1290,18 +1294,27 @@ struct QQMusicOnlineTrackRow: View {
         case .fetchingExtras:
             busyLabel("整理中")
         case .failed(let message):
+            // A warning glyph instead of the message itself. The raw upstream
+            // error is long, technical, and unreadable when truncated to a row —
+            // and it pushed the play button out of reach. The detail is one
+            // click away for anyone who wants it.
             HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.orange)
-                Text(message)
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                Button {
+                    errorDetail = message
+                    isShowingErrorDetail = true
+                } label: {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.orange)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("下载失败，点击查看原因")
                 playButton
             }
-            .frame(maxWidth: 240, alignment: .trailing)
-            .help(message)
+            .popover(isPresented: $isShowingErrorDetail, arrowEdge: .bottom) {
+                errorDetailPopover
+            }
         case .done, .idle:
             HStack(spacing: 6) {
                 if isImported && !isPlaying {
@@ -1313,6 +1326,26 @@ struct QQMusicOnlineTrackRow: View {
                 playButton
             }
         }
+    }
+
+    /// The failure detail, shown on demand rather than in the row.
+    private var errorDetailPopover: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                Text("下载失败")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            Text(errorDetail)
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                // Selectable so the text can be copied for a bug report.
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 320, alignment: .leading)
+        }
+        .padding(12)
     }
 
     private var playButton: some View {

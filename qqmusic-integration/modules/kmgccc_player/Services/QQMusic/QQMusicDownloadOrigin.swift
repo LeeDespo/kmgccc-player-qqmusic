@@ -36,17 +36,24 @@ nonisolated enum QQMusicDownloadOrigin: String, Sendable, CaseIterable {
 extension Track {
     /// Why this track's audio is on disk, if it came from the online source.
     ///
-    /// Defaults to `.prefetch` when the field is absent, which is the safe
-    /// direction: files imported before this was recorded cannot be classified,
-    /// and treating them as reclaimable means a cache limit can actually be
-    /// honoured. Treating them as permanent would silently make the limit
-    /// unreachable. They are re-downloadable, so the cost of a wrong guess is
-    /// small and recoverable.
+    /// An unrecorded download is treated as **user-requested**, which means it is
+    /// never reclaimed. This is deliberately the opposite of what would make the
+    /// cache limit easiest to honour, and it was learned the hard way: the first
+    /// version defaulted to `.prefetch` on the reasoning that unclassified files
+    /// are re-downloadable, and it deleted the user's own downloaded music — every
+    /// track downloaded before this field existed was unrecorded by definition.
+    ///
+    /// The asymmetry decides it: failing to reclaim a file costs disk space, while
+    /// reclaiming one the user asked for destroys something they chose to keep.
+    /// When the two cannot be told apart, the safe direction is to keep.
+    ///
+    /// Files downloaded from now on carry an explicit origin, so this default only
+    /// applies to the pre-existing backlog.
     var qqMusicOrigin: QQMusicDownloadOrigin? {
         guard qqMusicSongMid?.isEmpty == false else { return nil }
         guard let raw = qqMusicDownloadOrigin,
               let origin = QQMusicDownloadOrigin(rawValue: raw)
-        else { return .prefetch }
+        else { return .userRequested }
         return origin
     }
 
