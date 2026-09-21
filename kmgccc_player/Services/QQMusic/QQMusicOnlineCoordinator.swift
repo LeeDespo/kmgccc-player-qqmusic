@@ -73,6 +73,8 @@ final class QQMusicOnlineCoordinator {
     /// Writes in flight, so the button can show progress and not double-fire.
     private(set) var pendingLikeSongMids: Set<String> = []
     private var isLoadingMoreLikedSongs = false
+    /// Guards the one-shot full-list load, which is separate from paging.
+    private var isLoadingAllLikedSongs = false
     private(set) var playlistSearchKeyword = ""
     private(set) var isLoadingNewSongs = false
     private(set) var isSearchingPlaylists = false
@@ -211,6 +213,12 @@ final class QQMusicOnlineCoordinator {
     /// list plays in the order the radio produced, which is what the upstream
     /// considers the sequence.
     private var sessionIsRadio = false
+
+    /// Whether the current playback session is a radio.
+    ///
+    /// Radios have no end, so the view uses this to withhold
+    /// whole-list actions (select all, batch download).
+    var isRadioSession: Bool { sessionIsRadio }
     /// Tracks this session could not download, so the prefetch loop stops
     /// picking them. Without this an unplayable track is never queued, so it
     /// would be chosen again on every pass and retried forever.
@@ -344,7 +352,7 @@ final class QQMusicOnlineCoordinator {
 
     // MARK: - Status
 
-    private func report(_ message: String?, isError: Bool = false) {
+    func report(_ message: String?, isError: Bool = false) {
         guard let message, isError else {
             statusMessage = message
             statusIsError = isError
@@ -414,6 +422,11 @@ final class QQMusicOnlineCoordinator {
     /// being read as abuse.
     private func preloadUserLibrary() async {
         await loadLikedSongs()
+        // Pull the remainder in the same launch pass. The folder reports its
+        // size and the pages come back in one batched request, so finishing the
+        // list here is cheap — and it is what removes the wait when the user
+        // opens the page, and what lets shuffle cover every track.
+        await loadAllLikedSongs()
         await loadLikedAlbums()
         await loadUserPlaylists()
     }
@@ -643,6 +656,43 @@ final class QQMusicOnlineCoordinator {
     // offered anywhere in the UI.
 
     var hasMoreLikedSongs: Bool { likedSongs.count < likedSongsTotal }
+
+    /// Load the whole "我喜欢" list, not just the first page.
+    ///
+    /// The folder reports its size, so the remaining pages are fetched together
+    /// in one round trip. Doing this up front is what makes two things work
+    /// that otherwise cannot: the list is fully browsable without waiting for
+    /// scroll-triggered paging, and shuffle can range over every track rather
+    /// than over whatever happened to have loaded.
+    ///
+    /// `total` counts rows, and a few rows carry no playable track — so the
+    /// loop stops when a fetch adds nothing new, which is the real completion
+    /// signal.
+    func loadAllLikedSongs() async {
+        guard !isLoadingLikedSongs, !isLoadingAllLikedSongs else { return }
+        guard hasMoreLikedSongs else { return }
+        isLoadingAllLikedSongs = true
+        defer { isLoadingAllLikedSongs = false }
+
+        do {
+            let all = try await webAPI.fetchAllLikedSongs()
+            var tracks = likedSongs
+            var seen = Set(tracks.map(\.songMid))
+            for track in all.tracks where seen.insert(track.songMid).inserted {
+                tracks.append(track)
+            }
+            guard tracks.count != likedSongs.count else { return }
+            likedSongs = tracks
+            likedSongsTotal = all.total
+            // The whole list is now held in memory, so it is worth caching as
+            // one payload — reopening the page should not refetch 471 tracks.
+            await cacheLikedSongs(QQMusicLikedSongs(title: all.title, total: all.total, tracks: tracks), page: 1)
+            report(nil)
+        } catch {
+            // Paging by hand still works, so a failure here is not fatal.
+            Log.warning("[QQMusicOnline] full liked-songs load failed: \(error)", category: .import)
+        }
+    }
 
     /// Load the first page of "我喜欢".
     /// Load "我喜欢".
@@ -1367,6 +1417,10 @@ final class QQMusicOnlineCoordinator {
         await loadPlaylistTracks(cacheKey: "songlist-\(id)", title: title) {
             try await self.helper.fetchPlaylistTracks(songlistId: id, limit: 100)
         }
+        // The list reports its size, so the rest is pulled in the background
+        // instead of making the user scroll to discover it — and so a later
+        // shuffle covers the whole playlist rather than the first page.
+        Task { await self.loadRemainingListTracks() }
     }
 
     func openToplist(id: Int, title: String) async {
@@ -1375,6 +1429,25 @@ final class QQMusicOnlineCoordinator {
         openedPlaylistTotal = 0
         await loadPlaylistTracks(cacheKey: "toplist-\(id)", title: title) {
             try await self.helper.fetchPlaylistTracks(topId: id, limit: 100)
+        }
+        Task { await self.loadRemainingListTracks() }
+    }
+
+    /// Keep loading pages until the open list is complete.
+    ///
+    /// Called once after opening, so a playlist or ranking ends up fully loaded
+    /// without the user waiting on it — which is also what lets shuffle range
+    /// over the whole list rather than the part that happened to be fetched.
+    ///
+    /// Bounded, and each pass must make progress, so a mis-reported total cannot
+    /// spin the loop.
+    func loadRemainingListTracks(maxPasses: Int = 12) async {
+        var passes = 0
+        while hasMorePlaylistTracks, passes < maxPasses, !Task.isCancelled {
+            passes += 1
+            let before = playlistTracks.count
+            await loadMorePlaylistTracks()
+            if playlistTracks.count == before { break }
         }
     }
 
@@ -1513,7 +1586,7 @@ final class QQMusicOnlineCoordinator {
             report("需要托管资料库才能播放", isError: true)
             return false
         }
-        guard let imported = await materialize(track) else { return false }
+        guard let imported = await materialize(track, origin: .userRequested) else { return false }
 
         // `insertTracksAfterCurrent` needs something playing to insert after.
         // With an empty queue the honest interpretation of "play next" is
@@ -1584,7 +1657,7 @@ final class QQMusicOnlineCoordinator {
         sessionAllSongMids = playable.map(\.songMid)
         rebuildPlaybackOrder(keeping: seed.songMid)
 
-        guard let first = await materialize(seed) else { return }
+        guard let first = await materialize(seed, origin: .userRequested) else { return }
 
         // `externalOrder`: this session feeds the queue itself, so the engine
         // must advance linearly rather than shuffling the very same tracks a
@@ -1739,14 +1812,62 @@ final class QQMusicOnlineCoordinator {
     /// The imported `Track` comes straight from the import result rather than a
     /// library re-lookup: the in-memory library snapshot is refreshed
     /// asynchronously, so looking it up here would race and drop the track.
-    private func materialize(_ track: QQMusicOnlineTrack) async -> Track? {
+    /// Download a track if needed and return its library `Track`.
+    ///
+    /// `origin` records *why* it is being fetched. The distinction matters
+    /// because a prefetched file is a cache entry the app may reclaim, while one
+    /// the user asked for is permanent — and because a track prefetched earlier
+    /// is upgraded to user-requested when they later ask for it, rather than
+    /// being downloaded again.
+    private func materialize(
+        _ track: QQMusicOnlineTrack,
+        origin: QQMusicDownloadOrigin = .prefetch
+    ) async -> Track? {
         if let existing = existingTrack(for: track.songMid) {
             importedSongMids.insert(track.songMid)
+            // Already on disk: this is the automatic-to-manual transition, so
+            // ownership changes without a second download.
+            await recordDownloadOrigin(origin, on: [existing])
             return existing
         }
         let imported = await downloadAndImport(track)
+        await recordDownloadOrigin(origin, on: imported)
         return imported.first
     }
+
+    /// Mark an already-imported track as user-requested.
+    ///
+    /// This is the automatic-to-manual transition: the audio is already on disk,
+    /// so nothing is downloaded again — only its ownership changes, and it stops
+    /// counting against the automatic-download cache. Idempotent.
+    func promoteToUserRequested(songMid: String) async {
+        guard let track = existingTrack(for: songMid) else { return }
+        await recordDownloadOrigin(.userRequested, on: [track])
+    }
+
+    /// Record why a downloaded track is on disk.
+    ///
+    /// Kept separate from the import so a provenance-write failure cannot roll
+    /// back a file that imported successfully, mirroring how `applyProvenance`
+    /// is kept apart from the import transaction.
+    ///
+    /// Only ever *upgrades* to `.userRequested`: once the user has asked for a
+    /// track it stays theirs, so a later background pass cannot quietly
+    /// reclassify it as evictable.
+    private func recordDownloadOrigin(_ origin: QQMusicDownloadOrigin, on tracks: [Track]) async {
+        var changed: [Track] = []
+        for track in tracks where track.qqMusicSongMid?.isEmpty == false {
+            let already = track.qqMusicDownloadOrigin
+            if origin == .userRequested ? already != origin.rawValue : already == nil {
+                track.qqMusicDownloadOrigin = origin.rawValue
+                if track.qqMusicDownloadedAt == nil { track.qqMusicDownloadedAt = Date() }
+                changed.append(track)
+            }
+        }
+        guard !changed.isEmpty, let importService else { return }
+        await importService.persistOnlineDownloadOrigin(changed)
+    }
+
     /// Find an already-imported track for a song mid, so a re-tap reuses the
     /// local copy instead of downloading it again.
     private func existingTrack(for songMid: String) -> Track? {
@@ -1975,6 +2096,57 @@ final class QQMusicOnlineCoordinator {
         activePlayingSongMid == songMid
     }
 
+    /// Download a single track the user picked, without playing it.
+    ///
+    /// Counts as a user request, so the file is theirs: if a prefetch already
+    /// fetched it, this only promotes its ownership rather than downloading it
+    /// again.
+    func downloadOne(_ track: QQMusicOnlineTrack) async {
+        guard canDownload else {
+            report("需要托管资料库才能下载", isError: true)
+            return
+        }
+        guard !track.songMid.isEmpty else { return }
+        if await materialize(track, origin: .userRequested) != nil {
+            report("已下载：\(track.title)")
+        }
+    }
+
+    /// Download several tracks the user picked, one after another.
+    ///
+    /// Serial on purpose: the upstream is sensitive to concurrent requests, and a
+    /// batch download is the easiest way to look like abuse. Each track's
+    /// progress reuses the per-row phase the list already displays, so no
+    /// separate progress UI is needed.
+    ///
+    /// Already-downloaded tracks are not fetched again — `materialize` reuses the
+    /// local copy and only promotes its ownership, which is exactly the
+    /// automatic-to-manual transition.
+    ///
+    /// Returns a summary so the caller can report what happened rather than
+    /// guessing from the phases.
+    @discardableResult
+    func downloadSelected(_ tracks: [QQMusicOnlineTrack]) async -> (downloaded: Int, failed: Int) {
+        guard canDownload else {
+            report("需要托管资料库才能下载", isError: true)
+            return (0, 0)
+        }
+        var downloaded = 0
+        var failed = 0
+        for track in tracks where !track.songMid.isEmpty {
+            guard !Task.isCancelled else { break }
+            // `materialize` reuses an existing local copy and promotes its
+            // ownership, so choosing a track that was prefetched earlier does
+            // not download it twice.
+            if await materialize(track, origin: .userRequested) != nil {
+                downloaded += 1
+            } else {
+                failed += 1
+            }
+        }
+        return (downloaded, failed)
+    }
+
     /// Download `track` and import it into the library.
     ///
     /// Returns the imported tracks (empty on failure). `Track` is a SwiftData
@@ -2043,7 +2215,41 @@ final class QQMusicOnlineCoordinator {
         importedSongMids.insert(track.songMid)
         downloadPhases[track.songMid] = .done
         try? FileManager.default.removeItem(at: staging.audioURL)
+        // A download can push the automatic-download cache over its limit, so
+        // the check runs once per completed download rather than on a timer.
+        await enforceCacheLimits()
         return imported
+    }
+
+    /// Bring both caches back under their configured limits.
+    ///
+    /// Called after a download and from the settings window. Safe to call with
+    /// no limit configured: it returns without touching anything.
+    @discardableResult
+    func enforceCacheLimits() async -> QQMusicCacheBudget.Outcome {
+        guard let libraryViewModel else { return QQMusicCacheBudget.Outcome() }
+
+        // Never delete what is playing, or what is queued behind it.
+        var protected = Set<UUID>()
+        if let current = playerViewModel?.currentTrack { protected.insert(current.id) }
+        for queued in playerViewModel?.currentQueueTracks ?? [] { protected.insert(queued.id) }
+
+        let outcome = await QQMusicCacheBudget.shared.reclaimSongsIfNeeded(
+            tracks: libraryViewModel.allTracks,
+            playingAndQueued: protected,
+            delete: { [weak libraryViewModel] doomed in
+                await libraryViewModel?.deleteTracks(doomed)
+            }
+        )
+        if outcome.removedTrackCount > 0 {
+            Log.info(
+                "[QQMusicOnline] song cache reclaimed \(outcome.removedTrackCount) tracks, "
+                    + "\(QQMusicBytes.formatted(outcome.reclaimedBytes))",
+                category: .import
+            )
+        }
+        _ = await QQMusicCacheBudget.shared.reclaimOtherIfNeeded(store: cacheStore)
+        return outcome
     }
 
     /// Merge the QQ lyric and its translation into one LRC block.

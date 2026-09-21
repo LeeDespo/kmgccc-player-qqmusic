@@ -432,6 +432,17 @@ final class FileImportService: FileImportServiceProtocol {
         await repository.persistTrackMetaOnly(tracks, reason: "online-import-provenance")
     }
 
+    /// Persist a change to why an online track's audio is on disk.
+    ///
+    /// Used for the automatic-to-manual transition, where the audio is already
+    /// imported and only its ownership changes. The caller has already mutated
+    /// the model; this writes it through, so the change survives a restart
+    /// instead of living only in memory.
+    func persistOnlineDownloadOrigin(_ tracks: [Track]) async {
+        guard !tracks.isEmpty else { return }
+        await repository.persistTrackMetaOnly(tracks, reason: "online-download-origin")
+    }
+
     /// Setup entry. The caller retains `selection` across this entire call so the
     /// backend can sign durable folder/file bookmarks before picker access expires.
     func importInitialSelection(_ selection: LibraryInitialImportSelection) async -> LibraryInitialImportResult {

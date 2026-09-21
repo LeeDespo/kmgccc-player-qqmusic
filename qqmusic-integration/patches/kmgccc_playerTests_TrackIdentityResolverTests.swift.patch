@@ -1,0 +1,31 @@
+diff --git a/kmgccc_playerTests/TrackIdentityResolverTests.swift b/kmgccc_playerTests/TrackIdentityResolverTests.swift
+index de86d7a1..9736be47 100644
+--- a/kmgccc_playerTests/TrackIdentityResolverTests.swift
++++ b/kmgccc_playerTests/TrackIdentityResolverTests.swift
+@@ -405,7 +405,7 @@ final class TrackIdentityResolverTests: XCTestCase {
+ 
+     // MARK: - Sidecar round trip
+ 
+-    func testImportProvenanceRoundTripsThroughSidecarSchemaNine() throws {
++    func testImportProvenanceRoundTripsThroughSidecar() throws {
+         let sidecar = kmgccc_player.TrackSidecar(
+             id: UUID(),
+             title: "t",
+@@ -429,7 +429,7 @@ final class TrackIdentityResolverTests: XCTestCase {
+                 contentDigest: "deadbeef"
+             )
+         )
+-        XCTAssertEqual(sidecar.schemaVersion, 9)
++        XCTAssertEqual(sidecar.schemaVersion, kmgccc_player.TrackSidecar.currentSchemaVersion)
+ 
+         let encoder = JSONEncoder()
+         encoder.dateEncodingStrategy = .iso8601
+@@ -448,7 +448,7 @@ final class TrackIdentityResolverTests: XCTestCase {
+         "mediaLocator":{"kind":"managed","managed":{"libraryRelativePath":"Tracks/x/audio.m4a"}}}
+         """
+         let legacy = try decoder.decode(kmgccc_player.TrackSidecar.self, from: Data(legacyPayload.utf8))
+-        XCTAssertNil(legacy.importProvenance, "older schema-9 payloads decode unchanged")
++        XCTAssertNil(legacy.importProvenance, "older payloads decode unchanged")
+     }
+ 
+     // MARK: - Fixtures

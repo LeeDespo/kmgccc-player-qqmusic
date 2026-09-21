@@ -1,0 +1,22 @@
+diff --git a/kmgccc_player/Services/Library/MusicLibraryScanner.swift b/kmgccc_player/Services/Library/MusicLibraryScanner.swift
+index 5ea584c1..793bc8da 100644
+--- a/kmgccc_player/Services/Library/MusicLibraryScanner.swift
++++ b/kmgccc_player/Services/Library/MusicLibraryScanner.swift
+@@ -21,6 +21,8 @@ nonisolated struct ScannedTrackMeta: Sendable {
+     let labelOrCompany: String
+     let releaseDate: Date?
+     let qqMusicSongMid: String?
++    let qqMusicDownloadOrigin: String?
++    let qqMusicDownloadedAt: Date?
+     let metadataSource: String?
+     let metadataFetchedAt: Date?
+     let metadataConfidence: Double?
+@@ -112,6 +114,8 @@ nonisolated struct MusicLibraryScanner: Sendable {
+             labelOrCompany: sidecar.labelOrCompany?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+             releaseDate: sidecar.releaseDate,
+             qqMusicSongMid: normalizedOptional(sidecar.qqMusicSongMid),
++            qqMusicDownloadOrigin: sidecar.qqMusicDownloadOrigin,
++            qqMusicDownloadedAt: sidecar.qqMusicDownloadedAt,
+             metadataSource: normalizedOptional(sidecar.metadataSource),
+             metadataFetchedAt: sidecar.metadataFetchedAt,
+             metadataConfidence: sidecar.metadataConfidence,

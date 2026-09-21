@@ -54,6 +54,12 @@ final class Track {
     var labelOrCompany: String = ""
     var releaseDate: Date?
     var qqMusicSongMid: String?
+    /// Why this file was downloaded, as a `QQMusicDownloadOrigin` raw value:
+    /// a user request or a background prefetch. Nil for tracks that did not
+    /// come from the online source.
+    var qqMusicDownloadOrigin: String?
+    /// When it was downloaded, so eviction can order by age.
+    var qqMusicDownloadedAt: Date?
     var metadataSource: String?
     var metadataFetchedAt: Date?
     var metadataConfidence: Double?
@@ -278,6 +284,8 @@ final class Track {
         labelOrCompany: String = "",
         releaseDate: Date? = nil,
         qqMusicSongMid: String? = nil,
+        qqMusicDownloadOrigin: String? = nil,
+        qqMusicDownloadedAt: Date? = nil,
         metadataSource: String? = nil,
         metadataFetchedAt: Date? = nil,
         metadataConfidence: Double? = nil,
@@ -321,6 +329,8 @@ final class Track {
         self.labelOrCompany = labelOrCompany
         self.releaseDate = releaseDate
         self.qqMusicSongMid = qqMusicSongMid
+        self.qqMusicDownloadOrigin = qqMusicDownloadOrigin
+        self.qqMusicDownloadedAt = qqMusicDownloadedAt
         self.metadataSource = metadataSource
         self.metadataFetchedAt = metadataFetchedAt
         self.metadataConfidence = metadataConfidence

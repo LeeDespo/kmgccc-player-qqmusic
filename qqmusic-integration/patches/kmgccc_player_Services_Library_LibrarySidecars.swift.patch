@@ -1,0 +1,69 @@
+diff --git a/kmgccc_player/Services/Library/LibrarySidecars.swift b/kmgccc_player/Services/Library/LibrarySidecars.swift
+index 89370a72..916c3c42 100644
+--- a/kmgccc_player/Services/Library/LibrarySidecars.swift
++++ b/kmgccc_player/Services/Library/LibrarySidecars.swift
+@@ -302,7 +302,7 @@ nonisolated struct ImportProvenance: Codable, Equatable, Sendable {
+ }
+ 
+ nonisolated struct TrackSidecar: Codable, Sendable {
+-    static let currentSchemaVersion = 9
++    static let currentSchemaVersion = 10
+ 
+     let schemaVersion: Int
+     let id: UUID
+@@ -317,6 +317,11 @@ nonisolated struct TrackSidecar: Codable, Sendable {
+     let labelOrCompany: String?
+     let releaseDate: Date?
+     let qqMusicSongMid: String?
++    /// Why the file was downloaded: a user request or a prefetch. Absent for
++    /// library tracks. Drives which budget owns the file (schema 10).
++    let qqMusicDownloadOrigin: String?
++    /// When it was downloaded, so "evict the oldest" has a real ordering.
++    let qqMusicDownloadedAt: Date?
+     let metadataSource: String?
+     let metadataFetchedAt: Date?
+     let metadataConfidence: Double?
+@@ -354,6 +359,7 @@ nonisolated struct TrackSidecar: Codable, Sendable {
+     enum CodingKeys: String, CodingKey {
+         case schemaVersion, id, title, artist, artistCredits, album, albumArtist, description, genreTags
+         case language, labelOrCompany, releaseDate, qqMusicSongMid, metadataSource
++        case qqMusicDownloadOrigin, qqMusicDownloadedAt
+         case metadataFetchedAt, metadataConfidence, musicBrainzReleaseID, duration, addedAt, importedAt
+         case lyricsTimeOffsetMs, originalFilePath, audioFileName, artworkFileName
+         case lyricsFileName, lyricsType, ttmlLyricsFileName, ncmSourcePath
+@@ -377,6 +383,8 @@ nonisolated struct TrackSidecar: Codable, Sendable {
+         labelOrCompany: String? = nil,
+         releaseDate: Date? = nil,
+         qqMusicSongMid: String? = nil,
++        qqMusicDownloadOrigin: String? = nil,
++        qqMusicDownloadedAt: Date? = nil,
+         metadataSource: String? = nil,
+         metadataFetchedAt: Date? = nil,
+         metadataConfidence: Double? = nil,
+@@ -417,6 +425,8 @@ nonisolated struct TrackSidecar: Codable, Sendable {
+         self.labelOrCompany = labelOrCompany
+         self.releaseDate = releaseDate
+         self.qqMusicSongMid = qqMusicSongMid
++        self.qqMusicDownloadOrigin = qqMusicDownloadOrigin
++        self.qqMusicDownloadedAt = qqMusicDownloadedAt
+         self.metadataSource = metadataSource
+         self.metadataFetchedAt = metadataFetchedAt
+         self.metadataConfidence = metadataConfidence
+@@ -477,6 +487,8 @@ nonisolated struct TrackSidecar: Codable, Sendable {
+         labelOrCompany = try c.decodeIfPresent(String.self, forKey: .labelOrCompany)
+         releaseDate = try c.decodeIfPresent(Date.self, forKey: .releaseDate)
+         qqMusicSongMid = try c.decodeIfPresent(String.self, forKey: .qqMusicSongMid)
++        qqMusicDownloadOrigin = try c.decodeIfPresent(String.self, forKey: .qqMusicDownloadOrigin)
++        qqMusicDownloadedAt = try c.decodeIfPresent(Date.self, forKey: .qqMusicDownloadedAt)
+         metadataSource = try c.decodeIfPresent(String.self, forKey: .metadataSource)
+         metadataFetchedAt = try c.decodeIfPresent(Date.self, forKey: .metadataFetchedAt)
+         metadataConfidence = try c.decodeIfPresent(Double.self, forKey: .metadataConfidence)
+@@ -545,6 +557,8 @@ nonisolated struct TrackSidecar: Codable, Sendable {
+         try c.encodeIfPresent(labelOrCompany, forKey: .labelOrCompany)
+         try c.encodeIfPresent(releaseDate, forKey: .releaseDate)
+         try c.encodeIfPresent(qqMusicSongMid, forKey: .qqMusicSongMid)
++        try c.encodeIfPresent(qqMusicDownloadOrigin, forKey: .qqMusicDownloadOrigin)
++        try c.encodeIfPresent(qqMusicDownloadedAt, forKey: .qqMusicDownloadedAt)
+         try c.encodeIfPresent(metadataSource, forKey: .metadataSource)
+         try c.encodeIfPresent(metadataFetchedAt, forKey: .metadataFetchedAt)
+         try c.encodeIfPresent(metadataConfidence, forKey: .metadataConfidence)

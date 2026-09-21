@@ -1,0 +1,49 @@
+diff --git a/kmgccc_player/Services/Library/LibraryDiskScanner.swift b/kmgccc_player/Services/Library/LibraryDiskScanner.swift
+index 6d492661..d0f8ecc1 100644
+--- a/kmgccc_player/Services/Library/LibraryDiskScanner.swift
++++ b/kmgccc_player/Services/Library/LibraryDiskScanner.swift
+@@ -538,6 +538,8 @@ nonisolated private struct CachedScannedTrackMeta: Codable {
+     let labelOrCompany: String
+     let releaseDate: Date?
+     let qqMusicSongMid: String?
++    let qqMusicDownloadOrigin: String?
++    let qqMusicDownloadedAt: Date?
+     let metadataSource: String?
+     let metadataFetchedAt: Date?
+     let metadataConfidence: Double?
+@@ -576,7 +578,7 @@ nonisolated private struct CachedScannedTrackMeta: Codable {
+         case language
+         case labelOrCompany
+         case releaseDate
+-        case qqMusicSongMid
++        case qqMusicSongMid, qqMusicDownloadOrigin, qqMusicDownloadedAt
+         case metadataSource
+         case metadataFetchedAt
+         case metadataConfidence
+@@ -617,6 +619,8 @@ nonisolated private struct CachedScannedTrackMeta: Codable {
+         labelOrCompany = meta.labelOrCompany
+         releaseDate = meta.releaseDate
+         qqMusicSongMid = meta.qqMusicSongMid
++        qqMusicDownloadOrigin = meta.qqMusicDownloadOrigin
++        qqMusicDownloadedAt = meta.qqMusicDownloadedAt
+         metadataSource = meta.metadataSource
+         metadataFetchedAt = meta.metadataFetchedAt
+         metadataConfidence = meta.metadataConfidence
+@@ -658,6 +662,8 @@ nonisolated private struct CachedScannedTrackMeta: Codable {
+         labelOrCompany = try c.decodeIfPresent(String.self, forKey: .labelOrCompany) ?? ""
+         releaseDate = try c.decodeIfPresent(Date.self, forKey: .releaseDate)
+         qqMusicSongMid = try c.decodeIfPresent(String.self, forKey: .qqMusicSongMid)
++        qqMusicDownloadOrigin = try c.decodeIfPresent(String.self, forKey: .qqMusicDownloadOrigin)
++        qqMusicDownloadedAt = try c.decodeIfPresent(Date.self, forKey: .qqMusicDownloadedAt)
+         metadataSource = try c.decodeIfPresent(String.self, forKey: .metadataSource)
+         metadataFetchedAt = try c.decodeIfPresent(Date.self, forKey: .metadataFetchedAt)
+         metadataConfidence = try c.decodeIfPresent(Double.self, forKey: .metadataConfidence)
+@@ -700,6 +706,8 @@ nonisolated private struct CachedScannedTrackMeta: Codable {
+             labelOrCompany: labelOrCompany,
+             releaseDate: releaseDate,
+             qqMusicSongMid: qqMusicSongMid,
++            qqMusicDownloadOrigin: qqMusicDownloadOrigin,
++            qqMusicDownloadedAt: qqMusicDownloadedAt,
+             metadataSource: metadataSource,
+             metadataFetchedAt: metadataFetchedAt,
+             metadataConfidence: metadataConfidence,

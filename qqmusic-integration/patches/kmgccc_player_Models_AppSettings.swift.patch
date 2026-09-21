@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Models/AppSettings.swift b/kmgccc_player/Models/AppSettings.swift
-index 6c11cee7..4c9c8805 100644
+index 6c11cee7..0b3385f4 100644
 --- a/kmgccc_player/Models/AppSettings.swift
 +++ b/kmgccc_player/Models/AppSettings.swift
 @@ -22,10 +22,24 @@ enum PlaybackStartPolicy: Equatable {
@@ -37,7 +37,7 @@ index 6c11cee7..4c9c8805 100644
              return .sequence
          case .forceShuffleTemporary:
              return .shuffle
-@@ -1105,6 +1119,221 @@ public final class AppSettings {
+@@ -1105,6 +1119,330 @@ public final class AppSettings {
          static let sourcePreferences = "externalPlaybackSourcePreferences"
      }
  
@@ -67,6 +67,12 @@ index 6c11cee7..4c9c8805 100644
 +        static let circuitOpenSeconds = "qqMusicCircuitOpenSeconds"
 +        static let showLikeButton = "qqMusicShowLikeButton"
 +        static let preferredQuality = "qqMusicPreferredQuality"
++        static let songCacheLimitEnabled = "qqMusicSongCacheLimitEnabled"
++        static let songCacheLimitGB = "qqMusicSongCacheLimitGB"
++        static let songCacheReclaimPercent = "qqMusicSongCacheReclaimPercent"
++        static let otherCacheLimitEnabled = "qqMusicOtherCacheLimitEnabled"
++        static let otherCacheLimitGB = "qqMusicOtherCacheLimitGB"
++        static let otherCacheReclaimPercent = "qqMusicOtherCacheReclaimPercent"
 +    }
 +
 +    /// Read an integer setting, falling back to the default when unset.
@@ -78,6 +84,15 @@ index 6c11cee7..4c9c8805 100644
 +        UserDefaults.standard.object(forKey: key) == nil
 +            ? fallback
 +            : UserDefaults.standard.integer(forKey: key)
++    }
++
++    /// Read a `Double` setting, falling back when unset. `double(forKey:)`
++    /// returns 0 for a missing key, and 0 is not a meaningful limit, so
++    /// presence is tested rather than the value.
++    private func qqMusicDouble(_ key: String, default fallback: Double) -> Double {
++        UserDefaults.standard.object(forKey: key) == nil
++            ? fallback
++            : UserDefaults.standard.double(forKey: key)
 +    }
 +
 +    private func qqMusicBool(_ key: String, default fallback: Bool) -> Bool {
@@ -252,6 +267,100 @@ index 6c11cee7..4c9c8805 100644
 +        set {
 +            withMutation(keyPath: \.qqMusicPreferredQuality) {
 +                UserDefaults.standard.set(newValue.rawValue, forKey: QQMusicKeys.preferredQuality)
++            }
++        }
++    }
++
++    // MARK: QQ Music cache budgets
++    //
++    // Two separate budgets, because the two kinds of data have different value
++    // and different cost to replace:
++    //
++    //   songs  — downloaded audio that the app fetched on its own to keep
++    //            playback ahead. Reclaimable, since it can be fetched again.
++    //   other  — catalogue JSON and cover images, all of it re-derivable.
++    //
++    // Audio the *user* asked for is deliberately not part of either budget: it
++    // is their library, not a cache. See `QQMusicDownloadOrigin`.
++
++    /// Whether automatic-downloaded audio is subject to a size limit.
++    var qqMusicSongCacheLimitEnabled: Bool {
++        get {
++            access(keyPath: \.qqMusicSongCacheLimitEnabled)
++            return qqMusicBool(QQMusicKeys.songCacheLimitEnabled, default: false)
++        }
++        set {
++            withMutation(keyPath: \.qqMusicSongCacheLimitEnabled) {
++                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.songCacheLimitEnabled)
++            }
++        }
++    }
++
++    /// Upper bound for automatic-downloaded audio, in GB.
++    var qqMusicSongCacheLimitGB: Double {
++        get {
++            access(keyPath: \.qqMusicSongCacheLimitGB)
++            return qqMusicDouble(QQMusicKeys.songCacheLimitGB, default: 1)
++        }
++        set {
++            withMutation(keyPath: \.qqMusicSongCacheLimitGB) {
++                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.songCacheLimitGB)
++            }
++        }
++    }
++
++    /// How much of the limit to keep once it is exceeded, as a percentage.
++    ///
++    /// Reclaiming to the limit itself would mean evicting again on the very next
++    /// download; trimming to a lower water mark makes eviction occasional
++    /// instead of continuous. 70% of 1 GB leaves 300 MB of headroom.
++    var qqMusicSongCacheReclaimPercent: Int {
++        get {
++            access(keyPath: \.qqMusicSongCacheReclaimPercent)
++            return qqMusicInt(QQMusicKeys.songCacheReclaimPercent, default: 70)
++        }
++        set {
++            withMutation(keyPath: \.qqMusicSongCacheReclaimPercent) {
++                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.songCacheReclaimPercent)
++            }
++        }
++    }
++
++    /// Whether the catalogue/artwork cache is subject to a size limit.
++    var qqMusicOtherCacheLimitEnabled: Bool {
++        get {
++            access(keyPath: \.qqMusicOtherCacheLimitEnabled)
++            return qqMusicBool(QQMusicKeys.otherCacheLimitEnabled, default: false)
++        }
++        set {
++            withMutation(keyPath: \.qqMusicOtherCacheLimitEnabled) {
++                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.otherCacheLimitEnabled)
++            }
++        }
++    }
++
++    /// Upper bound for the catalogue and artwork cache, in GB.
++    var qqMusicOtherCacheLimitGB: Double {
++        get {
++            access(keyPath: \.qqMusicOtherCacheLimitGB)
++            return qqMusicDouble(QQMusicKeys.otherCacheLimitGB, default: 1)
++        }
++        set {
++            withMutation(keyPath: \.qqMusicOtherCacheLimitGB) {
++                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.otherCacheLimitGB)
++            }
++        }
++    }
++
++    /// How much of the other-cache limit to keep once exceeded, as a percentage.
++    var qqMusicOtherCacheReclaimPercent: Int {
++        get {
++            access(keyPath: \.qqMusicOtherCacheReclaimPercent)
++            return qqMusicInt(QQMusicKeys.otherCacheReclaimPercent, default: 70)
++        }
++        set {
++            withMutation(keyPath: \.qqMusicOtherCacheReclaimPercent) {
++                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.otherCacheReclaimPercent)
 +            }
 +        }
 +    }
