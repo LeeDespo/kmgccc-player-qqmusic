@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Views/Sidebar/SidebarView.swift b/kmgccc_player/Views/Sidebar/SidebarView.swift
-index b5fdaf2c..7dc0b64e 100644
+index b5fdaf2c..f9494dcc 100644
 --- a/kmgccc_player/Views/Sidebar/SidebarView.swift
 +++ b/kmgccc_player/Views/Sidebar/SidebarView.swift
 @@ -33,6 +33,8 @@ struct SidebarView: View {
@@ -36,7 +36,7 @@ index b5fdaf2c..7dc0b64e 100644
          .sheet(isPresented: $showSettings, onDismiss: {
              FeatureTipPresentationCoordinator.shared.setSuspended(false)
          }) {
-@@ -586,6 +599,15 @@ struct SidebarView: View {
+@@ -586,6 +599,18 @@ struct SidebarView: View {
                  uiState.clearHomeNavigationContext()
                  uiState.showPlaybackHistory()
              }
@@ -47,12 +47,15 @@ index b5fdaf2c..7dc0b64e 100644
 +                selection: .qqMusicOnline
 +            ) {
 +                uiState.clearHomeNavigationContext()
++                // Entering from the sidebar starts over at the landing page,
++                // the same gesture as clicking 主页 in the library.
++                appSession.qqMusicOnlineCoordinator?.resetBrowsing()
 +                uiState.showQQMusicOnline()
 +            }
          }
          .padding(.top, 4)
          .padding(.bottom, 12)
-@@ -935,6 +957,23 @@ struct SidebarView: View {
+@@ -935,6 +960,23 @@ struct SidebarView: View {
          }
      }
  
@@ -76,17 +79,18 @@ index b5fdaf2c..7dc0b64e 100644
      private func openSettings() {
          FeatureTipPresentationCoordinator.shared.setSuspended(true)
          settingsRotateTrigger += 1
-@@ -1070,6 +1109,9 @@ struct SidebarView: View {
+@@ -1070,6 +1112,10 @@ struct SidebarView: View {
          case .history:
              uiState.showPlaybackHistory()
              return
 +        case .qqMusicOnline:
++            appSession.qqMusicOnlineCoordinator?.resetBrowsing()
 +            uiState.showQQMusicOnline()
 +            return
          case .allPlaylists:
              uiState.pushSelectionInHomeContext(.allPlaylists, libraryVM: libraryVM)
              return
-@@ -1241,6 +1283,9 @@ struct SidebarView: View {
+@@ -1241,6 +1287,9 @@ struct SidebarView: View {
          if uiState.contentMode == .playbackHistory {
              return .history
          }
@@ -96,7 +100,7 @@ index b5fdaf2c..7dc0b64e 100644
  
          // Use the explicit currentSelection from LibraryViewModel
          switch libraryVM.currentSelection {
-@@ -1406,6 +1451,7 @@ private enum SidebarSelection: Hashable {
+@@ -1406,6 +1455,7 @@ private enum SidebarSelection: Hashable {
      case allSongs
      case folders
      case history

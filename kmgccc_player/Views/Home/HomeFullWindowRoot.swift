@@ -59,6 +59,8 @@ struct HomeFullWindowRoot: View {
                         .tint(ThemeStore.shared.accentColor)
                         .accentColor(ThemeStore.shared.accentColor)
                 }
+            } else if shouldRenderQQMusic {
+                QQMusicFullWindowRoot(appSession: appSession)
             } else {
                 Color.clear
                     .allowsHitTesting(false)
@@ -73,5 +75,15 @@ struct HomeFullWindowRoot: View {
         guard let libraryVM = appSession.libraryVM else { return false }
         return appSession.uiState.contentMode == .library
             && libraryVM.currentSelection == .home
+    }
+
+    /// The online browse surface shares this host, for the same reason Home has
+    /// it: its card rails must span the window so they can run under the
+    /// sidebar / lyrics glass. `allowsHomeInteraction` already covers this mode
+    /// (see its `isQQMusicMode` term), so the hit routing needs no new gate.
+    private var shouldRenderQQMusic: Bool {
+        guard layout.allowsHomeInteraction else { return false }
+        return appSession.uiState.contentMode == .qqMusicOnline
+            && appSession.qqMusicOnlineCoordinator != nil
     }
 }

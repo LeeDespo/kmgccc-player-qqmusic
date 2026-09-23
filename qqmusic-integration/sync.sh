@@ -64,6 +64,12 @@ git -C "$FROM" cat-file -e "${BASE}^{commit}" 2>/dev/null \
 is_shippable_path() {
   case "$1" in
     kmgccc_player/*|kmgccc_playerTests/*|Tools/QQMusicHelper/*|scripts/components/qqmusic-helper.sh|.gitignore) return 0 ;;
+    # The app's sources live in file-system-synchronized folders, so they need
+    # no project entries — but the TEST target is an explicit file list. Without
+    # this file the package would copy the test files into a tree that never
+    # compiles them: `xcodebuild test` prints TEST SUCCEEDED while skipping every
+    # one, which is the exact silent failure described in AGENTS.md.
+    kmgccc_player.xcodeproj/project.pbxproj) return 0 ;;
     *) return 1 ;;
   esac
 }

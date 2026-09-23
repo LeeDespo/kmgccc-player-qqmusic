@@ -202,6 +202,14 @@ struct AppKitMainContentPaneRoot: View {
         uiState.contentMode == .library && libraryVM.currentSelection == .home
     }
 
+    /// True when the online browse surface is the content on screen.
+    ///
+    /// It is drawn by the same full-window host as `HomeView`, so it takes the
+    /// same passthrough treatment in the center pane.
+    private func isQQMusicMode(uiState: UIStateViewModel) -> Bool {
+        uiState.contentMode == .qqMusicOnline
+    }
+
     private func contentView(
         uiState: UIStateViewModel,
         libraryVM: LibraryViewModel,
@@ -214,6 +222,7 @@ struct AppKitMainContentPaneRoot: View {
         skinManager: SkinManager
     ) -> some View {
         let homeMode = isHomeMode(uiState: uiState, libraryVM: libraryVM)
+        let qqMusicMode = isQQMusicMode(uiState: uiState)
         let homeSearchActive = homeMode
             && !pageController.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
@@ -294,15 +303,17 @@ struct AppKitMainContentPaneRoot: View {
                     .ignoresSafeArea(.container, edges: .top)
                     .id("appkit-main-nowplaying")
                 case .qqMusicOnline:
-                    if let qqMusicOnlineCoordinator = appSession.qqMusicOnlineCoordinator {
-                        QQMusicOnlineView()
-                            .environment(qqMusicOnlineCoordinator)
-                            .environment(\.qqMusicArtworkLoader, qqMusicOnlineCoordinator.artworkLoader)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                            .id("appkit-main-qqmusic-online")
-                    } else {
-                        Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
+                    // The online browse surface is rendered by
+                    // `QQMusicFullWindowRoot` in the AppKit window's full-window
+                    // host, exactly as `HomeView` is: its card rails have to
+                    // span the window to travel under the sidebar / lyrics
+                    // glass, which the center pane cannot give them. The center
+                    // pane contributes a transparent passthrough so hits and
+                    // scrolls fall through to that host below.
+                    Color.clear
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .allowsHitTesting(false)
+                        .id("appkit-main-qqmusic-online")
                 }
               }
             }
@@ -359,6 +370,7 @@ struct AppKitMainContentPaneRoot: View {
                     fullscreenWindowManager.isWindowedFullscreenActive
                 )
                 HomeWindowLayoutState.shared.setHomeMode(homeMode)
+                HomeWindowLayoutState.shared.setQQMusicMode(qqMusicMode)
                 HomeWindowLayoutState.shared.setHomeSearchActive(homeSearchActive)
                 if shouldTriggerArtBackgroundTransition(playbackCoordinator: playbackCoordinator, uiState: uiState) {
                     _ = markNowPlayingArtBackgroundPresentationIfNeeded()
@@ -366,6 +378,9 @@ struct AppKitMainContentPaneRoot: View {
             }
             .onChange(of: homeMode) { _, newValue in
                 HomeWindowLayoutState.shared.setHomeMode(newValue)
+            }
+            .onChange(of: qqMusicMode) { _, newValue in
+                HomeWindowLayoutState.shared.setQQMusicMode(newValue)
             }
             .onChange(of: homeSearchActive) { _, newValue in
                 HomeWindowLayoutState.shared.setHomeSearchActive(newValue)

@@ -1,0 +1,41 @@
+diff --git a/kmgccc_player/ViewModels/HomeWindowLayoutState.swift b/kmgccc_player/ViewModels/HomeWindowLayoutState.swift
+index e1b4305e..93845290 100644
+--- a/kmgccc_player/ViewModels/HomeWindowLayoutState.swift
++++ b/kmgccc_player/ViewModels/HomeWindowLayoutState.swift
+@@ -251,8 +251,23 @@ final class HomeWindowLayoutState {
+     /// is showing all-song search results instead of routing events to Home.
+     var isHomeSearchActive: Bool = false
+ 
++    /// True when content mode is `.qqMusicOnline`.
++    ///
++    /// The online browse surface is drawn by the same full-window host as
++    /// Home, for the same reason: its card rails need the full window width so
++    /// they can extend under the sidebar / lyrics glass, and aligning their
++    /// titles with the center column is a matter of padding rather than of
++    /// living inside that column. `isHomeMode` stays false here — only the
++    /// routing decision is shared.
++    var isQQMusicMode: Bool = false
++
++    /// Whether the full-window host owns center-column hits.
++    ///
++    /// Both Home and the online browse surface render there. The two flags stay
++    /// separate from the other two conditions, so local-library behaviour is
++    /// unchanged whenever content mode is not `.qqMusicOnline`.
+     var allowsHomeInteraction: Bool {
+-        isHomeMode && !isEmbeddedFullscreenActive && !isHomeSearchActive
++        (isHomeMode || isQQMusicMode) && !isEmbeddedFullscreenActive && !isHomeSearchActive
+     }
+ 
+     /// Live frame of the Mini Player view in SwiftUI `.global` coordinates
+@@ -352,6 +367,11 @@ final class HomeWindowLayoutState {
+         isHomeMode = active
+     }
+ 
++    func setQQMusicMode(_ active: Bool) {
++        guard isQQMusicMode != active else { return }
++        isQQMusicMode = active
++    }
++
+     func setEmbeddedFullscreenActive(_ active: Bool) {
+         guard isEmbeddedFullscreenActive != active else { return }
+         isEmbeddedFullscreenActive = active

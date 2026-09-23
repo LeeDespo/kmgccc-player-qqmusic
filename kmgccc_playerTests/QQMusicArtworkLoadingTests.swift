@@ -50,7 +50,7 @@ final class QQMusicArtworkLoadingTests: XCTestCase {
     func testCachedArtworkIsServedWithoutNetwork() async throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = QQMusicCacheStore(paths: LibraryPaths(rootURL: root))
+        let store = QQMusicCacheStore(paths: kmgccc_player.LibraryPaths(rootURL: root))
 
         let url = "https://y.gtimg.cn/music/photo_new/T002R300x300M000004Iu0Z21UKvFd.jpg?n=1"
         let payload = Data("fake-jpeg".utf8)
@@ -68,7 +68,7 @@ final class QQMusicArtworkLoadingTests: XCTestCase {
     func testMissingArtworkFailsQuietly() async throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
-        let store = QQMusicCacheStore(paths: LibraryPaths(rootURL: root))
+        let store = QQMusicCacheStore(paths: kmgccc_player.LibraryPaths(rootURL: root))
         let loader = QQMusicArtworkLoader(cache: store, session: Self.unreachableSession())
 
         let data = await loader.artwork(for: "https://example.invalid/none.jpg")

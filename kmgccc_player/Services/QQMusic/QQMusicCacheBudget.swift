@@ -63,11 +63,20 @@ final class QQMusicCacheBudget {
     /// Sizes come from the files themselves, so the figure matches what the disk
     /// actually holds. A track whose file cannot be measured contributes 0
     /// rather than failing the pass.
-    func songCacheUsage(tracks: [Track]) -> (bytes: Int64, cached: [Track]) {
+    ///
+    /// `libraryRoot` is passed in rather than taken from each track: a track
+    /// carries the root it was imported under, and that snapshot can be empty or
+    /// stale (a relocated library keeps the old path). Resolving through it then
+    /// fails for every track, so the *cache* figure read as 0 bytes no matter how
+    /// much had been downloaded. The session's own root is the live one.
+    func songCacheUsage(
+        tracks: [Track],
+        libraryRoot: URL? = nil
+    ) -> (bytes: Int64, cached: [Track]) {
         let cached = tracks.filter { $0.countsAsDownloadCache }
         var total: Int64 = 0
         for track in cached {
-            total += fileSize(of: track)
+            total += fileSize(of: track, libraryRoot: libraryRoot)
         }
         return (total, cached)
     }
@@ -83,6 +92,7 @@ final class QQMusicCacheBudget {
     func reclaimSongsIfNeeded(
         tracks: [Track],
         playingAndQueued: Set<UUID>,
+        libraryRoot: URL? = nil,
         delete: ([Track]) async -> Void
     ) async -> Outcome {
         var outcome = Outcome()
@@ -92,7 +102,7 @@ final class QQMusicCacheBudget {
         let limit = QQMusicBytes.bytes(settings.qqMusicSongCacheLimitGB)
         guard limit > 0 else { return outcome }
 
-        let (usage, cached) = songCacheUsage(tracks: tracks)
+        let (usage, cached) = songCacheUsage(tracks: tracks, libraryRoot: libraryRoot)
         guard usage > limit else { return outcome }
 
         let keepPercent = min(max(settings.qqMusicSongCacheReclaimPercent, 0), 90)
@@ -110,7 +120,7 @@ final class QQMusicCacheBudget {
         for track in candidates {
             guard freed < needToFree else { break }
             toDelete.append(track)
-            freed += fileSize(of: track)
+            freed += fileSize(of: track, libraryRoot: libraryRoot)
         }
 
         if !toDelete.isEmpty {
@@ -155,10 +165,24 @@ final class QQMusicCacheBudget {
     // MARK: - Helpers
 
     /// On-disk size of a track's audio, or 0 when it cannot be resolved.
-    private func fileSize(of track: Track) -> Int64 {
+    ///
+    /// A managed track is resolved against the library root it was handed, which
+    /// is the live one for this session. `resolveFileURL()` is kept as the
+    /// fallback because a referenced track's file lives outside the library and
+    /// only its own locator can find it.
+    private func fileSize(of track: Track, libraryRoot: URL?) -> Int64 {
+        if let relative = track.mediaLocator.managedLibraryRelativePath,
+           let root = libraryRoot {
+            let candidate = root.appendingPathComponent(relative).standardizedFileURL
+            if let size = sizeOnDisk(of: candidate) { return size }
+        }
         guard let url = track.resolveFileURL().url else { return 0 }
+        return sizeOnDisk(of: url) ?? 0
+    }
+
+    private func sizeOnDisk(of url: URL) -> Int64? {
         let values = try? url.resourceValues(forKeys: [.fileSizeKey])
-        guard let size = values?.fileSize, size > 0 else { return 0 }
+        guard let size = values?.fileSize, size > 0 else { return nil }
         return Int64(size)
     }
 }

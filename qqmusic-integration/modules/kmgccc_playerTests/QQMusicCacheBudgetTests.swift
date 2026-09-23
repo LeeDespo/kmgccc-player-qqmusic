@@ -36,15 +36,47 @@ final class QQMusicCacheBudgetTests: XCTestCase {
             withIntermediateDirectories: true
         )
         try Data(count: megabytes * 1_000_000).write(to: url)
+        // Argument order follows `Track.init`: the QQ provenance fields come
+        // before the file fields.
         return Track(
             title: name,
+            qqMusicSongMid: name,
+            qqMusicDownloadOrigin: origin?.rawValue,
+            qqMusicDownloadedAt: downloadedAt,
             duration: 100,
             fileBookmarkData: Data(),
             mediaLocator: .managed(libraryRelativePath: relative),
-            libraryRootSnapshot: root.path,
+            libraryRootSnapshot: root.path
+        )
+    }
+
+    /// The same measurement, but with a configurable root snapshot.
+    ///
+    /// Exists to reproduce the state a relocated library leaves behind: the
+    /// per-track snapshot keeps the *old* path (or is empty), so resolving
+    /// through the track alone finds nothing.
+    private func makeTrack(
+        _ name: String,
+        megabytes: Int,
+        origin: QQMusicDownloadOrigin?,
+        libraryRootSnapshot: String
+    ) throws -> Track {
+        let relative = "Tracks/\(UUID().uuidString)/\(name).bin"
+        let url = root.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data(count: megabytes * 1_000_000).write(to: url)
+        return Track(
+            title: name,
             qqMusicSongMid: name,
             qqMusicDownloadOrigin: origin?.rawValue,
-            qqMusicDownloadedAt: downloadedAt
+            qqMusicDownloadedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            duration: 100,
+            fileBookmarkData: Data(),
+            mediaLocator: .managed(libraryRelativePath: relative),
+            libraryRootSnapshot: libraryRootSnapshot
         )
     }
 
@@ -110,8 +142,16 @@ final class QQMusicCacheBudgetTests: XCTestCase {
             delete: { deleted.append(contentsOf: $0) }
         )
 
+        // Only the automatic download is reclaimable, so only it is deleted —
+        // the user's own two downloads are left alone even though they are far
+        // larger than the limit.
         XCTAssertEqual(deleted.map(\.title), ["prefetched"])
-        XCTAssertTrue(outcome.stillOverLimit, "the rest is user content, which is reported not deleted")
+        // And with all cache gone the cache is *under* the limit: the user's own
+        // downloads are not cache, so they cannot keep it over.
+        XCTAssertFalse(
+            outcome.stillOverLimit,
+            "user-owned audio is not part of the song cache and must not count against its limit"
+        )
     }
 
     // MARK: - Reclamation
@@ -194,22 +234,31 @@ final class QQMusicCacheBudgetTests: XCTestCase {
 
     /// When everything reclaimable is gone and the total still exceeds the
     /// limit, that is reported rather than reaching for the user's library.
-    func testStillOverLimitIsReportedNotForced() async throws {
+    /// The one case where the cache really is still over the limit afterwards:
+    /// the audio that would have to go is protected by playback.
+    ///
+    /// The user's own downloads can never cause this, because they are not part
+    /// of the song cache at all — which is why this test drives the state with a
+    /// playing track rather than with a large user library.
+    func testStillOverLimitIsReportedWhenPlaybackBlocksReclaim() async throws {
         defer { disableLimits() }
-        let cache = try makeTrack("cache", megabytes: 1, origin: .prefetch)
-        let mine = try makeTrack("mine", megabytes: 20, origin: .userRequested)
+        let playing = try makeTrack("playing", megabytes: 8, origin: .prefetch)
 
+        // 8 MB of cache against a 5 MB limit, and the only candidate is playing.
         enableSongLimit(gb: 0.005, reclaimPercent: 0)
 
         var deleted: [Track] = []
         let outcome = await QQMusicCacheBudget.shared.reclaimSongsIfNeeded(
-            tracks: [cache, mine],
-            playingAndQueued: [],
+            tracks: [playing],
+            playingAndQueued: [playing.id],
             delete: { deleted.append(contentsOf: $0) }
         )
 
-        XCTAssertEqual(deleted.map(\.title), ["cache"])
-        XCTAssertTrue(outcome.stillOverLimit, "the user's own content is the reason, and is not deleted")
+        XCTAssertTrue(deleted.isEmpty, "the file under playback must not be deleted")
+        XCTAssertTrue(
+            outcome.stillOverLimit,
+            "everything reclaimable was protected, so the overage has to be reported rather than forced"
+        )
     }
 
     // MARK: - Unit conversion
@@ -220,5 +269,59 @@ final class QQMusicCacheBudgetTests: XCTestCase {
         XCTAssertEqual(QQMusicBytes.bytes(0.5), 500_000_000)
         XCTAssertEqual(QQMusicBytes.gigabytes(1_000_000_000), 1.0, accuracy: 1e-9)
         XCTAssertEqual(QQMusicBytes.bytes(-5), 0, "a negative limit is meaningless and clamps to zero")
+    }
+
+    // MARK: - Measuring the cache
+
+    /// The cache figure must not depend on a track's own root snapshot.
+    ///
+    /// A relocated library leaves that snapshot pointing at the old path (or
+    /// empty), and then every file measured as 0 — so the settings window showed
+    /// an empty cache however much had been downloaded. The session's root is the
+    /// live one, and passing it must be enough on its own.
+    func testUsageUsesTheSuppliedLibraryRootNotTheTrackSnapshot() throws {
+        let track = try makeTrack(
+            "prefetched",
+            megabytes: 3,
+            origin: .prefetch,
+            libraryRootSnapshot: ""   // what a relocated library leaves behind
+        )
+
+        let withoutRoot = QQMusicCacheBudget.shared.songCacheUsage(tracks: [track])
+        XCTAssertEqual(withoutRoot.bytes, 0, "precondition: the snapshot alone resolves nothing")
+        XCTAssertEqual(withoutRoot.cached.count, 1, "but it is still identified as cache")
+
+        let withRoot = QQMusicCacheBudget.shared.songCacheUsage(tracks: [track], libraryRoot: root)
+        XCTAssertEqual(
+            withRoot.bytes,
+            3_000_000,
+            "the supplied root is what makes the figure real"
+        )
+    }
+
+    /// Reclaiming measures the same way, so the limit and the displayed figure
+    /// cannot disagree about what is on disk.
+    func testReclaimAlsoUsesTheSuppliedLibraryRoot() async throws {
+        defer { disableLimits() }
+        let a = try makeTrack("a", megabytes: 4, origin: .prefetch, libraryRootSnapshot: "")
+        let b = try makeTrack("b", megabytes: 4, origin: .prefetch, libraryRootSnapshot: "")
+
+        // 8 MB of cache against 0.005 GB, reclaim to 0.
+        enableSongLimit(gb: 0.005, reclaimPercent: 0)
+
+        var deleted: [Track] = []
+        let outcome = await QQMusicCacheBudget.shared.reclaimSongsIfNeeded(
+            tracks: [a, b],
+            playingAndQueued: [],
+            libraryRoot: root,
+            delete: { deleted.append(contentsOf: $0) }
+        )
+
+        XCTAssertEqual(
+            deleted.count,
+            2,
+            "with sizes resolved, the overage is visible and both are reclaimed"
+        )
+        XCTAssertGreaterThan(outcome.reclaimedBytes, 0)
     }
 }
