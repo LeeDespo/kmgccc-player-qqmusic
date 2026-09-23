@@ -1,5 +1,5 @@
 diff --git a/Tools/QQMusicHelper/main.py b/Tools/QQMusicHelper/main.py
-index 318e53ab..d344dc25 100644
+index 318e53ab..08ff2ace 100644
 --- a/Tools/QQMusicHelper/main.py
 +++ b/Tools/QQMusicHelper/main.py
 @@ -1,5 +1,5 @@
@@ -37,7 +37,7 @@ index 318e53ab..d344dc25 100644
 +# Bumped when the request/response shapes below change incompatibly. The host
 +# refuses to talk to a helper whose protocol major it does not understand, so a
 +# newer helper build cannot silently mis-parse.
-+HELPER_VERSION = "2.0.0"
++HELPER_VERSION = "2.0.1"
 +PROTOCOL_VERSION = 2
 +
 +# Advertised by `get_helper_info` and checked by the dispatcher, so a host can
@@ -318,7 +318,7 @@ index 318e53ab..d344dc25 100644
          result = await client.execute(request_builder(client))
      return _to_plain(result)
  
-@@ -730,6 +994,1099 @@ async def fetch_song_detail(params: dict[str, Any]) -> dict[str, Any]:
+@@ -730,6 +994,1106 @@ async def fetch_song_detail(params: dict[str, Any]) -> dict[str, Any]:
      }
  
  
@@ -344,6 +344,12 @@ index 318e53ab..d344dc25 100644
 +    # `pay_play == 1` means the track is gated; it is the same signal that
 +    # predicts whether the CDN grants a playback url, so surface it directly.
 +    pay_play = _first_int(pay, ("pay_play", "payPlay"))
++    # The album's *numeric* id, which is the only handle `fetch_album_tracks`
++    # accepts. The mid travels alongside it because the cover needs it, but the
++    # mid alone cannot open an album's track list.
++    album_id = _first_int(album, ("id", "albumId", "albumID")) or _first_int(
++        track, ("albumId", "albumID")
++    )
 +    return {
 +        "source": SOURCE,
 +        "songId": _first_int(track, ("id", "songId", "songid")),
@@ -353,6 +359,7 @@ index 318e53ab..d344dc25 100644
 +        "artist": _singers_text(track),
 +        "album": _album_name(track),
 +        "albumMid": album_mid,
++        "albumId": album_id,
 +        "imageURL": _sanitize_image_url(_album_cover_url(album_mid)),
 +        "duration": _first_int(track, ("interval", "duration", "durationSec")),
 +        "payPlay": pay_play,
@@ -1418,7 +1425,7 @@ index 318e53ab..d344dc25 100644
  async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
      request_id = request.get("id")
      method = request.get("method")
-@@ -769,6 +2126,138 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
+@@ -769,6 +2133,138 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
              f"detail=1 confidence={float(detail.get('confidence') or 0):.2f} durationMs={duration_ms}"
          )
          return {"id": request_id, "ok": True, "detail": detail}
@@ -1557,7 +1564,7 @@ index 318e53ab..d344dc25 100644
      else:
          raise ValueError(f"unsupported method: {method}")
  
-@@ -781,29 +2270,61 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
+@@ -781,29 +2277,61 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
      return {"id": request_id, "ok": True, "candidates": candidates}
  
  

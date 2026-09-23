@@ -11,6 +11,14 @@
 //  pill — so the online surface now works the same way. The `switch` below is
 //  the whole of the routing.
 //
+//  There is no status banner here either. The surface used to hang a thin banner
+//  under the toolbar for its notices (failures, the playback-start line,
+//  "已加入下一首", like and download confirmations), and the user asked for both
+//  the notices and the presentation to go. Failures are logged — see the note at
+//  the top of `QQMusicOnlineCoordinator` — and what a user can act on is drawn
+//  where it belongs: a row's download glyph, a page's own empty state, the
+//  batch-download control's own availability.
+//
 
 import SwiftUI
 
@@ -25,12 +33,18 @@ struct QQMusicPageRouter: View {
     private let ambientMotion = HomeAmbientMotionState.shared
 
     var body: some View {
-        QQMusicPageCanvas(onScroll: { offset in
+        @Bindable var coordinator = coordinator
+        return QQMusicPageCanvas(onScroll: { offset in
             ambientMotion.setScrollOffset(offset)
         }) { insets, mode in
             pageContent(insets: insets, mode: mode)
         }
-        .statusBanner()
+        // 查看详情 from a row's 更多 menu. Presented here rather than by the row
+        // itself: rows are recycled as they scroll, and a sheet they owned would
+        // be dismissed by that.
+        .sheet(item: $coordinator.trackForDetail) { track in
+            QQMusicTrackDetailSheet(track: track)
+        }
         .task(id: coordinator.libraryAvailabilityToken) {
             // Browsing-wide bookkeeping, independent of which page shows:
             // whether downloads can land here at all, and the liked-mid set the
@@ -135,58 +149,5 @@ struct QQMusicPageRouter: View {
         case .artist(let ref):
             QQMusicArtistPage(artist: ref, leftPad: leftPad, rightPad: rightPad, mode: mode)
         }
-    }
-}
-
-// MARK: - Status banner
-
-private struct QQMusicStatusBannerModifier: ViewModifier {
-
-    @Environment(QQMusicOnlineCoordinator.self) private var coordinator
-    @EnvironmentObject private var themeStore: ThemeStore
-
-    func body(content: Content) -> some View {
-        content.safeAreaInset(edge: .top, spacing: 0) {
-            // Failures and notices are reported here, above the content, rather
-            // than replacing it: a failed request must never blank out what has
-            // already loaded, which would read as the content disappearing.
-            if !coordinator.canDownload {
-                banner(
-                    text: "当前资料库为原位模式，无法保存下载的歌曲。切换到托管资料库后即可播放在线歌曲。",
-                    systemImage: "exclamationmark.triangle.fill",
-                    tint: .orange
-                )
-            } else if let message = coordinator.statusMessage {
-                banner(
-                    text: message,
-                    systemImage: coordinator.statusIsError
-                        ? "exclamationmark.triangle.fill"
-                        : "info.circle.fill",
-                    tint: coordinator.statusIsError ? .orange : themeStore.accentColor
-                )
-            }
-        }
-    }
-
-    private func banner(text: String, systemImage: String, tint: Color) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.system(size: 11))
-                .foregroundStyle(tint)
-            Text(text)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Spacer(minLength: 0)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 6)
-        .background(.regularMaterial)
-    }
-}
-
-extension View {
-    func statusBanner() -> some View {
-        modifier(QQMusicStatusBannerModifier())
     }
 }
