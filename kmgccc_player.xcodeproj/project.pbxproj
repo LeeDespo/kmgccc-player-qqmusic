@@ -7,6 +7,15 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		C020000000000000000000E0 /* kmgccc_playerTests/QQMusicDownloadOriginPersistenceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C020000000000000000000F0 /* kmgccc_playerTests/QQMusicDownloadOriginPersistenceTests.swift */; };
+		C020000000000000000000C0 /* kmgccc_playerTests/QQMusicPlaybackOrderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C020000000000000000000D0 /* kmgccc_playerTests/QQMusicPlaybackOrderTests.swift */; };
+		C020000000000000000000A0 /* kmgccc_playerTests/QQMusicBrowseEnvironmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C020000000000000000000B0 /* kmgccc_playerTests/QQMusicBrowseEnvironmentTests.swift */; };
+		C02000000000000000000080 /* kmgccc_playerTests/QQMusicArtworkLoadingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02000000000000000000090 /* kmgccc_playerTests/QQMusicArtworkLoadingTests.swift */; };
+		C02000000000000000000081 /* kmgccc_playerTests/QQMusicCacheBudgetTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02000000000000000000091 /* kmgccc_playerTests/QQMusicCacheBudgetTests.swift */; };
+		C02000000000000000000082 /* kmgccc_playerTests/QQMusicDownloadOriginTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02000000000000000000092 /* kmgccc_playerTests/QQMusicDownloadOriginTests.swift */; };
+		C02000000000000000000083 /* kmgccc_playerTests/QQMusicNavigationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02000000000000000000093 /* kmgccc_playerTests/QQMusicNavigationTests.swift */; };
+		C02000000000000000000084 /* kmgccc_playerTests/ShuffleInsertionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02000000000000000000094 /* kmgccc_playerTests/ShuffleInsertionTests.swift */; };
+		C02000000000000000000085 /* kmgccc_playerTests/ExternalPlaybackOrderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C02000000000000000000095 /* kmgccc_playerTests/ExternalPlaybackOrderTests.swift */; };
 		9351198E2F33149A00766A5F /* AMLL in Resources */ = {isa = PBXBuildFile; fileRef = 9351198D2F33149A00766A5F /* AMLL */; };
 		938818D32F7925E800880C23 /* WhatsNewKit in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000002 /* WhatsNewKit */; };
 		938818D42F7925E800880C24 /* CrashReporter in Frameworks */ = {isa = PBXBuildFile; productRef = AA0000000000000000000004 /* CrashReporter */; };
@@ -105,6 +114,15 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		C020000000000000000000F0 /* kmgccc_playerTests/QQMusicDownloadOriginPersistenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = kmgccc_playerTests/QQMusicDownloadOriginPersistenceTests.swift; sourceTree = "<group>"; };
+		C020000000000000000000D0 /* kmgccc_playerTests/QQMusicPlaybackOrderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = kmgccc_playerTests/QQMusicPlaybackOrderTests.swift; sourceTree = "<group>"; };
+		C020000000000000000000B0 /* kmgccc_playerTests/QQMusicBrowseEnvironmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = kmgccc_playerTests/QQMusicBrowseEnvironmentTests.swift; sourceTree = "<group>"; };
+		C02000000000000000000090 /* kmgccc_playerTests/QQMusicArtworkLoadingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = kmgccc_playerTests/QQMusicArtworkLoadingTests.swift; sourceTree = "<group>"; };
+		C02000000000000000000091 /* kmgccc_playerTests/QQMusicCacheBudgetTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = kmgccc_playerTests/QQMusicCacheBudgetTests.swift; sourceTree = "<group>"; };
+		C02000000000000000000092 /* kmgccc_playerTests/QQMusicDownloadOriginTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = kmgccc_playerTests/QQMusicDownloadOriginTests.swift; sourceTree = "<group>"; };
+		C02000000000000000000093 /* kmgccc_playerTests/QQMusicNavigationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = kmgccc_playerTests/QQMusicNavigationTests.swift; sourceTree = "<group>"; };
+		C02000000000000000000094 /* kmgccc_playerTests/ShuffleInsertionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = kmgccc_playerTests/ShuffleInsertionTests.swift; sourceTree = "<group>"; };
+		C02000000000000000000095 /* kmgccc_playerTests/ExternalPlaybackOrderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = kmgccc_playerTests/ExternalPlaybackOrderTests.swift; sourceTree = "<group>"; };
 		935118922F3231C500766A5F /* kmgccc_player.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = kmgccc_player.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9351198D2F33149A00766A5F /* AMLL */ = {isa = PBXFileReference; lastKnownFileType = folder; name = AMLL; path = kmgccc_player/Resources/AMLL; sourceTree = "<group>"; };
 		A10000000000000000000001 /* Project.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Project.xcconfig; sourceTree = "<group>"; };
@@ -360,6 +378,15 @@
 				C02000000000000000000013 /* ExternalPlaybackTextNormalizer.swift */,
 				C02000000000000000000014 /* SkinRoutePolicy.swift */,
 				C02000000000000000000016 /* kmgccc_playerTests/CrashReportingTests.swift */,
+				C020000000000000000000F0 /* kmgccc_playerTests/QQMusicDownloadOriginPersistenceTests.swift */,
+				C020000000000000000000D0 /* kmgccc_playerTests/QQMusicPlaybackOrderTests.swift */,
+				C020000000000000000000B0 /* kmgccc_playerTests/QQMusicBrowseEnvironmentTests.swift */,
+				C02000000000000000000090 /* kmgccc_playerTests/QQMusicArtworkLoadingTests.swift */,
+				C02000000000000000000091 /* kmgccc_playerTests/QQMusicCacheBudgetTests.swift */,
+				C02000000000000000000092 /* kmgccc_playerTests/QQMusicDownloadOriginTests.swift */,
+				C02000000000000000000093 /* kmgccc_playerTests/QQMusicNavigationTests.swift */,
+				C02000000000000000000094 /* kmgccc_playerTests/ShuffleInsertionTests.swift */,
+				C02000000000000000000095 /* kmgccc_playerTests/ExternalPlaybackOrderTests.swift */,
 				C02000000000000000000017 /* CrashReportModels.swift */,
 				C02000000000000000000018 /* CrashReportSanitizer.swift */,
 				C02000000000000000000019 /* CrashReportStore.swift */,
@@ -695,6 +722,15 @@
 				C02000000000000000000001 /* kmgccc_playerTests/MetadataMatchScorerTests.swift in Sources */,
 				C02000000000000000000002 /* kmgccc_playerTests/SkinRoutePolicyTests.swift in Sources */,
 				C02000000000000000000005 /* kmgccc_playerTests/CrashReportingTests.swift in Sources */,
+				C020000000000000000000E0 /* kmgccc_playerTests/QQMusicDownloadOriginPersistenceTests.swift in Sources */,
+				C020000000000000000000C0 /* kmgccc_playerTests/QQMusicPlaybackOrderTests.swift in Sources */,
+				C020000000000000000000A0 /* kmgccc_playerTests/QQMusicBrowseEnvironmentTests.swift in Sources */,
+				C02000000000000000000080 /* kmgccc_playerTests/QQMusicArtworkLoadingTests.swift in Sources */,
+				C02000000000000000000081 /* kmgccc_playerTests/QQMusicCacheBudgetTests.swift in Sources */,
+				C02000000000000000000082 /* kmgccc_playerTests/QQMusicDownloadOriginTests.swift in Sources */,
+				C02000000000000000000083 /* kmgccc_playerTests/QQMusicNavigationTests.swift in Sources */,
+				C02000000000000000000084 /* kmgccc_playerTests/ShuffleInsertionTests.swift in Sources */,
+				C02000000000000000000085 /* kmgccc_playerTests/ExternalPlaybackOrderTests.swift in Sources */,
 				C02000000000000000000006 /* CrashReportModels.swift in Sources */,
 				C02000000000000000000007 /* CrashReportSanitizer.swift in Sources */,
 				C02000000000000000000008 /* CrashReportStore.swift in Sources */,

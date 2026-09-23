@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import SwiftUI
 
 @MainActor
 struct AppKitMainToolbarItemFactory {
@@ -15,6 +16,7 @@ struct AppKitMainToolbarItemFactory {
         let homeNavigation: Selector
         let pillGroup: Selector
         let homePillGroup: Selector
+        let qqReload: Selector
         let lyricsToggle: Selector
     }
 
@@ -25,6 +27,9 @@ struct AppKitMainToolbarItemFactory {
         let isMultiselectMode: Bool
         let generation: Int
         let splitView: NSSplitView?
+        /// The online session, for the batch-download control. Absent when no
+        /// library session is active, which is also when that item cannot exist.
+        let qqMusicCoordinator: QQMusicOnlineCoordinator?
     }
 
     func makeItem(
@@ -64,6 +69,12 @@ struct AppKitMainToolbarItemFactory {
                 isHistoryMode: context.isPlaybackHistoryMode,
                 generation: context.generation
             )
+
+        case AppKitMainToolbarController.Identifier.qqReloadControl:
+            return makeQQReloadControlItem(identifier: identifier, actions: actions)
+
+        case AppKitMainToolbarController.Identifier.qqDownloadControl:
+            return makeQQDownloadControlItem(identifier: identifier, context: context)
 
         case AppKitMainToolbarController.Identifier.lyricsToggle:
             return makeLyricsToggleItem(
@@ -261,6 +272,67 @@ struct AppKitMainToolbarItemFactory {
             group.subitems[2].toolTip = importLabel
         }
         return group
+    }
+
+    /// Refresh for the online browse surface: re-request the page on screen.
+    ///
+    /// A plain `NSToolbarItem` carrying an SF Symbol, like every other icon item
+    /// in this toolbar rather than a hosted SwiftUI view. It is one icon that
+    /// never changes shape, so there is nothing a hosted view could add — and it
+    /// would draw its own material on top of the toolbar's, which is what the
+    /// batch-download control next to it had to be talked out of doing.
+    private func makeQQReloadControlItem(
+        identifier: NSToolbarItem.Identifier,
+        actions: Actions
+    ) -> NSToolbarItem {
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = "刷新"
+        item.paletteLabel = item.label
+        item.toolTip = "重新载入当前页面"
+        item.image = NSImage(
+            systemSymbolName: "arrow.clockwise",
+            accessibilityDescription: item.label
+        )
+        item.target = actions.target
+        item.action = actions.qqReload
+        item.autovalidates = false
+        item.isEnabled = true
+        return item
+    }
+
+    /// The online batch-download control, hosted as a SwiftUI view.
+    ///
+    /// A toolbar item with a custom view rather than an `NSToolbarItemGroup`:
+    /// the control changes shape (one glyph → four labelled actions) and has to
+    /// animate that change, which is a layout concern SwiftUI already handles.
+    /// `.intrinsicContentSize` is what lets the toolbar follow the width — without
+    /// it the item keeps the frame it was created with and the four actions are
+    /// clipped.
+    @MainActor
+    private func makeQQDownloadControlItem(
+        identifier: NSToolbarItem.Identifier,
+        context: Context
+    ) -> NSToolbarItem? {
+        guard let coordinator = context.qqMusicCoordinator else { return nil }
+
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = "选择下载"
+        item.paletteLabel = item.label
+        item.toolTip = "选择下载"
+        item.visibilityPriority = .high
+
+        let host = NSHostingView(
+            rootView: QQMusicDownloadControl()
+                .qqMusicBrowseEnvironment(
+                    coordinator: coordinator,
+                    navigation: coordinator.navigation,
+                    selection: coordinator.selection
+                )
+        )
+        host.sizingOptions = [.intrinsicContentSize]
+        host.translatesAutoresizingMaskIntoConstraints = false
+        item.view = host
+        return item
     }
 
     private func makeLyricsToggleItem(

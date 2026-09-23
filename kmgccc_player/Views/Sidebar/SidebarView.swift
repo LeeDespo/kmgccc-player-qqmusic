@@ -606,6 +606,9 @@ struct SidebarView: View {
                 selection: .qqMusicOnline
             ) {
                 uiState.clearHomeNavigationContext()
+                // Entering from the sidebar starts over at the landing page,
+                // the same gesture as clicking 主页 in the library.
+                appSession.qqMusicOnlineCoordinator?.resetBrowsing()
                 uiState.showQQMusicOnline()
             }
         }
@@ -1110,6 +1113,7 @@ struct SidebarView: View {
             uiState.showPlaybackHistory()
             return
         case .qqMusicOnline:
+            appSession.qqMusicOnlineCoordinator?.resetBrowsing()
             uiState.showQQMusicOnline()
             return
         case .allPlaylists:

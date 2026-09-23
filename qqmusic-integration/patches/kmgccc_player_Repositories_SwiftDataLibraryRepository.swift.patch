@@ -1,0 +1,29 @@
+diff --git a/kmgccc_player/Repositories/SwiftDataLibraryRepository.swift b/kmgccc_player/Repositories/SwiftDataLibraryRepository.swift
+index 41ecabe5..f93df499 100644
+--- a/kmgccc_player/Repositories/SwiftDataLibraryRepository.swift
++++ b/kmgccc_player/Repositories/SwiftDataLibraryRepository.swift
+@@ -601,6 +601,10 @@ final class SwiftDataLibraryRepository: LibraryRepositoryProtocol {
+             labelOrCompany: source.labelOrCompany,
+             releaseDate: source.releaseDate,
+             qqMusicSongMid: source.qqMusicSongMid,
++            // A copy of the source track: it must carry the download provenance
++            // too, or writing the payload back would erase it.
++            qqMusicDownloadOrigin: source.qqMusicDownloadOrigin,
++            qqMusicDownloadedAt: source.qqMusicDownloadedAt,
+             metadataSource: source.metadataSource,
+             metadataFetchedAt: source.metadataFetchedAt,
+             metadataConfidence: source.metadataConfidence,
+@@ -1237,6 +1241,13 @@ final class SwiftDataLibraryRepository: LibraryRepositoryProtocol {
+             labelOrCompany: meta.labelOrCompany,
+             releaseDate: meta.releaseDate,
+             qqMusicSongMid: meta.qqMusicSongMid,
++            // Provenance of an online download has to survive the store round
++            // trip. The sidecar carries it and the scanner reads it, but dropping
++            // it here left every loaded track with no recorded origin — which the
++            // cache budget reads as "the user's own", so the automatic-download
++            // cache measured as 0 however much was on disk.
++            qqMusicDownloadOrigin: meta.qqMusicDownloadOrigin,
++            qqMusicDownloadedAt: meta.qqMusicDownloadedAt,
+             metadataSource: meta.metadataSource,
+             metadataFetchedAt: meta.metadataFetchedAt,
+             metadataConfidence: meta.metadataConfidence,

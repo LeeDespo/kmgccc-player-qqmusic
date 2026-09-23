@@ -84,6 +84,14 @@ struct QQMusicSettingsView: View {
 
     private let helper = QQMusicHelperProcess.shared
 
+    /// Fixed window size for the settings sheet.
+    ///
+    /// Sized a little wider than the app's own settings (760×680 minimum) since
+    /// this window carries its own sidebar, and tall enough that only the longest
+    /// page (缓存) needs to scroll.
+    private static let windowWidth: CGFloat = 860
+    private static let windowHeight: CGFloat = 680
+
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             sidebar
@@ -105,7 +113,13 @@ struct QQMusicSettingsView: View {
                 .padding(.top, 18)
                 .padding(.trailing, 20)
         }
-        .frame(minWidth: 700, minHeight: 560)
+        // A fixed size, like the app's own settings window.
+        //
+        // With only minimums the sheet sized itself to whichever section was
+        // selected, so the window grew and shrank as the user moved between
+        // pages. Each page scrolls inside this frame instead, which keeps the
+        // window still and puts the overflow somewhere the user can reach it.
+        .frame(width: Self.windowWidth, height: Self.windowHeight)
         .scrollContentBackground(.hidden)
         .background(ThemedBaseBackgroundColorView())
         .environment(\.settingsAppForegroundColors, appForegroundColors)
@@ -113,6 +127,13 @@ struct QQMusicSettingsView: View {
         .task {
             await refreshStatus()
             await refreshCacheSize()
+        }
+        // The cache figures describe the library, which keeps changing while
+        // this window is open (every playback session downloads). Recomputing on
+        // arrival means the number shown is the one the limits apply to now,
+        // rather than whatever was true when the window opened.
+        .onChange(of: selection) { _, _ in
+            Task { await refreshCacheSize() }
         }
         .onDisappear {
             pollTask?.cancel()
@@ -931,8 +952,12 @@ struct QQMusicSettingsView: View {
         // automatic downloads count, and the count is taken over everything the
         // budget would consider reclaimable.
         if let libraryViewModel = coordinator?.libraryViewModel {
+            // The session's own library root, not the per-track snapshot: a
+            // relocated library leaves the snapshot stale, and then every file
+            // measures as 0 and the cache appears empty however much is on disk.
             let (songBytes, cached) = QQMusicCacheBudget.shared.songCacheUsage(
-                tracks: libraryViewModel.allTracks
+                tracks: libraryViewModel.allTracks,
+                libraryRoot: coordinator?.paths?.rootURL
             )
             songCacheUsageText = "\(QQMusicBytes.formatted(songBytes))（\(cached.count) 首）"
         } else {
@@ -961,7 +986,7 @@ struct QQMusicSettingsView: View {
             statusText = "已回收 \(outcome.removedTrackCount) 首自动下载的歌曲，"
                 + "释放 \(QQMusicBytes.formatted(outcome.reclaimedBytes))"
         } else if outcome.stillOverLimit {
-            statusText = "可回收的内容已清空，占用仍超过上限（其余是曲库内容）"
+            statusText = "可回收的内容已清空，占用仍超过上限（正在播放或队列中的歌曲无法回收）"
         } else {
             statusText = "未超过上限，无需回收"
         }

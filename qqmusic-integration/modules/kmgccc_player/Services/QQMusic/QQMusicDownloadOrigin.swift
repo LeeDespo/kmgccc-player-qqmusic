@@ -9,26 +9,52 @@
 //  while one the app fetched to keep playback ahead is a cache entry and can be
 //  reclaimed when space runs short.
 //
-//  It records *whether the user ever asked for this track*, not why it was first
-//  downloaded. That is what makes the automatic-to-manual transition work: a
-//  track prefetched during playback becomes user-requested the moment the user
-//  downloads or plays it deliberately, and stops counting as cache — without
-//  downloading it a second time.
+//  It records *whether the user asked for this file*, and only the download
+//  actions count as asking. Playing a song is a request to hear it, not to keep
+//  it: the audio playback needs is fetched automatically, including the track
+//  playback starts on. Counting those as the user's own made every listening
+//  session look like a pile of deliberate downloads — the cache read as empty and
+//  nothing was ever reclaimable.
+//
+//  The label is not one-way. Choosing an automatic download in 选择下载 promotes
+//  it without fetching it again, and nothing ever demotes the user's own back to
+//  automatic.
 //
 
 import Foundation
 
 nonisolated enum QQMusicDownloadOrigin: String, Sendable, CaseIterable {
-    /// The user asked for it: tapped play, tapped download, or chose it in the
-    /// batch download sheet. Never reclaimed by the cache budget.
+    /// The user asked for this file: 下载 in a row's menu, or 选择下载. Never
+    /// reclaimed by the cache budget.
     case userRequested
-    /// Fetched in the background to keep the queue fed. Reclaimable.
+    /// Fetched because playback needed it — the track playback started on, the
+    /// tracks prefetched to keep the queue fed, and anything queued by 下一首播放.
+    /// Reclaimable.
     case prefetch
 
     var displayName: String {
         switch self {
         case .userRequested: return "手动下载"
         case .prefetch: return "自动下载"
+        }
+    }
+
+    /// Whether recording `next` should replace what a track already says.
+    ///
+    /// The rule in one place, because it is the whole of the label semantics:
+    ///
+    ///   - nothing recorded yet → record it;
+    ///   - a download the user asks for replaces an automatic label (the
+    ///     conversion, which must not re-fetch the file);
+    ///   - anything else leaves the existing label alone, so a later prefetch can
+    ///     never take away ownership the user already has. Deletion is decided
+    ///     from this label, so a demotion here would put the user's own music back
+    ///     in the reclaimable pool.
+    static func shouldReplace(existing: String?, with next: QQMusicDownloadOrigin) -> Bool {
+        guard let existing else { return true }
+        switch next {
+        case .userRequested: return existing != QQMusicDownloadOrigin.userRequested.rawValue
+        case .prefetch: return false
         }
     }
 }

@@ -1,0 +1,28 @@
+diff --git a/kmgccc_player/Views/Home/HomeFullWindowRoot.swift b/kmgccc_player/Views/Home/HomeFullWindowRoot.swift
+index 7d2be199..90dac3eb 100644
+--- a/kmgccc_player/Views/Home/HomeFullWindowRoot.swift
++++ b/kmgccc_player/Views/Home/HomeFullWindowRoot.swift
+@@ -59,6 +59,8 @@ struct HomeFullWindowRoot: View {
+                         .tint(ThemeStore.shared.accentColor)
+                         .accentColor(ThemeStore.shared.accentColor)
+                 }
++            } else if shouldRenderQQMusic {
++                QQMusicFullWindowRoot(appSession: appSession)
+             } else {
+                 Color.clear
+                     .allowsHitTesting(false)
+@@ -74,4 +76,14 @@ struct HomeFullWindowRoot: View {
+         return appSession.uiState.contentMode == .library
+             && libraryVM.currentSelection == .home
+     }
++
++    /// The online browse surface shares this host, for the same reason Home has
++    /// it: its card rails must span the window so they can run under the
++    /// sidebar / lyrics glass. `allowsHomeInteraction` already covers this mode
++    /// (see its `isQQMusicMode` term), so the hit routing needs no new gate.
++    private var shouldRenderQQMusic: Bool {
++        guard layout.allowsHomeInteraction else { return false }
++        return appSession.uiState.contentMode == .qqMusicOnline
++            && appSession.qqMusicOnlineCoordinator != nil
++    }
+ }

@@ -13,7 +13,7 @@ final class ExternalPlaybackOrderTests: XCTestCase {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let paths = LibraryPaths(rootURL: root)
+        let paths = kmgccc_player.LibraryPaths(rootURL: root)
         let stats = PreferenceStatsService()
         let controller = SmartPlaybackController(
             playbackHistoryStore: .inMemory(),
@@ -28,7 +28,7 @@ final class ExternalPlaybackOrderTests: XCTestCase {
         Track(
             title: name,
             fileBookmarkData: Data("b".utf8),
-            mediaLocator: .referenced(ReferencedFileLocator(
+            mediaLocator: .referenced(kmgccc_player.ReferencedFileLocator(
                 fileBookmarkData: Data("b".utf8),
                 lastKnownPath: root.appendingPathComponent("\(name).mp3").path
             )),
@@ -41,7 +41,7 @@ final class ExternalPlaybackOrderTests: XCTestCase {
         let (controller, service, root) = try harness()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let tracks = (1...4).map { track("t\($0)", root: root) }
+        let tracks = (1...4).map { track("t\($0)", root) }
         service.playTracks([tracks[0]], startingAt: 0, startPolicy: .externalOrder)
 
         XCTAssertFalse(
@@ -56,7 +56,7 @@ final class ExternalPlaybackOrderTests: XCTestCase {
         let (controller, service, root) = try harness()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let tracks = (1...4).map { track("t\($0)", root: root) }
+        let tracks = (1...4).map { track("t\($0)", root) }
         AppSettings.shared.playbackOrderMode = .shuffle
         service.playTracks([tracks[0]], startingAt: 0, startPolicy: .externalOrder)
 
@@ -73,7 +73,7 @@ final class ExternalPlaybackOrderTests: XCTestCase {
         let (controller, service, root) = try harness()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let tracks = (1...3).map { track("t\($0)", root: root) }
+        let tracks = (1...3).map { track("t\($0)", root) }
         AppSettings.shared.playbackOrderMode = .shuffle
 
         service.playTracks([tracks[0]], startingAt: 0, startPolicy: .externalOrder)
@@ -93,7 +93,7 @@ final class ExternalPlaybackOrderTests: XCTestCase {
         let (controller, service, root) = try harness()
         defer { try? FileManager.default.removeItem(at: root) }
 
-        let tracks = (1...3).map { track("t\($0)", root: root) }
+        let tracks = (1...3).map { track("t\($0)", root) }
         service.playTracks([tracks[0]], startingAt: 0, startPolicy: .externalOrder)
 
         service.setShuffleEnabled(true)

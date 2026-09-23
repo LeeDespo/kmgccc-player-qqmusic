@@ -1,0 +1,243 @@
+diff --git a/kmgccc_player/AppKit/AppKitMainToolbarController.swift b/kmgccc_player/AppKit/AppKitMainToolbarController.swift
+index 8ca78fc0..68c81b9b 100644
+--- a/kmgccc_player/AppKit/AppKitMainToolbarController.swift
++++ b/kmgccc_player/AppKit/AppKitMainToolbarController.swift
+@@ -23,6 +23,14 @@ final class AppKitMainToolbarController: NSObject,
+         static let toolbar = NSToolbar.Identifier("AppKitMainToolbar")
+         static let sidebarToggle = NSToolbarItem.Identifier("AppKitMainToolbar.sidebarToggle")
+         static let homeNavPill = NSToolbarItem.Identifier("AppKitMainToolbar.homeNavPill")
++        /// Reload the online page on screen. Sits between the navigation pill and
++        /// the batch-download control, on the leading side of the toolbar where
++        /// the controls that act on the current page live.
++        static let qqReloadControl = NSToolbarItem.Identifier("AppKitMainToolbar.qqReloadControl")
++        /// Batch download for the online browse surface. Sits directly to the
++        /// right of `qqReloadControl`, so the list-wide action lives in the same
++        /// row as the navigation and search controls.
++        static let qqDownloadControl = NSToolbarItem.Identifier("AppKitMainToolbar.qqDownloadControl")
+         static let sort = NSToolbarItem.Identifier("AppKitMainToolbar.sort")
+         static let pillGroup = NSToolbarItem.Identifier("AppKitMainToolbar.pillGroup")
+         static let search = NSToolbarItem.Identifier("AppKitMainToolbar.search")
+@@ -180,6 +188,7 @@ final class AppKitMainToolbarController: NSObject,
+ 
+         let isLibraryMode = (appSession.uiState.contentMode == .library)
+         let isHistoryMode = (appSession.uiState.contentMode == .playbackHistory)
++        let isOnlineMode = (appSession.uiState.contentMode == .qqMusicOnline)
+         let hasLibrary = (appSession.libraryVM != nil)
+         let hasPlayback = (appSession.playbackCoordinator != nil)
+         let isHomeSelection = currentLibraryVM?.currentSelection == .home
+@@ -200,7 +209,23 @@ final class AppKitMainToolbarController: NSObject,
+         case Identifier.sort:
+             return isLibraryMode && hasLibrary && !isHomeSelection
+         case Identifier.search:
++            if isOnlineMode { return true }
+             return (isLibraryMode || isHistoryMode) && hasLibrary
++        case Identifier.qqReloadControl:
++            return isOnlineMode && appSession.qqMusicOnlineCoordinator != nil
++        case Identifier.qqDownloadControl:
++            // Always enabled while the online surface is showing, whatever page
++            // it is on.
++            //
++            // The control decides for itself whether the current page has a list
++            // to select, and it has to: gating enablement here made AppKit's own
++            // enable/disable handling part of the page change, which the button
++            // showed as a fade. It also keeps the item in the layout on every
++            // online page rather than removing it, which would rebuild the whole
++            // toolbar on each page change and tear down the search field with it.
++            // A selection left behind by a page that no longer offers one is
++            // cancelled by the router.
++            return isOnlineMode && appSession.qqMusicOnlineCoordinator != nil
+         case Identifier.multiselect:
+             if isHistoryMode {
+                 return hasLibrary && currentHistoryVM?.hasVisibleItems == true
+@@ -246,6 +271,9 @@ final class AppKitMainToolbarController: NSObject,
+         if appSession.uiState.contentMode == .playbackHistory {
+             return true
+         }
++        if appSession.uiState.contentMode == .qqMusicOnline {
++            return appSession.qqMusicOnlineCoordinator != nil
++        }
+         guard appSession.uiState.contentMode == .library else { return false }
+         guard let libraryVM = appSession.libraryVM else { return false }
+         return appSession.uiState.shouldShowHomeNavigationPill(libraryVM: libraryVM)
+@@ -258,6 +286,8 @@ final class AppKitMainToolbarController: NSObject,
+             Identifier.sidebarToggle,
+             .sidebarTrackingSeparator,
+             Identifier.homeNavPill,
++            Identifier.qqReloadControl,
++            Identifier.qqDownloadControl,
+             Identifier.sort,
+             Identifier.pillGroup,
+             Identifier.homePillGroup,
+@@ -313,7 +343,8 @@ final class AppKitMainToolbarController: NSObject,
+                 ? currentHistoryVM?.isMultiselectMode
+                 : currentPageController?.isMultiselectMode) == true,
+             generation: attachmentGeneration,
+-            splitView: splitViewController?.splitView
++            splitView: splitViewController?.splitView,
++            qqMusicCoordinator: appSession?.qqMusicOnlineCoordinator
+         )
+         let actions = AppKitMainToolbarItemFactory.Actions(
+             target: self,
+@@ -321,6 +352,7 @@ final class AppKitMainToolbarController: NSObject,
+             homeNavigation: #selector(handleHomeNavPillAction(_:)),
+             pillGroup: #selector(handlePillGroupAction(_:)),
+             homePillGroup: #selector(handleHomePillGroupAction(_:)),
++            qqReload: #selector(handleQQReload(_:)),
+             lyricsToggle: #selector(handleLyricsToggle(_:))
+         )
+         guard let item = itemFactory.makeItem(
+@@ -428,6 +460,13 @@ final class AppKitMainToolbarController: NSObject,
+             validateCurrentToolbarVisibleItems()
+             return
+         }
++        if appSession?.uiState.contentMode == .qqMusicOnline {
++            guard let coordinator = appSession?.qqMusicOnlineCoordinator else { return }
++            Task { await coordinator.searchFromToolbar(text) }
++            syncMultiselectItemPresentation()
++            validateCurrentToolbarVisibleItems()
++            return
++        }
+         if currentLibraryVM?.currentSelection == .folders, let libraryVM = currentLibraryVM {
+             libraryVM.referencedSourceSearchText = text
+             syncMultiselectItemPresentation()
+@@ -478,6 +517,20 @@ final class AppKitMainToolbarController: NSObject,
+         syncSidebarToggleItemPresentation()
+     }
+ 
++    /// The online surface's refresh. Signals the page on screen to fetch again.
++    ///
++    /// The toolbar only presses the button: which requests a reload has to make
++    /// is knowledge the pages hold, so the coordinator publishes the request and
++    /// the page router and the artist page act on it.
++    @objc
++    private func handleQQReload(_ sender: NSToolbarItem) {
++        guard isCurrentToolbarAttached else { return }
++        guard appSession?.uiState.contentMode == .qqMusicOnline,
++              let coordinator = appSession?.qqMusicOnlineCoordinator
++        else { return }
++        coordinator.requestReload()
++    }
++
+     @objc
+     private func handleLyricsToggle(_ sender: NSToolbarItem) {
+         guard isCurrentToolbarAttached else { return }
+@@ -849,6 +902,21 @@ final class AppKitMainToolbarController: NSObject,
+             return
+         }
+ 
++        if appSession.uiState.contentMode == .qqMusicOnline {
++            guard let coordinator = appSession.qqMusicOnlineCoordinator else { return }
++            switch selectedIndex {
++            case 0:
++                coordinator.navigation.goBack()
++            case 1:
++                coordinator.navigation.goForward()
++            default:
++                break
++            }
++            syncHomeNavPillPresentation()
++            validateCurrentToolbarVisibleItems()
++            return
++        }
++
+         switch selectedIndex {
+         case 0:
+             appSession.uiState.goBackInHomeContext(libraryVM: libraryVM)
+@@ -867,6 +935,16 @@ final class AppKitMainToolbarController: NSObject,
+             group.subitems.forEach { $0.isEnabled = false }
+             return
+         }
++        if appSession.uiState.contentMode == .qqMusicOnline,
++           let coordinator = appSession.qqMusicOnlineCoordinator {
++            AppKitMainToolbarPresentation.syncHomeNavigation(
++                group: group,
++                isPlaybackHistoryMode: false,
++                canGoBack: coordinator.canGoBack,
++                canGoForward: coordinator.canGoForward
++            )
++            return
++        }
+         AppKitMainToolbarPresentation.syncHomeNavigation(
+             group: group,
+             isPlaybackHistoryMode: appSession.uiState.contentMode == .playbackHistory,
+@@ -1097,6 +1175,14 @@ final class AppKitMainToolbarController: NSObject,
+     }
+ 
+     private func syncSearchFieldFromModel() {
++        if appSession?.uiState.contentMode == .qqMusicOnline {
++            searchBridge.sync(
++                text: appSession?.qqMusicOnlineCoordinator?.onlineSearchKeyword ?? "",
++                placeholder: searchPlaceholder,
++                historyRange: nil
++            )
++            return
++        }
+         if isPlaybackHistoryMode {
+             searchBridge.sync(
+                 text: currentHistoryVM?.searchText ?? "",
+@@ -1126,6 +1212,9 @@ final class AppKitMainToolbarController: NSObject,
+     }
+ 
+     private var searchPlaceholder: String {
++        if appSession?.uiState.contentMode == .qqMusicOnline {
++            return appSession?.qqMusicOnlineCoordinator?.onlineSearchPlaceholder ?? "搜索在线音乐"
++        }
+         if isPlaybackHistoryMode {
+             return "在最近播放记录中搜索"
+         }
+@@ -1380,6 +1469,12 @@ final class AppKitMainToolbarController: NSObject,
+             item.isEnabled = true
+             sidebarToggleItem = item
+ 
++        case Identifier.qqReloadControl:
++            item.target = self
++            item.action = #selector(handleQQReload(_:))
++            item.autovalidates = false
++            item.isEnabled = true
++
+         case Identifier.lyricsToggle:
+             item.target = self
+             item.action = #selector(handleLyricsToggle(_:))
+@@ -1479,6 +1574,24 @@ final class AppKitMainToolbarController: NSObject,
+             return playbackHistoryToolbarIdentifiers()
+         }
+ 
++        if appSession?.uiState.contentMode == .qqMusicOnline {
++            // The online surface is browsed by drilling in, so it needs the
++            // same back/forward pill the library uses for its own drill-downs,
++            // and the same search field. It has no multiselect pill, sort menu
++            // or import action: those all act on library tracks.
++            return [
++                Identifier.sidebarToggle,
++                .sidebarTrackingSeparator,
++                Identifier.homeNavPill,
++                Identifier.qqReloadControl,
++                Identifier.qqDownloadControl,
++                .flexibleSpace,
++                Identifier.search,
++                Identifier.lyricsToggle,
++                .inspectorTrackingSeparator
++            ]
++        }
++
+         guard appSession?.uiState.contentMode == .library else {
+             return [
+                 Identifier.sidebarToggle,
+@@ -1557,10 +1670,17 @@ final class AppKitMainToolbarController: NSObject,
+             _ = appSession.libraryVM?.currentSelection
+             _ = appSession.libraryVM?.referencedSourceSearchScopeID
+             _ = appSession.libraryVM?.referencedSourceSearchScopeTitle
++            // The online browse surface keeps its own history; a card tap
++            // inside a page pushes there, so the pill's enablement has to
++            // follow the same way it follows the library's selection.
++            _ = appSession.qqMusicOnlineCoordinator?.navigation.stack.count
++            _ = appSession.qqMusicOnlineCoordinator?.navigation.forwardStack.count
++            _ = appSession.qqMusicOnlineCoordinator?.onlineSearchKind
+         } onChange: {
+             DispatchQueue.main.async { [weak self] in
+                 guard let self, self.isCurrentAttachment(generation) else { return }
+                 self.applyToolbarLayoutForCurrentState()
++                self.syncSearchFieldFromModel()
+                 self.syncSearchPlaceholder()
+                 self.syncHomeNavPillPresentation()
+                 self.validateCurrentToolbarVisibleItems()
