@@ -67,7 +67,23 @@ struct QQMusicDownloadControl: View {
     /// control could still be clicked on the landing page and would open a
     /// selection mode with no rows behind it.
     private var isAvailable: Bool {
+        offersSelectionHere && coordinator.canDownload
+    }
+
+    /// Whether this page is a track list, ignoring whether a download could land.
+    private var offersSelectionHere: Bool {
         coordinator.offersBatchDownload(navigation.displayed)
+    }
+
+    /// Why the control cannot be used, for the tooltip.
+    ///
+    /// An in-place library is the other way to be unavailable, and its reason
+    /// used to be announced by a banner that the surface no longer has. Saying it
+    /// here keeps that knowledge with the button that is refused by it.
+    private var unavailableReason: String {
+        offersSelectionHere
+            ? "当前资料库为原位模式，无法保存下载的歌曲"
+            : "这个页面没有可下载的列表"
     }
 
     private var ownedSongMids: Set<String> {
@@ -134,7 +150,10 @@ struct QQMusicDownloadControl: View {
             Image(systemName: "arrow.down.circle")
                 .id("qqdownload-idle")
                 .font(.system(size: GlassStyleTokens.headerPrimaryIconSize, weight: .semibold))
-                .foregroundStyle(themeStore.accentColor)
+                // Neutral, like the toolbar items beside it: an accent-tinted
+                // glyph here read as a different kind of control from the
+                // native 后退/前进、刷新、搜索 items (all template images).
+                .foregroundStyle(Color.primary)
                 .contentTransition(
                     .symbolEffect(.replace.magic(fallback: .offUp.byLayer), options: .nonRepeating)
                 )
@@ -147,7 +166,7 @@ struct QQMusicDownloadControl: View {
         .buttonStyle(.plain)
         .disabled(!isAvailable)
         .opacity(isAvailable ? 1 : 0.4)
-        .help(isAvailable ? "选择下载" : "这个页面没有可下载的列表")
+        .help(isAvailable ? "选择下载" : unavailableReason)
         .accessibilityLabel(Text("选择下载"))
     }
 
@@ -236,11 +255,13 @@ struct QQMusicDownloadControl: View {
 
     // MARK: - Action
 
-    /// Download everything selected, then report what happened.
+    /// Download everything selected.
     ///
-    /// A track already on disk from playback is *converted*, not fetched again —
-    /// `downloadSelected` counts the two separately so the message does not claim
-    /// a download that did not happen.
+    /// Silent on purpose: the finish of a batch has no notice surface any more
+    /// (see `QQMusicOnlineCoordinator`'s header), and each track's own progress
+    /// and failure are drawn on its row's artwork. `downloadSelected` still
+    /// counts downloaded/converted/failed — that is what the log records, and
+    /// what decides whether the selection is cleared.
     private func downloadSelection() async {
         let chosen = tracks.filter { selection.isSelected($0.songMid) }
         guard !chosen.isEmpty else { return }
@@ -248,31 +269,15 @@ struct QQMusicDownloadControl: View {
         defer { selection.setDownloading(false) }
 
         let result = await coordinator.downloadSelected(chosen)
-        let summary = QQMusicSelectionSummary.text(
-            downloaded: result.downloaded,
-            converted: result.converted,
-            failed: result.failed
+        Log.info(
+            "[QQMusicOnline] batch download: \(result.downloaded) downloaded, "
+                + "\(result.converted) promoted, \(result.failed) failed",
+            category: .import
         )
-        coordinator.report(summary, isError: result.failed > 0)
         if result.failed == 0 {
             withAnimation(shapeAnimation) {
                 selection.cancel()
             }
         }
-    }
-}
-
-/// The wording for a finished batch.
-///
-/// Pulled out of the view so the phrasing is testable: "已下载" over a track that
-/// was merely relabeled is a claim about work that did not happen.
-enum QQMusicSelectionSummary {
-
-    static func text(downloaded: Int, converted: Int, failed: Int) -> String {
-        var parts: [String] = []
-        if downloaded > 0 { parts.append("已下载 \(downloaded) 首") }
-        if converted > 0 { parts.append("\(converted) 首转为手动下载") }
-        if failed > 0 { parts.append("\(failed) 首失败") }
-        return parts.isEmpty ? "没有可处理的项目" : parts.joined(separator: "，")
     }
 }

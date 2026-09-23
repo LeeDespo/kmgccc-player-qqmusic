@@ -76,5 +76,27 @@ final class QQMusicSelectionModel {
     func setDownloading(_ value: Bool) {
         isDownloading = value
     }
+
+    /// Whether the rows on either side of `index` are selected as well.
+    ///
+    /// Selection is drawn as a row colour, and a run of selected rows has to
+    /// merge into one block rather than a stack of separate capsules — so a row
+    /// needs to know about its neighbours, and only the list knows that.
+    ///
+    /// `songMids` must be the list **in display order**: while selecting, a page
+    /// puts the rows the user already owns first, so that is what is actually
+    /// adjacent on screen. Rows that are not selected break the run, including
+    /// the unselectable ones — the rounded ends should tell the truth about where
+    /// the tint starts and stops.
+    func continuity(at index: Int, in songMids: [String]) -> TrackRowSelectionContinuity {
+        guard songMids.indices.contains(index) else { return .isolated }
+        func isSelected(_ position: Int) -> Bool {
+            songMids.indices.contains(position) && selectedSongMids.contains(songMids[position])
+        }
+        return TrackRowSelectionContinuity(
+            connectsToPrevious: isSelected(index - 1),
+            connectsToNext: isSelected(index + 1)
+        )
+    }
 }
 

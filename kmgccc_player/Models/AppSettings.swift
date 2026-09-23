@@ -1135,8 +1135,10 @@ public final class AppSettings {
 
     private enum QQMusicKeys {
         static let prefetchDepth = "qqMusicPrefetchDepth"
-        static let showCircuitNotices = "qqMusicShowCircuitNotices"
-        static let showGeneralNotices = "qqMusicShowGeneralNotices"
+        // Two notice-visibility keys used to live here. The notices themselves
+        // are gone (the surface no longer has a place to show them), so the
+        // switches that gated them went with them rather than staying in
+        // Settings as switches that do nothing.
         static let helperIdleSeconds = "qqMusicHelperIdleSeconds"
         static let preloadOnLaunch = "qqMusicPreloadOnLaunch"
         static let circuitBreakerEnabled = "qqMusicCircuitBreakerEnabled"
@@ -1191,33 +1193,6 @@ public final class AppSettings {
         set {
             withMutation(keyPath: \.qqMusicPrefetchDepth) {
                 UserDefaults.standard.set(newValue, forKey: QQMusicKeys.prefetchDepth)
-            }
-        }
-    }
-
-    /// Whether QQ Music surfaces circuit-breaker and rate-limit messages
-    /// (the orange "已暂停 / 访问过于频繁" notices).
-    var qqMusicShowCircuitNotices: Bool {
-        get {
-            access(keyPath: \.qqMusicShowCircuitNotices)
-            return qqMusicBool(QQMusicKeys.showCircuitNotices, default: true)
-        }
-        set {
-            withMutation(keyPath: \.qqMusicShowCircuitNotices) {
-                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.showCircuitNotices)
-            }
-        }
-    }
-
-    /// Whether QQ Music surfaces other problem messages (load failures etc.).
-    var qqMusicShowGeneralNotices: Bool {
-        get {
-            access(keyPath: \.qqMusicShowGeneralNotices)
-            return qqMusicBool(QQMusicKeys.showGeneralNotices, default: true)
-        }
-        set {
-            withMutation(keyPath: \.qqMusicShowGeneralNotices) {
-                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.showGeneralNotices)
             }
         }
     }

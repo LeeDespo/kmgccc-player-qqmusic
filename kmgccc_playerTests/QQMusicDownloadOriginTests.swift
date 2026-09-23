@@ -176,24 +176,17 @@ final class QQMusicDownloadOriginTests: XCTestCase {
         XCTAssertFalse(chosen.countsAsDownloadCache, "a download the user asked for is not cache")
     }
 
-    /// The report has to say "converted" rather than "downloaded", or it claims
-    /// something that did not happen.
-    func testBatchSummaryDistinguishesConversionsFromDownloads() {
-        XCTAssertEqual(
-            QQMusicSelectionSummary.text(downloaded: 3, converted: 0, failed: 0),
-            "已下载 3 首"
-        )
-        XCTAssertEqual(
-            QQMusicSelectionSummary.text(downloaded: 0, converted: 2, failed: 0),
-            "2 首转为手动下载"
-        )
-        XCTAssertEqual(
-            QQMusicSelectionSummary.text(downloaded: 1, converted: 1, failed: 1),
-            "已下载 1 首，1 首转为手动下载，1 首失败"
-        )
-        XCTAssertEqual(
-            QQMusicSelectionSummary.text(downloaded: 0, converted: 0, failed: 0),
-            "没有可处理的项目"
-        )
+    /// A download needs a managed library, which is a separate question from
+    /// "does this page offer a selection".
+    ///
+    /// The batch control combines the two: the page-kind check keeps the button
+    /// steady across navigation (see `QQMusicBrowseEnvironmentTests`), while this
+    /// one is about whether a download can land at all — an in-place library
+    /// cannot host a downloaded file. This used to be announced by a banner; the
+    /// banner is gone, so the control's own availability is the whole answer.
+    func testDownloadsRequireAManagedLibrary() {
+        let coordinator = QQMusicOnlineCoordinator()
+        XCTAssertFalse(coordinator.canDownload, "no library session at all")
+        XCTAssertTrue(coordinator.offersBatchDownload(.likedSongs), "the page kind still qualifies")
     }
 }

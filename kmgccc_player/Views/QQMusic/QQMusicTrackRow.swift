@@ -2,28 +2,37 @@
 //  QQMusicTrackRow.swift
 //  kmgccc_player
 //
-//  One online track, drawn with the library's own row geometry.
+//  One online track, drawn with the library's own row geometry **and its own
+//  interaction**.
 //
-//  This replaces the previous hand-rolled row (38pt artwork, 13pt title, a
-//  trailing progress readout and a heart sitting in the layout). That row was
-//  recognisably a different list: different artwork size, different type scale,
-//  and controls that were always on screen.
-//
-//  The geometry now comes from `Constants.Layout.TrackRow` — the same numbers
+//  The geometry comes from `Constants.Layout.TrackRow` — the same numbers
 //  `TrackRowView` uses — so an online list and a local list line up column for
-//  column. The online-only state (download progress, the like toggle, the
-//  failure detail) is folded into the places the library row already reserves:
+//  column, and the interaction is `TrackRowView`'s too:
+//
+//    - a **single click on the row plays it** (no play button, no double click);
+//    - the trailing glyph is the app's **ellipsis menu**, at the same
+//      `trailingMenuHitSize`, offering 播放 / 下一首播放 / 查看详情 / 查看艺人 /
+//      查看专辑 — the entity items open the online pages for them;
+//    - in selection mode the ellipsis goes quiet and the same click toggles the
+//      row instead, exactly as the library's rows behave in multiselect;
+//    - **selection is a row colour, not a tick**: the fill and the
+//      corner-merging shape are `TrackRowView`'s own
+//      (`TrackRowSelectionBackgroundShape` with a continuity from the list
+//      around it), so a run of selected rows reads as one rounded block.
+//
+//  `TrackRowView` itself is still not reused: its menu contract is a library
+//  `Track` (playlist membership, deletion, metadata editing) and an online row
+//  has no library track until it has been downloaded. The numbers and the
+//  interaction are shared, which is what the eye and the hand read.
+//
+//  The online-only state is folded into the places the library row already
+//  reserves:
 //    - download progress overlays the artwork, which is the only element with
 //      room for it and is where the artwork itself is being fetched;
-//    - the like toggle and the ellipsis menu sit in the trailing glyph column
-//      and fade in on hover, matching `TrackRowView`'s own `0.4 → 1` treatment;
+//    - the like toggle sits beside the ellipsis and fades in on hover, matching
+//      the ellipsis's own quiet-until-hovered treatment;
 //    - the failure detail moves into a click-through popover attached to the
 //      artwork, so a long upstream message never lands in the row.
-//
-//  `TrackRowView` itself was not reused because its menu contract is a library
-//  `Track` (`TrackActionMenuContent`, playlist membership, deletion), and an
-//  online row has no library track until it has been downloaded. The numbers
-//  are shared, which is what the eye reads.
 //
 
 import AppKit
@@ -44,24 +53,34 @@ struct QQMusicTrackRow: View {
     /// is not offered (radio, artist pages).
     var isSelecting: Bool = false
     var isSelected: Bool = false
+    /// Whether the rows above and below this one are selected too, so the
+    /// selection fill merges into one block instead of a stack of capsules.
+    /// Computed from the *displayed* order, which is what is on screen.
+    var selectionContinuity: TrackRowSelectionContinuity = .isolated
     var onToggleSelection: (() -> Void)?
     /// True when the user already downloaded this themselves.
     ///
     /// It only changes how the row looks while a download selection is being
     /// made: there, the track cannot be selected, so it is dimmed to show that.
     /// In every other mode the list is simply a list, and a track the user owns
-    /// is drawn like any other — dimming it there made a normal list look like it
-    /// had disabled entries in it.
+    /// is drawn like any other — dimming it there made a normal list look like
+    /// it had disabled entries in it.
     var isOwnedByUser: Bool = false
 
     /// Whether the row is unselectable in a selection in progress.
     private var isBlockedFromSelection: Bool { isSelecting && isOwnedByUser }
+
+    /// Whether the trailing menu is live. The library's rows drop theirs to a
+    /// static glyph while a selection is being made, because the row's click
+    /// belongs to the selection then.
+    private var areRowActionsEnabled: Bool { !isSelecting }
 
     /// The failure detail, shown only when the warning glyph is clicked.
     @State private var isShowingErrorDetail = false
     @State private var isHovering = false
 
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
+    @Environment(QQMusicNavigation.self) private var navigation
     @EnvironmentObject private var themeStore: ThemeStore
     @Environment(\.colorScheme) private var colorScheme
 
@@ -73,10 +92,6 @@ struct QQMusicTrackRow: View {
 
     var body: some View {
         HStack(spacing: Constants.Layout.TrackRow.horizontalSpacing) {
-            if isSelecting {
-                selectionGlyph
-            }
-
             artworkView
 
             HStack(alignment: .center, spacing: Constants.Layout.TrackRow.textColumnSpacing) {
@@ -126,7 +141,7 @@ struct QQMusicTrackRow: View {
 
             likeButton
 
-            statusControl
+            trailingMenu
         }
         .padding(.vertical, Constants.Layout.TrackRow.verticalPadding)
         .padding(.horizontal, Constants.Layout.TrackRow.horizontalPadding)
@@ -138,14 +153,27 @@ struct QQMusicTrackRow: View {
         .background(rowBackground)
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
-        .onTapGesture(count: 2) { onPlay() }
-        // While selecting, a single tap toggles: the row is the obvious target,
-        // and requiring the checkbox itself would be needlessly fiddly.
-        .onTapGesture {
-            if isSelecting, !isOwnedByUser { onToggleSelection?() }
-        }
+        // One click, one meaning: play normally, select while selecting. Kept to
+        // this view (`.including: .gesture`) so a click on the heart or the
+        // ellipsis does not also start playback — the library's own row does the
+        // same, for the same reason.
+        .gesture(
+            TapGesture().onEnded {
+                if isSelecting {
+                    guard !isOwnedByUser else { return }
+                    onToggleSelection?()
+                } else {
+                    onPlay()
+                }
+            },
+            including: .gesture
+        )
         .opacity(isBlockedFromSelection ? 0.45 : 1)
-        .contextMenu { contextMenuContent }
+        .contextMenu {
+            if areRowActionsEnabled {
+                menuContent
+            }
+        }
     }
 
     // MARK: - Columns
@@ -166,21 +194,6 @@ struct QQMusicTrackRow: View {
         track.artist.isEmpty ? "未知歌手" : track.artist
     }
 
-    @ViewBuilder
-    private var selectionGlyph: some View {
-        Image(systemName: isOwnedByUser || isSelected
-              ? "checkmark.circle.fill"
-              : "circle")
-            .font(.system(size: 15))
-            .foregroundStyle(
-                isOwnedByUser
-                    ? Color.secondary
-                    : (isSelected ? themeStore.accentColor : Color.secondary)
-            )
-            .frame(width: 18)
-            .contentShape(Rectangle())
-    }
-
     /// Playing indicator / missing-file glyph column, as `TrackRowView` has it.
     @ViewBuilder
     private var playingIndicator: some View {
@@ -199,11 +212,28 @@ struct QQMusicTrackRow: View {
         return String(format: "%d:%02d", duration / 60, duration % 60)
     }
 
+    // MARK: - Row background
+
+    @ViewBuilder
     private var rowBackground: some View {
-        RoundedRectangle(cornerRadius: Constants.Layout.TrackRow.cornerRadius)
+        let radius = Constants.Layout.TrackRow.cornerRadius
+        if isSelected {
+            // The library's own shape: the corners facing a neighbouring selected
+            // row are squared off, so a run of them reads as one block.
+            TrackRowSelectionBackgroundShape(
+                continuity: selectionContinuity,
+                cornerRadius: radius
+            )
             .fill(backgroundFill)
+            .padding(.top, selectionContinuity.connectsToPrevious ? -0.75 : 0)
+            .padding(.bottom, selectionContinuity.connectsToNext ? -0.75 : 0)
+        } else {
+            RoundedRectangle(cornerRadius: radius)
+                .fill(backgroundFill)
+        }
     }
 
+    /// The same three washes `TrackRowView` uses, in the same order of priority.
     private var backgroundFill: Color {
         if isSelected {
             return themeStore.accentColor.opacity(colorScheme == .dark ? 0.2 : 0.15)
@@ -279,12 +309,12 @@ struct QQMusicTrackRow: View {
 
     // MARK: - Trailing controls
 
-    /// The like toggle and the play control, in the trailing glyph column.
+    /// The like toggle, in the glyph column beside the ellipsis.
     ///
     /// The heart only appears on hover for a track that is not liked, which is
-    /// the same treatment the ellipsis gets in the library rows: the column
-    /// stays quiet until the pointer is on it, but a liked track keeps its
-    /// filled heart visible so the list can be read at a glance.
+    /// the same treatment the ellipsis gets: the column stays quiet until the
+    /// pointer is on it, but a liked track keeps its filled heart visible so the
+    /// list can be read at a glance.
     @ViewBuilder
     private var likeButton: some View {
         if !track.songMid.isEmpty {
@@ -312,36 +342,84 @@ struct QQMusicTrackRow: View {
         }
     }
 
-    /// The play control, in the trailing glyph column at the library's own
-    /// `trailingMenuHitSize` of 30pt.
-    ///
-    /// The failure case shows the same glyph as every other row and defers the
-    /// message to the artwork's popover: a long upstream error text in this
-    /// column pushed the glyph out of reach and truncated mid-word.
-    private var statusControl: some View {
-        Button(action: onPlay) {
-            Image(systemName: isPlaying ? "speaker.wave.2.fill" : "play.circle")
-                .font(.system(size: 15))
-                .foregroundStyle(
-                    isPlaying
-                        ? themeStore.accentColor
-                        : (isHovering ? themeStore.accentColor : secondaryColor)
-                )
+    /// The trailing menu, at the library's own `trailingMenuHitSize` of 30pt and
+    /// with the library's own glyph and menu style.
+    @ViewBuilder
+    private var trailingMenu: some View {
+        if areRowActionsEnabled {
+            Menu {
+                menuContent
+            } label: {
+                trailingMenuGlyph
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("更多")
+        } else {
+            trailingMenuGlyph
+                .opacity(0.72)
+                .allowsHitTesting(false)
         }
-        .buttonStyle(.plain)
-        .frame(
-            width: Constants.Layout.TrackRow.trailingMenuHitSize,
-            height: Constants.Layout.TrackRow.trailingMenuHitSize
-        )
-        .contentShape(Rectangle())
-        .help(helpText)
     }
 
-    private var helpText: String {
-        if isPlaying { return "正在播放" }
-        if isImported { return "播放（已在曲库）" }
-        if track.isExpectedPlayable { return "播放（后台自动下载）" }
-        return "需要会员，仍可尝试播放"
+    private var trailingMenuGlyph: some View {
+        Image(systemName: "ellipsis")
+            .font(.system(size: Constants.Layout.TrackRow.trailingMenuGlyphSize, weight: .regular))
+            .foregroundStyle(.secondary)
+            .frame(
+                width: Constants.Layout.TrackRow.trailingMenuHitSize,
+                height: Constants.Layout.TrackRow.trailingMenuHitSize
+            )
+            .contentShape(Rectangle())
+    }
+
+    /// What the ellipsis offers — the five items the library's rows carry for a
+    /// track, adapted to what is reachable online:
+    ///
+    ///   播放 · 下一首播放 ｜ 查看详情 · 查看艺人 · 查看专辑
+    ///
+    /// 查看艺人 / 查看专辑 appear only when we hold something to open (a singer
+    /// mid / an album id), which is how the library hides navigation too: an
+    /// item that cannot be honoured is absent rather than present and dead.
+    @ViewBuilder
+    private var menuContent: some View {
+        Button(action: onPlay) {
+            Label("播放", systemImage: "play")
+        }
+
+        Button {
+            Task { await coordinator.playNext(track) }
+        } label: {
+            Label("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward")
+        }
+
+        Divider()
+
+        Button {
+            coordinator.showTrackDetail(track)
+        } label: {
+            Label("查看详情", systemImage: "doc.text")
+        }
+
+        if track.hasArtistPage {
+            Button {
+                navigation.push(.artist(QQMusicArtistRef(
+                    singerMid: track.singerMid ?? "",
+                    name: artistText
+                )))
+            } label: {
+                Label("查看艺人", systemImage: "person.crop.circle")
+            }
+        }
+
+        if track.hasAlbumPage, let albumId = track.albumId {
+            Button {
+                navigation.push(.album(id: albumId, title: track.album ?? track.title))
+            } label: {
+                Label("查看专辑", systemImage: "rectangle.stack")
+            }
+        }
     }
 
     private var errorDetailPopover: some View {
@@ -363,38 +441,5 @@ struct QQMusicTrackRow: View {
             }
         }
         .padding(12)
-    }
-
-    @ViewBuilder
-    private var contextMenuContent: some View {
-        Button(action: onPlay) {
-            Label("播放", systemImage: "play")
-        }
-
-        Button {
-            Task { await coordinator.playNext(track) }
-        } label: {
-            Label("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward")
-        }
-
-        Button {
-            Task { await coordinator.downloadOne(track) }
-        } label: {
-            Label(
-                isImported ? "已在曲库（转为手动下载）" : "下载",
-                systemImage: "arrow.down.circle"
-            )
-        }
-        .disabled(track.songMid.isEmpty || phase.isBusy)
-
-        Divider()
-
-        Button {
-            Task { await coordinator.toggleLike(songMid: track.songMid, row: track) }
-        } label: {
-            Label(isLiked ? "取消收藏" : "收藏到「我喜欢」",
-                  systemImage: isLiked ? "heart.slash" : "heart")
-        }
-        .disabled(isLikePending || track.songMid.isEmpty)
     }
 }

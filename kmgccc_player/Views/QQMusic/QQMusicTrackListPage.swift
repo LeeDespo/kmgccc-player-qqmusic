@@ -142,6 +142,8 @@ struct QQMusicTrackListPage: View {
             }
         } else {
             VStack(spacing: 0) {
+                let displayedSongMids = displayedTracks.map(\.songMid)
+
                 if page == .likedSongs && coordinator.hasMoreLikedSongs {
                     // The full list normally arrives in one batched round trip;
                     // this is the honest state while the remainder streams in.
@@ -166,6 +168,11 @@ struct QQMusicTrackListPage: View {
                             onPlay: { play(track, at: index) },
                             isSelecting: selection.isSelecting,
                             isSelected: selection.isSelected(track.songMid),
+                            // Selection is a colour, and a run of selected rows
+                            // merges into one block — so a row needs to know
+                            // whether its neighbours are selected. Computed from
+                            // the displayed order, which is what is on screen.
+                            selectionContinuity: selection.continuity(at: index, in: displayedSongMids),
                             onToggleSelection: { selection.toggle(track.songMid) },
                             isOwnedByUser: coordinator.isUserDownloaded(track.songMid)
                         )

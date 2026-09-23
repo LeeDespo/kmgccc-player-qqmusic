@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Models/AppSettings.swift b/kmgccc_player/Models/AppSettings.swift
-index 6c11cee7..0b3385f4 100644
+index 6c11cee7..c4dfe7d4 100644
 --- a/kmgccc_player/Models/AppSettings.swift
 +++ b/kmgccc_player/Models/AppSettings.swift
 @@ -22,10 +22,24 @@ enum PlaybackStartPolicy: Equatable {
@@ -37,7 +37,7 @@ index 6c11cee7..0b3385f4 100644
              return .sequence
          case .forceShuffleTemporary:
              return .shuffle
-@@ -1105,6 +1119,330 @@ public final class AppSettings {
+@@ -1105,6 +1119,305 @@ public final class AppSettings {
          static let sourcePreferences = "externalPlaybackSourcePreferences"
      }
  
@@ -57,8 +57,10 @@ index 6c11cee7..0b3385f4 100644
 +
 +    private enum QQMusicKeys {
 +        static let prefetchDepth = "qqMusicPrefetchDepth"
-+        static let showCircuitNotices = "qqMusicShowCircuitNotices"
-+        static let showGeneralNotices = "qqMusicShowGeneralNotices"
++        // Two notice-visibility keys used to live here. The notices themselves
++        // are gone (the surface no longer has a place to show them), so the
++        // switches that gated them went with them rather than staying in
++        // Settings as switches that do nothing.
 +        static let helperIdleSeconds = "qqMusicHelperIdleSeconds"
 +        static let preloadOnLaunch = "qqMusicPreloadOnLaunch"
 +        static let circuitBreakerEnabled = "qqMusicCircuitBreakerEnabled"
@@ -113,33 +115,6 @@ index 6c11cee7..0b3385f4 100644
 +        set {
 +            withMutation(keyPath: \.qqMusicPrefetchDepth) {
 +                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.prefetchDepth)
-+            }
-+        }
-+    }
-+
-+    /// Whether QQ Music surfaces circuit-breaker and rate-limit messages
-+    /// (the orange "已暂停 / 访问过于频繁" notices).
-+    var qqMusicShowCircuitNotices: Bool {
-+        get {
-+            access(keyPath: \.qqMusicShowCircuitNotices)
-+            return qqMusicBool(QQMusicKeys.showCircuitNotices, default: true)
-+        }
-+        set {
-+            withMutation(keyPath: \.qqMusicShowCircuitNotices) {
-+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.showCircuitNotices)
-+            }
-+        }
-+    }
-+
-+    /// Whether QQ Music surfaces other problem messages (load failures etc.).
-+    var qqMusicShowGeneralNotices: Bool {
-+        get {
-+            access(keyPath: \.qqMusicShowGeneralNotices)
-+            return qqMusicBool(QQMusicKeys.showGeneralNotices, default: true)
-+        }
-+        set {
-+            withMutation(keyPath: \.qqMusicShowGeneralNotices) {
-+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.showGeneralNotices)
 +            }
 +        }
 +    }

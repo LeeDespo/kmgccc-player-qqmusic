@@ -566,9 +566,10 @@ struct QQMusicSettingsView: View {
             .padding(SettingsStyleTokens.groupPadding)
             .background(sectionBackground)
 
-            noticesSection
-            circuitBreakerSection
-        }
+            // No notices section: the online surface has no notice UI any more
+            // (see `QQMusicOnlineCoordinator`'s header), so switches that gated
+            // it were removed rather than left here doing nothing.
+            circuitBreakerSection        }
         .onChange(of: AppSettings.shared.qqMusicCircuitBreakerEnabled) { _, _ in
             Task { await pushCircuitConfiguration() }
         }
@@ -583,34 +584,6 @@ struct QQMusicSettingsView: View {
         }
         .onChange(of: AppSettings.shared.qqMusicHelperIdleSeconds) { _, _ in
             Task { await pushCircuitConfiguration() }
-        }
-    }
-
-    /// Which problem messages the browse page is allowed to show.
-    private var noticesSection: some View {
-        VStack(alignment: .leading, spacing: SettingsStyleTokens.groupSpacing) {
-            SettingsHeaderLabel(title: "提示与通知", systemImage: "bell")
-
-            VStack(alignment: .leading, spacing: 12) {
-                SettingsSwitchRow(
-                    title: "显示熔断与限流提示",
-                    isOn: Binding(
-                        get: { AppSettings.shared.qqMusicShowCircuitNotices },
-                        set: { AppSettings.shared.qqMusicShowCircuitNotices = $0 }
-                    ),
-                    detail: "请求过于频繁、被暂停等提示。关闭后这类提示不再显示，请求行为不受影响。"
-                )
-                SettingsSwitchRow(
-                    title: "显示其他异常提示",
-                    isOn: Binding(
-                        get: { AppSettings.shared.qqMusicShowGeneralNotices },
-                        set: { AppSettings.shared.qqMusicShowGeneralNotices = $0 }
-                    ),
-                    detail: "加载失败、导入失败等提示。关闭后同样不再显示。"
-                )
-            }
-            .padding(SettingsStyleTokens.groupPadding)
-            .background(sectionBackground)
         }
     }
 

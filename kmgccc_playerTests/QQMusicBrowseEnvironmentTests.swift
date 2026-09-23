@@ -122,6 +122,108 @@ final class QQMusicBrowseEnvironmentTests: XCTestCase {
         return (coordinator, coordinator.navigation, QQMusicSelectionModel())
     }
 
+    // MARK: - Row interaction
+
+    /// The entity items of a row's 更多 menu appear only when we hold a handle
+    /// for the page they open.
+    ///
+    /// 查看艺人 needs the singer's mid and 查看专辑 needs the album's numeric id —
+    /// the mid only yields a cover. An item offered without one would open an
+    /// empty page, so the row's menu asks these first, the way the library's menu
+    /// hides navigation it cannot honour.
+    func testEntityItemsNeedSomethingToOpen() {
+        let bare = QQMusicOnlineTrack(songMid: "001", title: "歌", artist: "谁")
+        XCTAssertFalse(bare.hasArtistPage, "no singer mid, no artist page")
+        XCTAssertFalse(bare.hasAlbumPage, "no album id, no album page")
+
+        var withArtist = bare
+        withArtist.singerMid = "singer-mid"
+        XCTAssertTrue(withArtist.hasArtistPage)
+
+        var withAlbum = bare
+        withAlbum.albumId = 0
+        XCTAssertFalse(withAlbum.hasAlbumPage, "an id of 0 is not an album")
+        withAlbum.albumId = 1234
+        XCTAssertTrue(withAlbum.hasAlbumPage)
+    }
+
+    /// 查看详情 says what the catalogue and the library actually know.
+    ///
+    /// The library's own detail sheet resolves a *description*; an online track
+    /// has none, so the facts take the body. What matters for the test is that
+    /// each fact is stated and that absent ones are left out rather than shown
+    /// blank.
+    func testTrackDetailStatesTheOnlineFacts() {
+        var track = QQMusicOnlineTrack(
+            songMid: "0039MnYb0qxYhV",
+            title: "夜曲",
+            artist: "周杰伦",
+            album: "十一月的萧邦",
+            duration: 227
+        )
+        track.payPlay = 0
+
+        let playable = QQMusicTrackDetail.content(for: track, libraryState: .userDownload)
+        XCTAssertEqual(playable.title, "歌曲详情")
+        XCTAssertEqual(playable.subtitle, "夜曲 - 周杰伦")
+        XCTAssertTrue(playable.text.contains("专辑：十一月的萧邦"))
+        XCTAssertTrue(playable.text.contains("时长：3:47"))
+        XCTAssertTrue(playable.text.contains("可直接播放"))
+        XCTAssertTrue(playable.text.contains("已在曲库（手动下载）"))
+        XCTAssertTrue(playable.text.contains("0039MnYb0qxYhV"))
+
+        // A gated track is described as a likelihood, not a promise: `payPlay` is
+        // a heuristic and the authoritative answer only arrives on playback.
+        track.payPlay = 1
+        XCTAssertTrue(
+            QQMusicTrackDetail.content(for: track, libraryState: .notDownloaded)
+                .text.contains("可能需要会员")
+        )
+
+        // Nothing to state: no album, no length, nothing in the library.
+        let bare = QQMusicOnlineTrack(songMid: "001", title: "歌", artist: "谁")
+        let text = QQMusicTrackDetail.content(for: bare, libraryState: .notDownloaded).text
+        XCTAssertFalse(text.contains("专辑："))
+        XCTAssertFalse(text.contains("时长："))
+        XCTAssertTrue(text.contains("未下载"))
+    }
+
+    // MARK: - Selection
+
+    /// A run of selected rows merges; the ends of the run keep their rounding.
+    ///
+    /// This is what makes the selection read as one block instead of a stack of
+    /// capsules, and it is the row's *neighbours* that decide it — so the list has
+    /// to answer, and it has to answer from the order actually on screen.
+    func testSelectionContinuityMergesARunOfRows() {
+        let selection = QQMusicSelectionModel()
+        selection.begin()
+        let mids = ["a", "b", "c", "d"]
+        selection.toggle("b")
+        selection.toggle("c")
+
+        // The pair merges where they touch — 'b' squares its bottom, 'c' its top
+        // — and keeps its rounding at the outer ends.
+        XCTAssertEqual(
+            selection.continuity(at: 1, in: mids),
+            TrackRowSelectionContinuity(connectsToPrevious: false, connectsToNext: true)
+        )
+        XCTAssertEqual(
+            selection.continuity(at: 2, in: mids),
+            TrackRowSelectionContinuity(connectsToPrevious: true, connectsToNext: false)
+        )
+
+        // A lone selected row has nothing to merge with, which is the case that
+        // matters for a one-row selection.
+        selection.cancel()
+        selection.begin()
+        selection.toggle("a")
+        XCTAssertEqual(selection.continuity(at: 0, in: mids), .isolated)
+
+        // Out of range is not a row, so it must not claim a merge either.
+        XCTAssertEqual(selection.continuity(at: 9, in: mids), .isolated)
+    }
+
     // MARK: - The batch-download control
 
     /// Entering selection mode must widen the control.

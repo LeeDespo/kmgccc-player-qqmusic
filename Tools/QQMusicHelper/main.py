@@ -49,7 +49,7 @@ MAX_IMAGE_SIZE = 800
 # Bumped when the request/response shapes below change incompatibly. The host
 # refuses to talk to a helper whose protocol major it does not understand, so a
 # newer helper build cannot silently mis-parse.
-HELPER_VERSION = "2.0.0"
+HELPER_VERSION = "2.0.1"
 PROTOCOL_VERSION = 2
 
 # Advertised by `get_helper_info` and checked by the dispatcher, so a host can
@@ -1016,6 +1016,12 @@ def _track_payload(item: Any) -> dict[str, Any]:
     # `pay_play == 1` means the track is gated; it is the same signal that
     # predicts whether the CDN grants a playback url, so surface it directly.
     pay_play = _first_int(pay, ("pay_play", "payPlay"))
+    # The album's *numeric* id, which is the only handle `fetch_album_tracks`
+    # accepts. The mid travels alongside it because the cover needs it, but the
+    # mid alone cannot open an album's track list.
+    album_id = _first_int(album, ("id", "albumId", "albumID")) or _first_int(
+        track, ("albumId", "albumID")
+    )
     return {
         "source": SOURCE,
         "songId": _first_int(track, ("id", "songId", "songid")),
@@ -1025,6 +1031,7 @@ def _track_payload(item: Any) -> dict[str, Any]:
         "artist": _singers_text(track),
         "album": _album_name(track),
         "albumMid": album_mid,
+        "albumId": album_id,
         "imageURL": _sanitize_image_url(_album_cover_url(album_mid)),
         "duration": _first_int(track, ("interval", "duration", "durationSec")),
         "payPlay": pay_play,

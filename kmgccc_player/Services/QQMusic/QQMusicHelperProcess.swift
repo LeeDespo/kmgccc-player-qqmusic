@@ -119,6 +119,12 @@ nonisolated struct QQMusicOnlineTrack: Codable, Equatable, Sendable, Identifiabl
     var artist: String
     var album: String?
     var albumMid: String?
+    /// The album's numeric id, which is the handle the album page needs.
+    ///
+    /// Absent with a helper older than 2.0.1, and absent for the odd upstream
+    /// entry that carries none — the row then simply does not offer 查看专辑,
+    /// the way the library hides navigation it cannot honour.
+    var albumId: Int?
     var imageURL: String?
     var duration: Int?
     /// `0` means the CDN is expected to grant a playback url. `1` marks a
@@ -139,6 +145,19 @@ nonisolated struct QQMusicOnlineTrack: Codable, Equatable, Sendable, Identifiabl
     /// Heuristic gate used to pre-disable rows; the authoritative answer still
     /// comes from `resolveSongURL`.
     var isExpectedPlayable: Bool { (payPlay ?? 1) == 0 }
+
+    /// Whether 查看艺人 has a page to open.
+    ///
+    /// False when the source did not give us the singer's mid, which is the one
+    /// handle the artist page needs — the row then omits the item instead of
+    /// offering one that cannot be honoured.
+    var hasArtistPage: Bool {
+        !(singerMid ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// Whether 查看专辑 has a page to open. Needs the numeric album id; the mid
+    /// only yields a cover.
+    var hasAlbumPage: Bool { (albumId ?? 0) > 0 }
 }
 
 nonisolated struct QQMusicOnlinePlaylist: Codable, Equatable, Sendable, Identifiable {

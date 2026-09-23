@@ -16,6 +16,14 @@
 //  prefetches ahead in the background, appending each result to the queue.
 //  Playback then advances through the queue with the player's own logic.
 //
+//  Failures are **log-only**. There used to be a status line reported to a thin
+//  banner under the toolbar; it was removed on request, along with the
+//  informational notices (playback start, like confirmations, download
+//  confirmations) that shared it. A failure now belongs where it can be acted
+//  on — a row's own download glyph, a page's own empty state — and the log
+//  carries the detail, including the rate-limit backoff that `noteFailure`
+//  records.
+//
 
 import Foundation
 import Observation
@@ -103,17 +111,6 @@ final class QQMusicOnlineCoordinator {
     /// Song mids already in the library as a QQ Music download.
     private(set) var importedSongMids: Set<String> = []
 
-    /// Non-blocking status line. Never used to blank out loaded content.
-    private(set) var statusMessage: String?
-    private(set) var statusIsError = false
-
-    /// Whether any browse request is currently in flight, for one spinner in
-    /// the header instead of one per section.
-    var isBusyLoading: Bool {
-        isLoadingFeed || isLoadingPlaylists || isLoadingToplists
-            || isSearching || isLoadingPlaylistTracks
-    }
-
     /// Playback session state, so rows can show what is currently playing.
     private(set) var activePlayingSongMid: String?
     private(set) var sessionQueueSongMids: [String] = []
@@ -186,6 +183,20 @@ final class QQMusicOnlineCoordinator {
     /// Reload the page on screen, discarding what it was showing.
     func requestReload() {
         reloadToken &+= 1
+    }
+
+    // MARK: - 查看详情
+
+    /// The track whose detail sheet is open, if any.
+    ///
+    /// Session state rather than a row's own `@State` because rows live in a
+    /// `LazyVStack`: a row that scrolls out of view is torn down, and a sheet
+    /// owned by it would go with it. One presentation point on the router is also
+    /// what keeps the sheet from being rebuilt as the list recycles.
+    var trackForDetail: QQMusicOnlineTrack?
+
+    func showTrackDetail(_ track: QQMusicOnlineTrack) {
+        trackForDetail = track
     }
 
     /// Set once a library session exists; the coordinator cannot import without it.
@@ -408,29 +419,6 @@ final class QQMusicOnlineCoordinator {
             }
         )
     }
-
-    // MARK: - Status
-
-    func report(_ message: String?, isError: Bool = false) {
-        guard let message, isError else {
-            statusMessage = message
-            statusIsError = isError
-            return
-        }
-        // Two independent switches: users who find the throttling notices
-        // noisy can silence those without losing genuine failure reports, and
-        // the reverse.
-        let isCircuitNotice = Self.circuitNoticeMarkers.contains { message.contains($0) }
-        let allowed = isCircuitNotice
-            ? AppSettings.shared.qqMusicShowCircuitNotices
-            : AppSettings.shared.qqMusicShowGeneralNotices
-        statusMessage = allowed ? message : nil
-        statusIsError = allowed && isError
-    }
-
-    /// Substrings that identify a throttling/breaker message rather than a
-    /// content failure. Matched case-insensitively.
-    private static let circuitNoticeMarkers = ["熔断", "暂停", "过于频繁", "风控", "circuit"]
 
     // MARK: - Page lifecycle
 
@@ -757,7 +745,6 @@ final class QQMusicOnlineCoordinator {
         guard !isLoadingFeed else { return }
         if !force, !recommendFeed.isEmpty { return }
         if let wait = backoffRemaining() {
-            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
             return
         }
         isLoadingFeed = true
@@ -772,7 +759,6 @@ final class QQMusicOnlineCoordinator {
             recommendFeed = cached
             seenFeedSongMids = Set(cached.map(\.songMid))
             servedFromCache = true
-            report(nil)
         }
 
         do {
@@ -796,12 +782,10 @@ final class QQMusicOnlineCoordinator {
                 seenFeedSongMids = Set(fetched.map(\.songMid))
                 await storeTracks(fetched, category: .recommendFeed, key: "default")
             }
-            report(nil)
         } catch {
             // A failure with something already on screen is not worth
             // replacing the list with an error; the banner says so instead.
-            report("推荐加载失败：\(noteFailure(error))", isError: servedFromCache)
-            Log.warning("[QQMusicOnline] recommend feed failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] recommend feed failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -815,7 +799,6 @@ final class QQMusicOnlineCoordinator {
     func extendRecommendFeed() async -> [QQMusicOnlineTrack] {
         guard !isExtendingFeed else { return [] }
         if let wait = backoffRemaining() {
-            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
             return []
         }
         isExtendingFeed = true
@@ -844,11 +827,9 @@ final class QQMusicOnlineCoordinator {
                 // remainder would replay tracks and drop others.
                 extendPlaybackOrder(with: fresh)
             }
-            report(nil)
             return fresh
         } catch {
-            report("加载更多失败：\(noteFailure(error))", isError: true)
-            Log.warning("[QQMusicOnline] feed paging failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] feed paging failed: \(noteFailure(error))", category: .import)
             return []
         }
     }
@@ -862,7 +843,6 @@ final class QQMusicOnlineCoordinator {
     func loadNewSongs(region: QQMusicNewSongRegion, force: Bool = false) async {
         if !force, newSongsRegion == region, !newSongs.isEmpty { return }
         if let wait = backoffRemaining() {
-            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
             return
         }
         isLoadingNewSongs = true
@@ -878,7 +858,6 @@ final class QQMusicOnlineCoordinator {
         if !force, let cached = await cachedTracks(.newSongs, key: region.rawValue, force: false, allowStale: true) {
             newSongs = cached
             servedFromCache = true
-            report(nil)
         }
 
         do {
@@ -888,10 +867,8 @@ final class QQMusicOnlineCoordinator {
                 newSongs = fetched
             }
             await storeTracks(fetched, category: .newSongs, key: region.rawValue)
-            report(nil)
         } catch {
-            report("新歌加载失败：\(noteFailure(error))", isError: servedFromCache)
-            Log.warning("[QQMusicOnline] new songs failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] new songs failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -904,7 +881,6 @@ final class QQMusicOnlineCoordinator {
             return
         }
         if let wait = backoffRemaining() {
-            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
             return
         }
         isSearchingPlaylists = true
@@ -912,17 +888,14 @@ final class QQMusicOnlineCoordinator {
         do {
             if let cached = await cachedPlaylists(.playlistSearch, key: trimmed, force: force) {
                 searchedPlaylists = cached
-                report(nil)
                 return
             }
             let fetched = try await helper.searchPlaylists(keyword: trimmed, limit: 30)
             await storePlaylists(fetched, category: .playlistSearch, key: trimmed)
             searchedPlaylists = fetched
-            report(nil)
         } catch {
             // Keep what is displayed; a failed search is not an empty result.
-            report("歌单搜索失败：\(noteFailure(error))", isError: true)
-            Log.warning("[QQMusicOnline] playlist search failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] playlist search failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -987,7 +960,6 @@ final class QQMusicOnlineCoordinator {
             // The whole list is now held in memory, so it is worth caching as
             // one payload — reopening the page should not refetch 471 tracks.
             await cacheLikedSongs(QQMusicLikedSongs(title: all.title, total: all.total, tracks: tracks), page: 1)
-            report(nil)
         } catch {
             // Paging by hand still works, so a failure here is not fatal.
             Log.warning("[QQMusicOnline] full liked-songs load failed: \(error)", category: .import)
@@ -1017,7 +989,6 @@ final class QQMusicOnlineCoordinator {
             likedSongsPage = 1
             userLibraryNeedsLogin = false
             servedFromCache = true
-            report(nil)
         }
 
         isLoadingLikedSongs = true
@@ -1061,17 +1032,13 @@ final class QQMusicOnlineCoordinator {
                 }
             }
             userLibraryNeedsLogin = false
-            report(nil)
         } catch {
             // A login requirement is a state to guide the user through, not a
             // generic failure.
             if Self.isLoginRequired(error) {
                 userLibraryNeedsLogin = true
-                report("需要登录后才能读取收藏", isError: true)
-            } else {
-                report("收藏加载失败：\(noteFailure(error))", isError: true)
             }
-            Log.warning("[QQMusicOnline] liked songs failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] liked songs failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -1090,7 +1057,7 @@ final class QQMusicOnlineCoordinator {
             await cacheLikedSongs(page, page: next)
             appendLiked(page.tracks, page: next, total: page.total)
         } catch {
-            report("加载更多失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] liked songs paging failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -1106,7 +1073,6 @@ final class QQMusicOnlineCoordinator {
         if fresh.isEmpty, !tracks.isEmpty {
             hasLoadedAllLikedSongs = true
         }
-        report(nil)
     }
 
     /// Apply a like or unlike to the loaded list without discarding it.
@@ -1201,7 +1167,6 @@ final class QQMusicOnlineCoordinator {
         if let cached = await cachedAlbums(force: force) {
             likedAlbums = cached
             servedFromCache = true
-            report(nil)
         }
 
         isLoadingLikedAlbums = true
@@ -1218,15 +1183,11 @@ final class QQMusicOnlineCoordinator {
                 likedAlbums = albums
             }
             userLibraryNeedsLogin = false
-            report(nil)
         } catch {
             if Self.isLoginRequired(error) {
                 userLibraryNeedsLogin = true
-                report("需要登录后才能读取收藏", isError: true)
-            } else {
-                report("收藏专辑加载失败：\(noteFailure(error))", isError: true)
             }
-            Log.warning("[QQMusicOnline] liked albums failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] liked albums failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -1258,7 +1219,6 @@ final class QQMusicOnlineCoordinator {
         if let cached = await cachedUserPlaylists(force: force) {
             userPlaylists = cached
             servedFromCache = true
-            report(nil)
         }
 
         isLoadingUserPlaylists = true
@@ -1280,15 +1240,11 @@ final class QQMusicOnlineCoordinator {
                 userPlaylists = playlists
             }
             userLibraryNeedsLogin = false
-            report(nil)
         } catch {
             if Self.isLoginRequired(error) {
                 userLibraryNeedsLogin = true
-                report("需要登录后才能读取歌单", isError: true)
-            } else {
-                report("我的歌单加载失败：\(noteFailure(error))", isError: true)
             }
-            Log.warning("[QQMusicOnline] user playlists failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] user playlists failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -1386,7 +1342,6 @@ final class QQMusicOnlineCoordinator {
         guard !isLoadingRadioStations else { return }
         if !force, !radioGroups.isEmpty { return }
         if let wait = backoffRemaining() {
-            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
             return
         }
         isLoadingRadioStations = true
@@ -1397,7 +1352,6 @@ final class QQMusicOnlineCoordinator {
                let cached = try? JSONDecoder().decode([QQMusicRadioGroup].self, from: data),
                !cached.isEmpty {
                 radioGroups = cached
-                report(nil)
                 return
             }
             let groups = try await helper.fetchRadioStations()
@@ -1405,10 +1359,8 @@ final class QQMusicOnlineCoordinator {
                 await store.storeCatalog(data, category: .radioStations, key: "default")
             }
             radioGroups = groups
-            report(nil)
         } catch {
-            report("电台加载失败：\(noteFailure(error))", isError: true)
-            Log.warning("[QQMusicOnline] radio stations failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] radio stations failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -1420,11 +1372,9 @@ final class QQMusicOnlineCoordinator {
         do {
             playlistTracks = try await helper.fetchRadioTracks(stationID: station.id, limit: 30, firstPlay: true)
             activeRadioStationID = station.id
-            report(nil)
         } catch {
             playlistTracks = []
-            report("电台曲目加载失败：\(noteFailure(error))", isError: true)
-            Log.warning("[QQMusicOnline] radio tracks failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] radio tracks failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -1443,7 +1393,7 @@ final class QQMusicOnlineCoordinator {
             guard !fresh.isEmpty else { return }
             playlistTracks.append(contentsOf: fresh)
         } catch {
-            report("加载更多失败：\(noteFailure(error))", isError: true)
+            Log.warning("[QQMusicOnline] radio paging failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -1463,7 +1413,6 @@ final class QQMusicOnlineCoordinator {
             return
         }
         if let wait = backoffRemaining() {
-            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
             return
         }
         isSearchingArtists = true
@@ -1475,7 +1424,6 @@ final class QQMusicOnlineCoordinator {
                let cached = try? JSONDecoder().decode([QQMusicOnlineArtist].self, from: data),
                !cached.isEmpty {
                 searchedArtists = cached
-                report(nil)
                 return
             }
             let artists = try await helper.searchArtists(keyword: trimmed, limit: 30)
@@ -1483,10 +1431,8 @@ final class QQMusicOnlineCoordinator {
                 await store.storeCatalog(data, category: .artistSearch, key: trimmed)
             }
             searchedArtists = artists
-            report(nil)
         } catch {
-            report("歌手搜索失败：\(noteFailure(error))", isError: true)
-            Log.warning("[QQMusicOnline] artist search failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] artist search failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -1636,7 +1582,10 @@ final class QQMusicOnlineCoordinator {
         do {
             let result = try await helper.setLiked(songMid: mid, liked: target)
             guard result.ok != false else {
-                report(target ? "收藏失败" : "取消收藏失败", isError: true)
+                // The heart stays as it was, which is the whole feedback: there is
+                // no notice surface for this any more (see the note at the top of
+                // the file).
+                Log.warning("[QQMusicOnline] like toggle rejected for \(mid)", category: .import)
                 return likedSongMids.contains(mid)
             }
             if target {
@@ -1644,7 +1593,6 @@ final class QQMusicOnlineCoordinator {
             } else {
                 likedSongMids.remove(mid)
             }
-            report(target ? "已收藏到「我喜欢」" : "已取消收藏")
             // Adjust the list in place rather than discarding it.
             //
             // This used to delete the cached page and clear the list, so the
@@ -1655,7 +1603,6 @@ final class QQMusicOnlineCoordinator {
             applyLikeChange(songMid: mid, liked: target)
             return target
         } catch {
-            report((error as? LocalizedError)?.errorDescription ?? "收藏操作失败", isError: true)
             Log.warning("[QQMusicOnline] like toggle failed: \(error)", category: .import)
             return likedSongMids.contains(mid)
         }
@@ -1736,7 +1683,6 @@ final class QQMusicOnlineCoordinator {
         guard !isLoadingToplists else { return }
         if !force, !toplistGroups.isEmpty { return }
         if let wait = backoffRemaining() {
-            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
             return
         }
         isLoadingToplists = true
@@ -1744,7 +1690,6 @@ final class QQMusicOnlineCoordinator {
         do {
             if let cached = await cachedToplists("default", force: force) {
                 toplistGroups = cached
-                report(nil)
                 return
             }
             let fetched = try await helper.fetchToplistCategories()
@@ -1753,10 +1698,8 @@ final class QQMusicOnlineCoordinator {
                 await store.storeCatalog(data, category: .toplists, key: "default")
             }
             toplistGroups = fetched
-            report(nil)
         } catch {
-            report("排行榜加载失败：\(noteFailure(error))", isError: true)
-            Log.warning("[QQMusicOnline] toplists failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] toplists failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -1768,7 +1711,6 @@ final class QQMusicOnlineCoordinator {
             return
         }
         if let wait = backoffRemaining() {
-            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
             return
         }
         isSearching = true
@@ -1776,17 +1718,14 @@ final class QQMusicOnlineCoordinator {
         do {
             if let cached = await cachedTracks(.search, key: trimmed, force: force) {
                 searchResults = cached
-                report(nil)
                 return
             }
             let fetched = try await helper.searchSongs(keyword: trimmed, limit: 30)
             await storeTracks(fetched, category: .search, key: trimmed)
             searchResults = fetched
-            report(nil)
         } catch {
             // Keep the previous results; the new query simply did not land.
-            report("搜索失败：\(noteFailure(error))", isError: true)
-            Log.warning("[QQMusicOnline] search failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] search failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -1905,7 +1844,6 @@ final class QQMusicOnlineCoordinator {
         fetch: @escaping () async throws -> [QQMusicOnlineTrack]
     ) async {
         if let wait = backoffRemaining() {
-            report("访问过于频繁，请 \(Int(wait.rounded(.up))) 秒后重试", isError: true)
             return
         }
         isLoadingPlaylistTracks = true
@@ -1914,7 +1852,6 @@ final class QQMusicOnlineCoordinator {
         do {
             if let cached = await cachedTracks(.playlistTracks, key: cacheKey, force: force) {
                 playlistTracks = cached
-                report(nil)
                 // Still ask the upstream for the total so paging can be offered;
                 // a cached first page must not hide the rest of the playlist.
                 await refreshOpenedPlaylistTotal()
@@ -1924,12 +1861,10 @@ final class QQMusicOnlineCoordinator {
             await storeTracks(fetched, category: .playlistTracks, key: cacheKey)
             playlistTracks = fetched
             await refreshOpenedPlaylistTotal()
-            report(nil)
         } catch {
             // Deliberately keep `playlistTracks` as-is. A failed open must not
             // erase a list the user is already looking at.
-            report("曲目加载失败：\(noteFailure(error))", isError: true)
-            Log.warning("[QQMusicOnline] playlist tracks failed: \(error)", category: .import)
+            Log.warning("[QQMusicOnline] playlist tracks failed: \(noteFailure(error))", category: .import)
         }
     }
 
@@ -1973,7 +1908,7 @@ final class QQMusicOnlineCoordinator {
     @discardableResult
     func playNext(_ track: QQMusicOnlineTrack) async -> Bool {
         guard canDownload, let playerViewModel else {
-            report("需要托管资料库才能播放", isError: true)
+            Log.warning("[QQMusicOnline] play-next needs a managed library", category: .import)
             return false
         }
         // "Play next" is a playback request, so the file it needs is automatic —
@@ -1988,10 +1923,9 @@ final class QQMusicOnlineCoordinator {
             return true
         }
         guard playerViewModel.insertTracksAfterCurrent([imported]) > 0 else {
-            report("这首已经在队列里了", isError: true)
+            Log.info("[QQMusicOnline] play-next: already in the queue", category: .import)
             return false
         }
-        report("已加入下一首：\(track.title)")
         return true
     }
 
@@ -2014,7 +1948,7 @@ final class QQMusicOnlineCoordinator {
         isRadio: Bool = false
     ) async {
         guard canDownload, let playerViewModel else {
-            report("资料库尚未就绪", isError: true)
+            Log.warning("[QQMusicOnline] playback needs a managed library", category: .import)
             return
         }
         let playable = tracks.filter { !$0.songMid.isEmpty }
@@ -2067,7 +2001,12 @@ final class QQMusicOnlineCoordinator {
         // above.
         playerViewModel.playTracks([first], startingAt: 0, startPolicy: .externalOrder)
         activePlayingSongMid = seed.songMid
-        report(playbackStatusMessage(for: seed))
+        Log.info(
+            "[QQMusicOnline] session started: \(seed.songMid), "
+                + "\(sessionIsRadio ? "radio" : (wantsShuffle ? "shuffled" : "in order"))"
+                + ", range=\(sessionAllSongMids.count)",
+            category: .import
+        )
 
         observeTrackChanges()
         observePlaybackModeChanges()
@@ -2184,22 +2123,6 @@ final class QQMusicOnlineCoordinator {
         // The order changed, so the queue no longer reflects it. Restart the
         // loop, which now pulls from the rebuilt order.
         beginPrefetch()
-    }
-
-    /// Message shown when a session starts, so the user knows the shuffle range.
-    /// Message shown when a session starts.
-    ///
-    /// States the shuffle range explicitly, because "shuffle" means different
-    /// things depending on what was played: shuffling inside 我喜欢 walks that
-    /// list, while a radio is already random and shuffling it changes nothing.
-    private func playbackStatusMessage(for track: QQMusicOnlineTrack) -> String {
-        if sessionIsRadio {
-            return "正在播放：\(track.title)（电台随机推荐）"
-        }
-        guard wantsShuffle, sessionAllSongMids.count > 1 else {
-            return "正在播放：\(track.title)"
-        }
-        return "正在播放：\(track.title)（在本列表 \(sessionAllSongMids.count) 首内随机）"
     }
 
     /// What makes a download "the user's own" rather than cache.
@@ -2525,15 +2448,17 @@ final class QQMusicOnlineCoordinator {
     /// again.
     func downloadOne(_ track: QQMusicOnlineTrack) async {
         guard canDownload else {
-            report("需要托管资料库才能下载", isError: true)
+            Log.warning("[QQMusicOnline] download needs a managed library", category: .import)
             return
         }
         guard !track.songMid.isEmpty else { return }
         let alreadyLocal = existingTrack(for: track.songMid) != nil
         if await materialize(track, origin: .userRequested) != nil {
-            // Already on disk from playback: this changed its label, and saying
-            // "downloaded" would misreport what happened.
-            report(alreadyLocal ? "已转为手动下载：\(track.title)" : "已下载：\(track.title)")
+            // Already on disk from playback: this only changed its label.
+            Log.info(
+                "[QQMusicOnline] \(track.songMid) \(alreadyLocal ? "promoted to a manual download" : "downloaded")",
+                category: .import
+            )
         }
     }
 
@@ -2553,7 +2478,7 @@ final class QQMusicOnlineCoordinator {
     @discardableResult
     func downloadSelected(_ tracks: [QQMusicOnlineTrack]) async -> (downloaded: Int, converted: Int, failed: Int) {
         guard canDownload else {
-            report("需要托管资料库才能下载", isError: true)
+            Log.warning("[QQMusicOnline] batch download needs a managed library", category: .import)
             return (0, 0, 0)
         }
         var downloaded = 0
@@ -2583,7 +2508,7 @@ final class QQMusicOnlineCoordinator {
     @discardableResult
     func downloadAndImport(_ track: QQMusicOnlineTrack) async -> [Track] {
         guard let importService, let paths else {
-            report("资料库尚未就绪", isError: true)
+            Log.warning("[QQMusicOnline] import needs a library session", category: .import)
             return []
         }
         guard !phase(for: track.songMid).isBusy else { return [] }
@@ -2608,9 +2533,10 @@ final class QQMusicOnlineCoordinator {
             }
         } catch {
             let message = noteFailure(error)
+            // The row draws this failure out of `downloadPhases`, which is where
+            // the user can act on it; the log carries the long form.
             downloadPhases[track.songMid] = .failed(message)
-            report("\(track.title)：\(message)", isError: true)
-            Log.warning("[QQMusicOnline] download failed \(track.songMid): \(error)", category: .import)
+            Log.warning("[QQMusicOnline] download failed \(track.songMid): \(message) — \(error)", category: .import)
             return []
         }
 
@@ -2628,7 +2554,7 @@ final class QQMusicOnlineCoordinator {
         )
         guard !imported.isEmpty else {
             downloadPhases[track.songMid] = .failed("导入失败")
-            report("\(track.title)：导入资料库失败", isError: true)
+            Log.warning("[QQMusicOnline] import failed for \(track.songMid)", category: .import)
             try? FileManager.default.removeItem(at: staging.audioURL)
             return []
         }

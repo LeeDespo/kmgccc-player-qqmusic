@@ -580,7 +580,12 @@ struct TrackRowView<MenuContent: View>: View {
     }
 }
 
-private nonisolated struct TrackRowSelectionBackgroundShape: Shape {
+/// Selection fill for one row, or for a run of them.
+///
+/// Not private: the online browse rows draw their own selection with this same
+/// shape, so a run of selected rows merges into one block there too rather than
+/// being re-derived.
+nonisolated struct TrackRowSelectionBackgroundShape: Shape {
     let continuity: TrackRowSelectionContinuity
     let cornerRadius: CGFloat
 

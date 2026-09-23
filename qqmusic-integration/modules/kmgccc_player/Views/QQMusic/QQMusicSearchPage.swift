@@ -117,6 +117,8 @@ struct QQMusicSearchPage: View {
             }
 
             VStack(spacing: 0) {
+                let resultSongMids = results.map(\.songMid)
+
                 LazyVStack(spacing: 0) {
                     ForEach(Array(results.enumerated()), id: \.element.id) { index, track in
                         QQMusicTrackRow(
@@ -126,6 +128,11 @@ struct QQMusicSearchPage: View {
                             onPlay: { play(track, at: index, in: results) },
                             isSelecting: selection.isSelecting,
                             isSelected: selection.isSelected(track.songMid),
+                            // Selection is a colour, and a run of selected rows
+                            // merges into one block — so a row needs to know
+                            // whether its neighbours are selected. Computed from
+                            // the displayed order, which is what is on screen.
+                            selectionContinuity: selection.continuity(at: index, in: resultSongMids),
                             onToggleSelection: { selection.toggle(track.songMid) },
                             isOwnedByUser: coordinator.isUserDownloaded(track.songMid)
                         )
