@@ -34,7 +34,6 @@ struct SidebarView: View {
     @Environment(\.colorScheme) private var currentColorScheme
     @ObservedObject private var updateCoordinator = UpdateCoordinator.shared
     /// `@Observable`, so it is read directly rather than through `@ObservedObject`.
-    private var qqMusicWindow = QQMusicWindowManager.shared
     @ObservedObject private var crashReportService = CrashReportService.shared
 
     @State private var showSettings = false

@@ -131,10 +131,6 @@ nonisolated struct QQMusicOnlineTrack: Codable, Equatable, Sendable, Identifiabl
     /// gated track, which is the signal the UI uses to grey a row out instead
     /// of letting the user tap into a guaranteed failure.
     var payPlay: Int?
-    var songType: Int?
-    var size320: Int?
-    var sizeFlac: Int?
-    var size128: Int?
     var singerMid: String?
     /// Album release date, present when the source supplied it (artist "最新"
     /// ordering attaches it).
@@ -192,15 +188,13 @@ nonisolated struct QQMusicStreamResolution: Codable, Equatable, Sendable {
     var url: String?
     var quality: String?
     var extensionName: String?
-    var filename: String?
-    var expiration: Int?
     var playable: Bool
     /// `paid_required` / `device_restricted` / `url_unavailable` when blocked.
     var restriction: String?
     var tried: [String]?
 
     enum CodingKeys: String, CodingKey {
-        case songMid, url, quality, filename, expiration, playable, restriction, tried
+        case songMid, url, quality, playable, restriction, tried
         case extensionName = "extension"
     }
 }
@@ -235,10 +229,7 @@ nonisolated struct QQMusicHelperInfo: Codable, Equatable, Sendable {
     var helperVersion: String
     var protocolVersion: Int
     var libraryVersion: String
-    var methods: [String]
     var credentialDir: Bool
-
-    func supports(_ method: String) -> Bool { methods.contains(method) }
 }
 
 /// An album in the user's favorites.
@@ -954,15 +945,6 @@ actor QQMusicHelperProcess {
         let rounds: Int
     }
 
-    private struct RadarParams: Encodable, Sendable {
-        let page: Int
-    }
-
-    private struct RecommendPlaylistsParams: Encodable, Sendable {
-        let page: Int
-        let limit: Int
-    }
-
     private struct SetLikedParams: Encodable, Sendable {
         let songMid: String
         let liked: Bool
@@ -1211,15 +1193,14 @@ actor QQMusicHelperProcess {
 
     // MARK: - Online catalog
 
-    /// Send one request and return the raw envelope.
+    /// Send one request, retrying once after a transient failure.
     ///
     /// The existing `request`/`requestDetail` helpers each re-implement the
     /// circuit-breaker, launch, dispatch and error-handling steps for their own
-    /// payload type. Online catalog calls return several different shapes, so
-    /// they share this one transport and pick their payload out of the envelope.
-    /// Send one request, retrying once after a transient failure.
+    /// payload type; online catalogue calls return several shapes, so they share
+    /// this transport and pick their payload out of the envelope.
     ///
-    /// A cold start or a process that exited between requests shows up as a
+    /// A cold start, or a process that exited between requests, shows up as a
     /// launch/termination error rather than an upstream problem; retrying once
     /// absorbs that instead of surfacing it as a failed page load. Cancellation
     /// is never retried — the caller asked to stop.
@@ -1322,19 +1303,6 @@ actor QQMusicHelperProcess {
             params: RecommendFeedParams(rounds: rounds)
         )
         return response.tracks ?? []
-    }
-
-    func fetchRadar(page: Int = 1) async throws -> [QQMusicOnlineTrack] {
-        let response = try await send(method: "fetch_radar", params: RadarParams(page: page))
-        return response.tracks ?? []
-    }
-
-    func fetchRecommendPlaylists(page: Int = 1, limit: Int = 20) async throws -> [QQMusicOnlinePlaylist] {
-        let response = try await sendRetrying(
-            method: "fetch_recommend_playlists",
-            params: RecommendPlaylistsParams(page: page, limit: limit)
-        )
-        return response.playlists ?? []
     }
 
     func fetchToplistCategories() async throws -> [QQMusicToplistGroup] {

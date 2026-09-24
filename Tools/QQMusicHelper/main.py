@@ -63,15 +63,12 @@ KNOWN_METHODS: tuple[str, ...] = (
     "import_cookies",
     "search_songs",
     "fetch_recommend_feed",
-    "fetch_radar",
-    "fetch_recommend_playlists",
     "fetch_toplist_categories",
     "fetch_playlist_tracks",
     "fetch_new_songs",
     "search_playlists",
     "fetch_album_tracks",
     "set_liked",
-    "is_liked",
     "fetch_radio_stations",
     "fetch_radio_tracks",
     "search_artists",
@@ -1051,38 +1048,6 @@ def _tracks_payload(items: Any) -> list[dict[str, Any]]:
     return [item for item in payloads if item.get("songMid")]
 
 
-def _songlist_payload(item: Any) -> dict[str, Any]:
-    """Normalize a playlist summary (recommend feed / user playlist)."""
-    if not isinstance(item, dict):
-        return {}
-    plain = _to_plain(item)
-    # Recommend feed nests `{Playlist: {basic: {...}}}`; other endpoints are flat.
-    playlist = _first_dict(plain, ("Playlist", "playlist"))
-    basic = _first_dict(playlist, ("basic",)) or playlist or plain
-    cover = _first_dict(basic, ("cover",))
-    creator = _first_dict(basic, ("creator", "user"))
-    diss_id = _first_int(basic, ("dissid", "tid", "id", "songlistId"))
-    return {
-        "source": SOURCE,
-        "id": diss_id,
-        "title": _first_text(basic, ("title", "name", "dissname")),
-        "coverURL": _sanitize_image_url(
-            _first_text(cover, ("medium_url", "mediumUrl", "big_url", "default_url"))
-            or _first_text(basic, ("picurl", "picUrl", "imgurl"))
-        ),
-        "creator": _first_text(creator, ("nick", "name", "nickname")),
-        "songCount": _first_int(basic, ("song_cnt", "songCnt", "songnum", "song_num")),
-        "playCount": _first_int(basic, ("play_cnt", "playCnt", "listennum")),
-    }
-
-
-def _quality_for_file_type(file_type: Any) -> str:
-    """Map an upstream `SongFileType` back to our ladder label."""
-    raw = str(getattr(file_type, "s", "") or "")
-    for label, prefix, _ext in QUALITY_LADDER:
-        if prefix == raw:
-            return label
-    return ""
 
 
 async def _get_song_urls(
@@ -1247,38 +1212,6 @@ async def fetch_recommend_feed(params: dict[str, Any]) -> list[dict[str, Any]]:
         if len(songs) >= 20:
             break
     return songs
-
-
-async def fetch_radar(params: dict[str, Any]) -> list[dict[str, Any]]:
-    """Personal radar ("雷达推荐"). Requires login upstream; empty otherwise."""
-    _require_dependency()
-    page = max(1, _first_int(params, ("page",)) or 1)
-    plain = _to_plain(
-        await _execute_client_request(
-            lambda client: client.recommend.get_radar_recommend(page=page)
-        )
-    )
-    return _tracks_payload(_items_from_search_result(plain, ("songs", "vecSong", "VecSongs")))
-
-
-async def fetch_recommend_playlists(params: dict[str, Any]) -> list[dict[str, Any]]:
-    """Recommended playlists ("歌单推荐"), cursor-paginated by page."""
-    _require_dependency()
-    page = max(1, _first_int(params, ("page",)) or 1)
-    num = max(1, min(_first_int(params, ("limit",)) or 20, 50))
-    plain = _to_plain(
-        await _execute_client_request(
-            lambda client: client.recommend.get_recommend_songlist(page=page, num=num)
-        )
-    )
-    items = _items_from_search_result(plain, ("songlists", "List", "list"))
-    if not items:
-        # Some upstream shapes bury the feed one level deeper.
-        items = _items_from_search_result(
-            _first_dict(plain, ("data", "feed")), ("songlists", "List", "list")
-        )
-    payloads = [_songlist_payload(item) for item in items]
-    return [item for item in payloads if item.get("id")]
 
 
 async def fetch_toplist_categories(params: dict[str, Any]) -> list[dict[str, Any]]:
@@ -1847,50 +1780,6 @@ async def set_liked(params: dict[str, Any]) -> dict[str, Any]:
     return {"songId": song_id, "liked": liked, "ok": ok}
 
 
-async def is_liked(params: dict[str, Any]) -> dict[str, Any]:
-    """Whether a track is in "我喜欢", by scanning the folder.
-
-    There is no per-track membership endpoint on the web channel, so this reads
-    the folder and looks for the id. Callers should prefer checking against a
-    list they already hold.
-    """
-    _require_dependency()
-    song_id = _first_int(params, ("songId",))
-    song_mid = str(params.get("songMid") or "").strip()
-    if not song_id:
-        if not song_mid:
-            raise ValueError("songId or songMid is required")
-        song_id = await _song_id_for_mid(song_mid)
-    plain = _to_plain(
-        await _execute_client_request(
-            lambda client: client.song._build_cgi(
-                "music.srfDissInfo.DissInfo",
-                "CgiGetDiss",
-                {
-                    "disstid": 0,
-                    "dirid": LIKED_SONGS_DIRID,
-                    "tag": True,
-                    "song_begin": 0,
-                    "song_num": 100,
-                    "userinfo": True,
-                    "orderlist": True,
-                },
-            )
-        )
-    )
-    tracks = _tracks_payload(_items_from_search_result(plain, ("songlist", "songs")))
-    return {"songId": song_id, "liked": any(t.get("songId") == song_id for t in tracks)}
-
-
-# MARK: - Radio stations ("电台")
-#
-# Discovered by reading the radio page's own bundle rather than guessing method
-# names (`pf.radiosvr`, not `music.radioProxy`). The upstream site special-cases
-# id 99 to a different method, but `GetRadiosonglist` was measured to work for
-# every station tried (99/101/567/686/673/270/127/167), so no id is hardcoded
-# here — ids only ever come from `GetRadiolist`.
-
-
 async def fetch_radio_stations(params: dict[str, Any]) -> list[dict[str, Any]]:
     """Grouped radio station list ("电台")."""
     _require_dependency()
@@ -2139,9 +2028,6 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     elif method == "fetch_recommend_feed":
         tracks = await fetch_recommend_feed(params)
         return _tracks_response(request_id, method, tracks, started_at)
-    elif method == "fetch_radar":
-        tracks = await fetch_radar(params)
-        return _tracks_response(request_id, method, tracks, started_at)
     elif method == "fetch_playlist_tracks":
         tracks = await fetch_playlist_tracks(params)
         return _tracks_response(request_id, method, tracks, started_at)
@@ -2151,9 +2037,6 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
     elif method == "set_liked":
         result = await set_liked(params)
         _log(f"response id={request_id} method={method} liked={result.get('liked')} ok={result.get('ok')}")
-        return {"id": request_id, "ok": True, "like": result}
-    elif method == "is_liked":
-        result = await is_liked(params)
         return {"id": request_id, "ok": True, "like": result}
     elif method == "fetch_radio_stations":
         groups = await fetch_radio_stations(params)
@@ -2208,14 +2091,6 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
         return {"id": request_id, "ok": True, "playlists": playlists}
     elif method == "search_playlists":
         playlists = await search_playlists(params)
-        duration_ms = int((time.monotonic() - started_at) * 1000)
-        _log(
-            f"response id={request_id} method={method} "
-            f"playlists={len(playlists)} durationMs={duration_ms}"
-        )
-        return {"id": request_id, "ok": True, "playlists": playlists}
-    elif method == "fetch_recommend_playlists":
-        playlists = await fetch_recommend_playlists(params)
         duration_ms = int((time.monotonic() - started_at) * 1000)
         _log(
             f"response id={request_id} method={method} "

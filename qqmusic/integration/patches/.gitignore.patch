@@ -1,0 +1,26 @@
+diff --git a/.gitignore b/.gitignore
+index c3238624..3426ee52 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -102,3 +102,21 @@ superteam/
+ 
+ # Repo-root reference screenshots (kept locally, not published)
+ /screenshots/
++
++# Everything the QQ Music feature needs beyond the app sources lives in one
++# place — see qqmusic/README.md:
++#   qqmusic/integration/   patch package (modules/ + patches/ + scripts)
++#   qqmusic/README.md      what the feature is, how it is built and replayed
++#
++# Local-only working copies, rebuilt from the recorded base commit:
++#   upstream/  pristine upstream source, the reference "unmodified app"
++#   testarea/  disposable area where the patch package is replayed and built
++/upstream/
++/testarea/
++# The maintenance guide describes this machine's flow, not the deliverable.
++/qqmusic/integration/GUIDE.md
++
++# Local development notes for the QQ Music source (design docs, plans, API notes,
++# logs). Working notes, kept out of the published source; they live beside the
++# plan documents they belong with rather than scattered at the repo root.
++/docs/qqmusic/

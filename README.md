@@ -16,6 +16,83 @@
 
 作为喜欢音乐，绘画多年的枸，我想为音乐播放器添加一份随性与独特的美感。感谢你的使用和喜欢！
 
+## 本仓库是什么
+
+这是 [kmgccc_player](https://github.com/kmgcc/kmgccc_player) 的一个改版（folk）：保留原应用的全部本地能力，**在上面加装 QQ 音乐在线音源**——在线浏览、搜索、试听、下载入库，以及围绕它的缓存与批量下载。
+
+玩法与原应用一致：**在线歌曲先下载、再走原有导入管线入库、最后交给原有播放引擎播放**。因此无缝播放、原生歌词、频谱、Now Playing、多选排序全部自动继承，播放引擎一行没改。切歌不卡是因为协调器在你听当前这首时已经把后面的下载好了。
+
+- **浏览器式的页面**：落地页的歌单/专辑/排行榜/电台推荐，详情页是原应用那套 220pt 头部 + 曲目行；返回/前进、搜索、刷新、批量下载都在**窗口工具栏**里，和原应用同一层玻璃、同一套交互。
+- **歌曲列表照原应用**：整行单击播放，行尾是「更多」菜单（播放 / 下一首播放 / 查看详情 / 查看艺人 / 查看专辑）；选择下载时靠**整行变色**表示选中，连续选中连成一块。
+- **缓存分两类**：歌单、推荐、排行榜、浏览态封面缓存在资料库的 `QQMusic/` 目录（与应用自身的 `Cache/` 平级且分开）；歌词不单缓存——下载时取一次，随导入写进曲库。
+- **歌曲缓存只约束自动下载的部分**：只有为了播放而预取的才算缓存、可回收；你自己点过下载的属于曲库，永不回收。
+
+功能细节、设计取舍与全部踩过的坑见 **`qqmusic/README.md`** 与 `AGENTS.md`。
+
+## 目录结构
+
+上游的文件保持原样（补丁包的 `patches/` 会明确记录我们改过哪几处），本功能自己的东西集中在一处：
+
+```
+kmgccc_player/            应用源码：上游 + 本功能的接入点改动（就地）
+kmgccc_playerTests/       测试（含本功能自己的测试）
+qqmusic/                  ← 本功能除源码之外的一切
+  integration/            补丁包：modules/（新文件）+ patches/（上游 diff）+ 脚本
+  README.md               功能说明、目录划分、维护指南
+upstream/                 未改动的上游源码，冻结参照（不进仓库）
+testarea/                 每次从 upstream/ 重建的测试区（不进仓库）
+docs/qqmusic/             设计、方案与实现记录（不进仓库）
+```
+
+## 从源码构建（本仓库）
+
+```sh
+./scripts/bootstrap.sh                      # 构建外部组件（含 QQ 音乐 helper）
+./scripts/build_and_run.sh                  # 构建并运行
+```
+
+本机注意：工程里钉的是原作者的签名 team，你需要用**自己的** team id 覆盖：
+
+```sh
+DEVELOPMENT_TEAM=<你的 teamID> ./scripts/build_and_run.sh
+```
+
+helper 重建后要同步到外部目录才会被优先使用（`test-cycle.sh` 会自动做）：
+
+```sh
+cp -R .build/products/qqmusic-helper/* \
+  ~/Library/Application\ Support/kmgccc.player/QQMusicHelper/
+```
+
+## 打补丁（把本功能植入任意上游版本）
+
+补丁包是功能的**可重放形式**：把它应用到一个未改动的上游源码上，就得到完整功能。
+所以「本仓库 = 上游 + 一份可审计的变更集」，上游更新时把功能搬过去即可，不必手工重做。
+
+```sh
+cp -R qqmusic/integration /path/to/kmgccc_player/
+cd /path/to/kmgccc_player
+./qqmusic/integration/apply.sh --repo . --verify
+./scripts/bootstrap.sh --component qqmusic-helper
+./scripts/build_and_run.sh
+```
+
+改完功能之后同步补丁包，并在**干净基线**上跑完整循环（重建 → 重放 → 构建 → 测试 → 启动）：
+
+```sh
+./qqmusic/integration/sync.sh          # 从开发树重新生成 modules/ + patches/
+./qqmusic/integration/test-cycle.sh --sync
+```
+
+补丁应用失败是**预期行为**：表示上游动了同一处，需要人工移植意图。步骤见 `qqmusic/integration/README.md`。
+
+## 参考的项目
+
+本功能建立在原应用之上，另外用到：
+
+- **[qqmusic-api-python](https://github.com/L-1124/QQMusicApi)** — QQ 音乐接口的 Python 实现，helper 的目录、排行、电台、歌手、歌词与取流都走它
+- **[kmgccc_player](https://github.com/kmgcc/kmgccc_player)**（上游）—— 播放器本体；它的 README 下文列出的 AMLL、LDDC、SACAD、MediaRemote Adapter、ncmdump 等组件同样构成本项目的基础
+
 ## 主要功能
 
 - **现代本地曲库**：支持多资料库独立管理与原位目录引用，无需移动或复制音频文件即可直接映射既有文件夹，并提供专辑、艺人与文件夹层级平行的双轴浏览体验。
