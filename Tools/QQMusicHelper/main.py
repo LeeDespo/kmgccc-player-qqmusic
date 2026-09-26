@@ -49,7 +49,7 @@ MAX_IMAGE_SIZE = 800
 # Bumped when the request/response shapes below change incompatibly. The host
 # refuses to talk to a helper whose protocol major it does not understand, so a
 # newer helper build cannot silently mis-parse.
-HELPER_VERSION = "2.0.1"
+HELPER_VERSION = "2.1.0"
 PROTOCOL_VERSION = 2
 
 # Advertised by `get_helper_info` and checked by the dispatcher, so a host can
@@ -602,6 +602,30 @@ def _singer_mid(value: Any) -> str:
     return _first_text(value, ("singerMID", "singerMid", "mid"))
 
 
+def _singers(value: Any) -> list[dict[str, str]]:
+    """Every credited singer, as `{"mid", "name"}`.
+
+    `_singer_mid` returns the first one, which is all a single "open the artist"
+    jump needs — but a duet has several, and offering the first silently picked
+    one of them for the user. The list keeps the mids and names together so the
+    app can ask.
+    """
+    if not isinstance(value, dict):
+        return []
+    singers = value.get("singer") or value.get("singers") or value.get("singer_list")
+    if not isinstance(singers, list):
+        return []
+    result: list[dict[str, str]] = []
+    for singer in singers:
+        if not isinstance(singer, dict):
+            continue
+        mid = _first_text(singer, ("mid", "singerMID", "singerMid"))
+        name = _first_text(singer, ("name", "singerName", "title"))
+        if mid or name:
+            result.append({"mid": mid, "name": name})
+    return result
+
+
 def _album_mid(value: Any) -> str:
     album = _first_dict(value, ("album", "albumInfo"))
     mid = _first_text(album, ("mid", "albumMID", "albumMid"))
@@ -1037,6 +1061,7 @@ def _track_payload(item: Any) -> dict[str, Any]:
         "sizeFlac": _first_int(file_info, ("size_flac", "sizeFlac")),
         "size128": _first_int(file_info, ("size_128mp3", "size128mp3")),
         "singerMid": _singer_mid(track),
+        "singers": _singers(track),
         "albumName": _album_name(album) or _album_name(track),
     }
 

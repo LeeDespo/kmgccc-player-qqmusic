@@ -1,5 +1,5 @@
 diff --git a/Tools/QQMusicHelper/main.py b/Tools/QQMusicHelper/main.py
-index 318e53ab..7fb8e5f0 100644
+index 318e53ab..5cc659be 100644
 --- a/Tools/QQMusicHelper/main.py
 +++ b/Tools/QQMusicHelper/main.py
 @@ -1,5 +1,5 @@
@@ -37,7 +37,7 @@ index 318e53ab..7fb8e5f0 100644
 +# Bumped when the request/response shapes below change incompatibly. The host
 +# refuses to talk to a helper whose protocol major it does not understand, so a
 +# newer helper build cannot silently mis-parse.
-+HELPER_VERSION = "2.0.1"
++HELPER_VERSION = "2.1.0"
 +PROTOCOL_VERSION = 2
 +
 +# Advertised by `get_helper_info` and checked by the dispatcher, so a host can
@@ -297,7 +297,38 @@ index 318e53ab..7fb8e5f0 100644
  def _dependency_diagnostics() -> str:
      parts = [f"python={sys.version.split()[0]}", f"executable={sys.executable}"]
      try:
-@@ -389,7 +650,7 @@ async def _search_by_type(
+@@ -341,6 +602,30 @@ def _singer_mid(value: Any) -> str:
+     return _first_text(value, ("singerMID", "singerMid", "mid"))
+ 
+ 
++def _singers(value: Any) -> list[dict[str, str]]:
++    """Every credited singer, as `{"mid", "name"}`.
++
++    `_singer_mid` returns the first one, which is all a single "open the artist"
++    jump needs — but a duet has several, and offering the first silently picked
++    one of them for the user. The list keeps the mids and names together so the
++    app can ask.
++    """
++    if not isinstance(value, dict):
++        return []
++    singers = value.get("singer") or value.get("singers") or value.get("singer_list")
++    if not isinstance(singers, list):
++        return []
++    result: list[dict[str, str]] = []
++    for singer in singers:
++        if not isinstance(singer, dict):
++            continue
++        mid = _first_text(singer, ("mid", "singerMID", "singerMid"))
++        name = _first_text(singer, ("name", "singerName", "title"))
++        if mid or name:
++            result.append({"mid": mid, "name": name})
++    return result
++
++
+ def _album_mid(value: Any) -> str:
+     album = _first_dict(value, ("album", "albumInfo"))
+     mid = _first_text(album, ("mid", "albumMID", "albumMid"))
+@@ -389,7 +674,7 @@ async def _search_by_type(
  ) -> list[dict[str, Any]]:
      if Client is None:
          return []
@@ -306,7 +337,7 @@ index 318e53ab..7fb8e5f0 100644
          result = await client.execute(
              client.search.search_by_type(
                  keyword=keyword,
-@@ -405,7 +666,7 @@ async def _search_by_type(
+@@ -405,7 +690,7 @@ async def _search_by_type(
  async def _execute_client_request(request_builder: Any) -> Any:
      if Client is None:
          return {}
@@ -315,7 +346,7 @@ index 318e53ab..7fb8e5f0 100644
          result = await client.execute(request_builder(client))
      return _to_plain(result)
  
-@@ -730,6 +991,998 @@ async def fetch_song_detail(params: dict[str, Any]) -> dict[str, Any]:
+@@ -730,6 +1015,999 @@ async def fetch_song_detail(params: dict[str, Any]) -> dict[str, Any]:
      }
  
  
@@ -365,6 +396,7 @@ index 318e53ab..7fb8e5f0 100644
 +        "sizeFlac": _first_int(file_info, ("size_flac", "sizeFlac")),
 +        "size128": _first_int(file_info, ("size_128mp3", "size128mp3")),
 +        "singerMid": _singer_mid(track),
++        "singers": _singers(track),
 +        "albumName": _album_name(album) or _album_name(track),
 +    }
 +
@@ -1314,7 +1346,7 @@ index 318e53ab..7fb8e5f0 100644
  async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
      request_id = request.get("id")
      method = request.get("method")
-@@ -769,6 +2022,124 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
+@@ -769,6 +2047,124 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
              f"detail=1 confidence={float(detail.get('confidence') or 0):.2f} durationMs={duration_ms}"
          )
          return {"id": request_id, "ok": True, "detail": detail}
@@ -1439,7 +1471,7 @@ index 318e53ab..7fb8e5f0 100644
      else:
          raise ValueError(f"unsupported method: {method}")
  
-@@ -781,29 +2152,61 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
+@@ -781,29 +2177,61 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
      return {"id": request_id, "ok": True, "candidates": candidates}
  
  

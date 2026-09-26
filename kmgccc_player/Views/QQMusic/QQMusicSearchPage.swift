@@ -24,14 +24,11 @@ struct QQMusicSearchPage: View {
     /// the toolbar field also writes to, so the selector cannot drift from the
     /// results on screen.
     let kind: QQMusicSearchKind
-    /// Center-column insets: the width of the sidebar / lyrics panes.
-    /// Every alignment below adds the library's own content padding to
-    /// these, which is how a full-window page lines up with a page that
-    /// lives inside the center pane.
-    let leftPad: CGFloat
-    let rightPad: CGFloat
     let mode: HomeLayoutMode
 
+    /// The columns this page aligns to. Supplied by the canvas, so no page
+    /// can be drawn without it (see `QQMusicColumnInsetsKey`).
+    @Environment(\.qqMusicColumnInsets) private var insets
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
     @Environment(QQMusicNavigation.self) private var navigation
     @Environment(QQMusicSelectionModel.self) private var selection
@@ -65,8 +62,8 @@ struct QQMusicSearchPage: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.leading, leftPad + 24)
-                .padding(.trailing, rightPad + 24)
+        .padding(.leading, insets.left + 24)
+                .padding(.trailing, insets.right + 24)
         .padding(.top, 4)
     }
 
@@ -110,16 +107,14 @@ struct QQMusicSearchPage: View {
                 placeholderSystemImage: "magnifyingglass",
                 onPlay: { playAll(results) },
                 canPlay: !results.isEmpty,
-                columnLeftPad: leftPad,
-                columnRightPad: rightPad
+                columnLeftPad: insets.left,
+                columnRightPad: insets.right
             ) {
                 EmptyView()
             }
 
             QQMusicTrackListBody(
                 tracks: results,
-                columnLeftPad: leftPad + 24,
-                columnRightPad: rightPad + 24,
                 onPlay: { displayed, index in play(displayed, at: index) }
             )
         }
@@ -147,8 +142,6 @@ struct QQMusicSearchPage: View {
                             artworkURL: artist.coverURL,
                             circularArtwork: true,
                             placeholderSystemImage: "person.fill",
-                            columnLeftPad: leftPad + 24,
-                            columnRightPad: rightPad + 24,
                             onOpen: { navigation.push(.artist(QQMusicArtistRef(artist))) }
                         ) {
                             AnyView(
@@ -187,8 +180,6 @@ struct QQMusicSearchPage: View {
                             subtitle: playlist.creator,
                             meta: playlist.songCount.map { "\($0) 首" },
                             artworkURL: playlist.coverURL,
-                            columnLeftPad: leftPad + 24,
-                            columnRightPad: rightPad + 24,
                             onOpen: {
                                 navigation.push(.playlist(id: playlist.id, title: playlist.title))
                             }

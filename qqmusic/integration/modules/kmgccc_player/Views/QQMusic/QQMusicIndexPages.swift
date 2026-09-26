@@ -21,14 +21,11 @@ import SwiftUI
 
 struct QQMusicPlaylistIndexPage: View {
 
-    /// Center-column insets: the width of the sidebar / lyrics panes.
-    /// Every alignment below adds the library's own content padding to
-    /// these, which is how a full-window page lines up with a page that
-    /// lives inside the center pane.
-    let leftPad: CGFloat
-    let rightPad: CGFloat
     let mode: HomeLayoutMode
 
+    /// The columns this page aligns to. Supplied by the canvas, so no page
+    /// can be drawn without it (see `QQMusicColumnInsetsKey`).
+    @Environment(\.qqMusicColumnInsets) private var insets
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
     @Environment(QQMusicNavigation.self) private var navigation
 
@@ -36,7 +33,7 @@ struct QQMusicPlaylistIndexPage: View {
     private var totalCount: Int { coordinator.userPlaylists.count + 1 }
 
     var body: some View {
-        indexHeader(title: "收藏歌单", count: totalCount, leftPad: leftPad, rightPad: rightPad)
+        indexHeader(title: "收藏歌单", count: totalCount, leftPad: insets.left, rightPad: insets.right)
 
         list
     }
@@ -54,8 +51,8 @@ struct QQMusicPlaylistIndexPage: View {
                         : nil,
                     artworkURL: nil,
                     placeholderSystemImage: "heart.fill",
-                    columnLeftPad: leftPad + 24,
-                    columnRightPad: rightPad + 24,
+                    columnLeftPad: insets.left + 24,
+                    columnRightPad: insets.right + 24,
                     onOpen: { navigation.push(.likedSongs) }
                 ) {
                     AnyView(
@@ -73,8 +70,8 @@ struct QQMusicPlaylistIndexPage: View {
                         subtitle: playlist.creator,
                         meta: metaText(playlist),
                         artworkURL: playlist.coverURL,
-                        columnLeftPad: leftPad + 24,
-                        columnRightPad: rightPad + 24,
+                        columnLeftPad: insets.left + 24,
+                        columnRightPad: insets.right + 24,
                         onOpen: {
                             navigation.push(.playlist(id: playlist.id, title: playlist.title))
                         }
@@ -123,19 +120,15 @@ struct QQMusicPlaylistIndexPage: View {
 
 struct QQMusicAlbumIndexPage: View {
 
-    /// Center-column insets: the width of the sidebar / lyrics panes.
-    /// Every alignment below adds the library's own content padding to
-    /// these, which is how a full-window page lines up with a page that
-    /// lives inside the center pane.
-    let leftPad: CGFloat
-    let rightPad: CGFloat
     let mode: HomeLayoutMode
 
+    /// The columns this page aligns to. Supplied by the canvas.
+    @Environment(\.qqMusicColumnInsets) private var insets
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
     @Environment(QQMusicNavigation.self) private var navigation
 
     var body: some View {
-        indexHeader(title: "收藏专辑", count: coordinator.likedAlbums.count, leftPad: leftPad, rightPad: rightPad)
+        indexHeader(title: "收藏专辑", count: coordinator.likedAlbums.count, leftPad: insets.left, rightPad: insets.right)
 
         if coordinator.likedAlbums.isEmpty {
             if coordinator.isLoadingLikedAlbums {
@@ -160,8 +153,8 @@ struct QQMusicAlbumIndexPage: View {
                         meta: album.releaseDate,
                         artworkURL: album.coverURL,
                         placeholderSystemImage: "opticaldisc",
-                        columnLeftPad: leftPad + 24,
-                        columnRightPad: rightPad + 24,
+                        columnLeftPad: insets.left + 24,
+                        columnRightPad: insets.right + 24,
                         onOpen: {
                             navigation.push(.album(id: album.id, title: album.title))
                         }
@@ -186,20 +179,16 @@ struct QQMusicAlbumIndexPage: View {
 
 struct QQMusicToplistIndexPage: View {
 
-    /// Center-column insets: the width of the sidebar / lyrics panes.
-    /// Every alignment below adds the library's own content padding to
-    /// these, which is how a full-window page lines up with a page that
-    /// lives inside the center pane.
-    let leftPad: CGFloat
-    let rightPad: CGFloat
     let mode: HomeLayoutMode
 
+    /// The columns this page aligns to. Supplied by the canvas.
+    @Environment(\.qqMusicColumnInsets) private var insets
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
     @Environment(QQMusicNavigation.self) private var navigation
     @EnvironmentObject private var themeStore: ThemeStore
 
     var body: some View {
-        indexHeader(title: "排行榜", count: coordinator.toplistGroups.flatMap(\.toplists).count, leftPad: leftPad, rightPad: rightPad)
+        indexHeader(title: "排行榜", count: coordinator.toplistGroups.flatMap(\.toplists).count, leftPad: insets.left, rightPad: insets.right)
 
         if coordinator.toplistGroups.isEmpty {
             if coordinator.isLoadingToplists {
@@ -222,7 +211,7 @@ struct QQMusicToplistIndexPage: View {
                 Text(group.name)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(themeStore.appForegroundPalette.secondaryColor)
-                    .padding(.leading, leftPad + 24)
+                    .padding(.leading, insets.left + 24)
                     .padding(.top, 16)
                     .padding(.bottom, 4)
 
@@ -234,8 +223,8 @@ struct QQMusicToplistIndexPage: View {
                             meta: nil,
                             artworkURL: nil,
                             placeholderSystemImage: "chart.bar.fill",
-                            columnLeftPad: leftPad + 24,
-                            columnRightPad: rightPad + 24,
+                            columnLeftPad: insets.left + 24,
+                            columnRightPad: insets.right + 24,
                             onOpen: {
                                 navigation.push(.toplist(id: toplist.id, title: toplist.name))
                             }
@@ -261,20 +250,16 @@ struct QQMusicToplistIndexPage: View {
 
 struct QQMusicRadioIndexPage: View {
 
-    /// Center-column insets: the width of the sidebar / lyrics panes.
-    /// Every alignment below adds the library's own content padding to
-    /// these, which is how a full-window page lines up with a page that
-    /// lives inside the center pane.
-    let leftPad: CGFloat
-    let rightPad: CGFloat
     let mode: HomeLayoutMode
 
+    /// The columns this page aligns to. Supplied by the canvas.
+    @Environment(\.qqMusicColumnInsets) private var insets
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
     @Environment(QQMusicNavigation.self) private var navigation
     @EnvironmentObject private var themeStore: ThemeStore
 
     var body: some View {
-        indexHeader(title: "电台", count: coordinator.radioGroups.flatMap(\.stations).count, leftPad: leftPad, rightPad: rightPad)
+        indexHeader(title: "电台", count: coordinator.radioGroups.flatMap(\.stations).count, leftPad: insets.left, rightPad: insets.right)
 
         if coordinator.radioGroups.isEmpty {
             if coordinator.isLoadingRadioStations {
@@ -293,7 +278,7 @@ struct QQMusicRadioIndexPage: View {
                 Text(group.name)
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(themeStore.appForegroundPalette.secondaryColor)
-                    .padding(.leading, leftPad + 24)
+                    .padding(.leading, insets.left + 24)
                     .padding(.top, 16)
                     .padding(.bottom, 4)
 
@@ -305,8 +290,8 @@ struct QQMusicRadioIndexPage: View {
                             meta: station.listenerCount.map { Self.listenerText($0) },
                             artworkURL: station.coverURL,
                             placeholderSystemImage: "dot.radiowaves.left.and.right",
-                            columnLeftPad: leftPad + 24,
-                            columnRightPad: rightPad + 24,
+                            columnLeftPad: insets.left + 24,
+                            columnRightPad: insets.right + 24,
                             onOpen: {
                                 navigation.push(.radioStation(id: station.id, title: station.title))
                             }

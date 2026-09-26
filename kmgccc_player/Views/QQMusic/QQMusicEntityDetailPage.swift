@@ -21,14 +21,11 @@ import SwiftUI
 struct QQMusicEntityDetailPage: View {
 
     let page: QQMusicPage
-    /// Center-column insets: the width of the sidebar / lyrics panes.
-    /// Every alignment below adds the library's own content padding to
-    /// these, which is how a full-window page lines up with a page that
-    /// lives inside the center pane.
-    let leftPad: CGFloat
-    let rightPad: CGFloat
     let mode: HomeLayoutMode
 
+    /// The columns this page aligns to. Supplied by the canvas, so no page
+    /// can be drawn without it (see `QQMusicColumnInsetsKey`).
+    @Environment(\.qqMusicColumnInsets) private var insets
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
     @Environment(QQMusicNavigation.self) private var navigation
     @Environment(QQMusicSelectionModel.self) private var selection
@@ -52,8 +49,8 @@ struct QQMusicEntityDetailPage: View {
             description: nil,
             onPlay: tracks.isEmpty ? nil : { playAll() },
             canPlay: !tracks.isEmpty,
-            columnLeftPad: leftPad,
-            columnRightPad: rightPad
+            columnLeftPad: insets.left,
+            columnRightPad: insets.right
         ) {
             // Nothing beside 播放: the batch-download control lives in the page's
             // top-right corner, so the header keeps the single primary action.
@@ -161,8 +158,6 @@ struct QQMusicEntityDetailPage: View {
                 // does. A station is endless, so batch download is not offered
                 // there — the toolbar control does not offer it either.
                 showsRank: isToplist,
-                columnLeftPad: leftPad + 24,
-                columnRightPad: rightPad + 24,
                 allowsSelection: !isStation,
                 onReachEnd: { loadMoreIfNeeded() },
                 onPlay: { displayed, index in play(displayed, at: index) }

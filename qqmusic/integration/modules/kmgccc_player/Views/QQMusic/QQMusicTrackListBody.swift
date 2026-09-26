@@ -24,11 +24,6 @@ struct QQMusicTrackListBody: View {
     let tracks: [QQMusicOnlineTrack]
     /// Rankings show their position, the way the upstream index does.
     var showsRank: Bool = false
-    /// Distance from the *window* edge to the list's content box. The library's
-    /// lists pad themselves by 24 inside the center pane, so callers pass
-    /// `columnPad + 24`.
-    let columnLeftPad: CGFloat
-    let columnRightPad: CGFloat
     /// Whether rows may be selected for batch download. An artist's song list and
     /// a station are endless, so a selection there could not mean "all".
     var allowsSelection: Bool = true
@@ -40,6 +35,10 @@ struct QQMusicTrackListBody: View {
     /// continue through the list from where the user clicked.
     let onPlay: (_ displayedTracks: [QQMusicOnlineTrack], _ index: Int) -> Void
 
+    /// The columns the list aligns to, plus the library's own 24pt content
+    /// padding — read here rather than passed in, so a list's rows and the
+    /// header above them cannot disagree about where the column starts.
+    @Environment(\.qqMusicColumnInsets) private var insets
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
     @Environment(QQMusicSelectionModel.self) private var selection
     @EnvironmentObject private var themeStore: ThemeStore
@@ -54,8 +53,8 @@ struct QQMusicTrackListBody: View {
                     QQMusicTrackRow(
                         track: track,
                         rank: showsRank ? index + 1 : nil,
-                        columnLeftPad: columnLeftPad,
-                        columnRightPad: columnRightPad,
+                        columnLeftPad: insets.left + Self.contentPadding,
+                        columnRightPad: insets.right + Self.contentPadding,
                         onPlay: { onPlay(displayed, index) },
                         isSelecting: isSelecting,
                         isSelected: selection.isSelected(track.songMid),
@@ -77,6 +76,9 @@ struct QQMusicTrackListBody: View {
             Color.clear.frame(height: QQMusicPageCanvas<EmptyView>.listBottomInset)
         }
     }
+
+    /// The library's own content padding inside the center pane.
+    private static let contentPadding: CGFloat = 24
 
     private var isSelecting: Bool { allowsSelection && selection.isSelecting }
 

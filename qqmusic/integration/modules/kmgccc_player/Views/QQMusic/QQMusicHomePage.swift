@@ -26,15 +26,16 @@ struct QQMusicHomePage: View {
     /// computed pair below does the same, which is why a rail's first card lines
     /// up with the section title above it while the rail itself runs the full
     /// window width.
-    let columnLeftInset: CGFloat
-    let columnRightInset: CGFloat
     let mode: HomeLayoutMode
 
     /// The content column's left/right edges, matching `HomeView`:
     /// `centerLeftPad = leftInset + mode.horizontalPadding`.
-    private var centerLeftPad: CGFloat { columnLeftInset + mode.horizontalPadding }
-    private var centerRightPad: CGFloat { columnRightInset + mode.horizontalPadding }
+    private var centerLeftPad: CGFloat { insets.left + mode.horizontalPadding }
+    private var centerRightPad: CGFloat { insets.right + mode.horizontalPadding }
 
+    /// The columns this page aligns to. Supplied by the canvas, so no page
+    /// can be drawn without it (see `QQMusicColumnInsetsKey`).
+    @Environment(\.qqMusicColumnInsets) private var insets
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
 
     /// Cards shown per shelf before deferring to the full list.

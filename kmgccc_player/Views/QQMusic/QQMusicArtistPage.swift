@@ -17,14 +17,11 @@ import SwiftUI
 struct QQMusicArtistPage: View {
 
     let artist: QQMusicArtistRef
-    /// Center-column insets: the width of the sidebar / lyrics panes.
-    /// Every alignment below adds the library's own content padding to
-    /// these, which is how a full-window page lines up with a page that
-    /// lives inside the center pane.
-    let leftPad: CGFloat
-    let rightPad: CGFloat
     let mode: HomeLayoutMode
 
+    /// The columns this page aligns to. Supplied by the canvas, so no page
+    /// can be drawn without it (see `QQMusicColumnInsetsKey`).
+    @Environment(\.qqMusicColumnInsets) private var insets
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
     @Environment(QQMusicNavigation.self) private var navigation
     @Environment(QQMusicSelectionModel.self) private var selection
@@ -83,7 +80,10 @@ struct QQMusicArtistPage: View {
             // Omitted rather than drawn disabled on the albums tab: "play all
             // albums" has no meaning.
             onPlay: canPlayFromHeader ? { playFromHeader() } : nil,
-            canPlay: canPlayFromHeader
+            canPlay: canPlayFromHeader,
+            // The header insets itself by these plus the library's own 24.
+            columnLeftPad: insets.left,
+            columnRightPad: insets.right
         ) {
             // Nothing beside 播放: the batch-download control lives in the page's
             // top-right corner, so the header keeps the single primary action.
@@ -155,8 +155,8 @@ struct QQMusicArtistPage: View {
 
                 Spacer(minLength: 0)
             }
-            .padding(.leading, leftPad + 24)
-                .padding(.trailing, rightPad + 24)
+            .padding(.leading, insets.left + 24)
+                .padding(.trailing, insets.right + 24)
             .padding(.top, 4)
         }
     }
@@ -199,8 +199,6 @@ struct QQMusicArtistPage: View {
         } else {
             QQMusicTrackListBody(
                 tracks: currentTracks,
-                columnLeftPad: leftPad + 24,
-                columnRightPad: rightPad + 24,
                 // An artist can have over a thousand songs and the list pages
                 // forever, so it has no "all" to select.
                 allowsSelection: false,
@@ -243,8 +241,8 @@ struct QQMusicArtistPage: View {
                     }
                 }
             }
-            .padding(.leading, leftPad + 24)
-                .padding(.trailing, rightPad + 24)
+            .padding(.leading, insets.left + 24)
+                .padding(.trailing, insets.right + 24)
         }
     }
 

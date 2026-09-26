@@ -402,12 +402,23 @@ struct QQMusicTrackRow: View {
             Label("查看详情", systemImage: "doc.text")
         }
 
-        if track.hasArtistPage {
+        // One artist opens directly; several become a question, because picking
+        // the first of a duet silently decided for the user. The names are what
+        // the menu shows, and the mid is what the page needs.
+        let artists = track.openableArtists
+        if artists.count == 1, let artist = artists.first {
             Button {
-                navigation.push(.artist(QQMusicArtistRef(
-                    singerMid: track.singerMid ?? "",
-                    name: artistText
-                )))
+                navigation.push(.artist(QQMusicArtistRef(singerMid: artist.mid, name: artist.name)))
+            } label: {
+                Label("查看艺人", systemImage: "person.crop.circle")
+            }
+        } else if artists.count > 1 {
+            Menu {
+                ForEach(artists, id: \.mid) { artist in
+                    Button(artist.name) {
+                        navigation.push(.artist(QQMusicArtistRef(singerMid: artist.mid, name: artist.name)))
+                    }
+                }
             } label: {
                 Label("查看艺人", systemImage: "person.crop.circle")
             }

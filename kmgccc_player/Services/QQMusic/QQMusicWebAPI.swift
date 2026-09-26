@@ -62,6 +62,13 @@ nonisolated enum QQMusicWebAPIError: Error, LocalizedError {
     case transport(String)
     case upstream(code: Int, message: String)
     case malformedResponse
+    /// A successful call that carried no items at all.
+    ///
+    /// Raised by the coordinator for whole-list reads: this endpoint family
+    /// reports no failures, so "200 with nothing in it" is indistinguishable
+    /// from a route whose shape moved — and treating it as the truth replaced a
+    /// populated list with an empty one.
+    case emptyList(label: String)
 
     var errorDescription: String? {
         switch self {
@@ -73,6 +80,8 @@ nonisolated enum QQMusicWebAPIError: Error, LocalizedError {
             return message.isEmpty ? "上游返回错误（\(code)）" : "\(message)（\(code)）"
         case .malformedResponse:
             return "上游返回的数据无法解析"
+        case .emptyList(let label):
+            return "上游 \(label) 返回空列表（按未作答处理）"
         }
     }
 }

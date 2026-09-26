@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-index 81b5c94f..29ac1a3f 100644
+index 81b5c94f..3450f75f 100644
 --- a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 +++ b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-@@ -104,6 +104,259 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
+@@ -104,6 +104,293 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
      let changed: Bool
  }
  
@@ -33,7 +33,16 @@ index 81b5c94f..29ac1a3f 100644
 +    /// gated track, which is the signal the UI uses to grey a row out instead
 +    /// of letting the user tap into a guaranteed failure.
 +    var payPlay: Int?
++    /// The first credited singer's mid, which is what a single "open the artist"
++    /// jump uses.
 +    var singerMid: String?
++    /// Every credited singer.
++    ///
++    /// `singerMid` is only the first of them, so a duet's 查看艺人 used to pick
++    /// one member silently. The list carries the mid/name pairs so the row can
++    /// ask which one is meant. Absent from a helper older than 2.1.0, and the row
++    /// then falls back to `singerMid`.
++    var singers: [QQMusicSinger]?
 +    /// Album release date, present when the source supplied it (artist "最新"
 +    /// ordering attaches it).
 +    var releaseDate: String?
@@ -44,14 +53,29 @@ index 81b5c94f..29ac1a3f 100644
 +    /// comes from `resolveSongURL`.
 +    var isExpectedPlayable: Bool { (payPlay ?? 1) == 0 }
 +
++    /// The singers 查看艺人 can open, each needing the mid the artist page is
++    /// addressed by.
++    ///
++    /// Falls back to `singerMid` when the helper is too old to report the list,
++    /// so an un-updated helper still offers the single item it can honour.
++    var openableArtists: [(mid: String, name: String)] {
++        let listed = (singers ?? []).compactMap { singer -> (mid: String, name: String)? in
++            let mid = (singer.mid ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++            guard !mid.isEmpty else { return nil }
++            let name = (singer.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++            return (mid, name.isEmpty ? artist : name)
++        }
++        if !listed.isEmpty { return listed }
++        let mid = (singerMid ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
++        return mid.isEmpty ? [] : [(mid, artist)]
++    }
++
 +    /// Whether 查看艺人 has a page to open.
 +    ///
-+    /// False when the source did not give us the singer's mid, which is the one
++    /// False when the source did not give us any singer's mid, which is the one
 +    /// handle the artist page needs — the row then omits the item instead of
 +    /// offering one that cannot be honoured.
-+    var hasArtistPage: Bool {
-+        !(singerMid ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-+    }
++    var hasArtistPage: Bool { !openableArtists.isEmpty }
 +
 +    /// Whether 查看专辑 has a page to open. Needs the numeric album id; the mid
 +    /// only yields a cover.
@@ -132,6 +156,16 @@ index 81b5c94f..29ac1a3f 100644
 +    var protocolVersion: Int
 +    var libraryVersion: String
 +    var credentialDir: Bool
++}
++
++/// One credited singer of an online track.
++///
++/// Both fields optional so a partial entry decodes instead of failing the whole
++/// track: the upstream has shapes where only a name is present, and a singer the
++/// app cannot open is not a reason to drop the song.
++nonisolated struct QQMusicSinger: Codable, Equatable, Sendable {
++    var mid: String?
++    var name: String?
 +}
 +
 +/// An album in the user's favorites.
@@ -262,7 +296,7 @@ index 81b5c94f..29ac1a3f 100644
  nonisolated enum MetadataDetailApplicator {
      static func applyMissingFields(
          _ detail: ArtistMetadataDetail,
-@@ -627,6 +880,20 @@ actor QQMusicHelperProcess {
+@@ -627,6 +914,20 @@ actor QQMusicHelperProcess {
          let ok: Bool
          let candidates: [QQMusicArtworkCandidate]?
          let detail: QQMusicMetadataDetail?
@@ -283,7 +317,7 @@ index 81b5c94f..29ac1a3f 100644
          let error: String?
      }
  
-@@ -668,18 +935,166 @@ actor QQMusicHelperProcess {
+@@ -668,18 +969,166 @@ actor QQMusicHelperProcess {
          let duration: Int?
      }
  
@@ -455,7 +489,7 @@ index 81b5c94f..29ac1a3f 100644
      private var recentStderr = ""
      private var pendingRequests: [String: PendingRequest] = [:]
      private var idleShutdownTask: Task<Void, Never>?
-@@ -776,6 +1191,427 @@ actor QQMusicHelperProcess {
+@@ -776,6 +1225,427 @@ actor QQMusicHelperProcess {
          )
      }
  
@@ -883,7 +917,7 @@ index 81b5c94f..29ac1a3f 100644
      func terminate() {
          stopProcess(failingPendingWith: QQMusicHelperError.cancelled)
      }
-@@ -968,9 +1804,11 @@ actor QQMusicHelperProcess {
+@@ -968,9 +1838,11 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -897,7 +931,7 @@ index 81b5c94f..29ac1a3f 100644
              }
          }
  
-@@ -981,7 +1819,9 @@ actor QQMusicHelperProcess {
+@@ -981,7 +1853,9 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -908,7 +942,7 @@ index 81b5c94f..29ac1a3f 100644
              Task {
                  await self?.appendStderr(text)
              }
-@@ -1006,20 +1846,41 @@ actor QQMusicHelperProcess {
+@@ -1006,20 +1880,41 @@ actor QQMusicHelperProcess {
          self.stdinHandle = stdinPipe.fileHandleForWriting
          self.stdoutPipe = stdoutPipe
          self.stderrPipe = stderrPipe
@@ -959,7 +993,7 @@ index 81b5c94f..29ac1a3f 100644
          }
      }
  
-@@ -1091,7 +1952,7 @@ actor QQMusicHelperProcess {
+@@ -1091,7 +1986,7 @@ actor QQMusicHelperProcess {
          stdinHandle = nil
          stdoutPipe = nil
          stderrPipe = nil
@@ -968,7 +1002,7 @@ index 81b5c94f..29ac1a3f 100644
      }
  
      private func markActivity() {
-@@ -1132,6 +1993,7 @@ actor QQMusicHelperProcess {
+@@ -1132,6 +2027,7 @@ actor QQMusicHelperProcess {
      }
  
      private func recordFailure(reason: String) {
@@ -976,7 +1010,7 @@ index 81b5c94f..29ac1a3f 100644
          let now = Date()
          recentFailureDates = recentFailureDates.filter {
              now.timeIntervalSince($0) <= failureWindow
-@@ -1152,6 +2014,16 @@ actor QQMusicHelperProcess {
+@@ -1152,6 +2048,16 @@ actor QQMusicHelperProcess {
      }
  
      private func checkCircuitBreaker() throws {
@@ -993,7 +1027,7 @@ index 81b5c94f..29ac1a3f 100644
          guard let until = circuitOpenUntil else { return }
          if Date() < until {
              Log.warning("[QQMusicHelperProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)
-@@ -1163,30 +2035,47 @@ actor QQMusicHelperProcess {
+@@ -1163,30 +2069,47 @@ actor QQMusicHelperProcess {
      }
  
      private func findLaunchCandidate() -> LaunchCandidate? {
@@ -1015,7 +1049,11 @@ index 81b5c94f..29ac1a3f 100644
 -        }
 +        for binaryURL in candidates {
 +            Log.info("[QQMusicHelperProcess] helper candidate path=\(binaryURL.path)", category: .import)
-+
+ 
+-        guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else {
+-            lastLaunchDiagnostics = "binary not executable: \(binaryURL.path)"
+-            Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
+-            return nil
 +            var isDirectory: ObjCBool = false
 +            guard FileManager.default.fileExists(atPath: binaryURL.path, isDirectory: &isDirectory),
 +                  !isDirectory.boolValue
@@ -1037,11 +1075,7 @@ index 81b5c94f..29ac1a3f 100644
 +            )
 +            var environment = ProcessInfo.processInfo.environment
 +            environment["KMGCCC_QQMUSIC_CREDENTIAL_DIR"] = Self.credentialDirectory.path
- 
--        guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else {
--            lastLaunchDiagnostics = "binary not executable: \(binaryURL.path)"
--            Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
--            return nil
++
 +            return LaunchCandidate(
 +                executableURL: binaryURL,
 +                currentDirectoryURL: binaryURL.deletingLastPathComponent(),
@@ -1061,7 +1095,7 @@ index 81b5c94f..29ac1a3f 100644
      }
  
      private func bundledBinaryURL() -> URL {
-@@ -1198,6 +2087,30 @@ actor QQMusicHelperProcess {
+@@ -1198,6 +2121,30 @@ actor QQMusicHelperProcess {
              .appendingPathComponent("qqmusic-helper", isDirectory: false)
      }
  

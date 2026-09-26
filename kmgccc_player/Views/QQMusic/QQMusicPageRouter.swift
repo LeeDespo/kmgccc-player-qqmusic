@@ -34,9 +34,14 @@ struct QQMusicPageRouter: View {
 
     var body: some View {
         @Bindable var coordinator = coordinator
-        return QQMusicPageCanvas(onScroll: { offset in
-            ambientMotion.setScrollOffset(offset)
-        }) { insets, mode in
+        return QQMusicPageCanvas(
+            onScroll: { offset in
+                ambientMotion.setScrollOffset(offset)
+            },
+            // A new page starts at its top: the offset of the page before it has
+            // nothing to do with where the user should land.
+            scrollResetKey: navigation.displayKey
+        ) { insets, mode in
             pageContent(insets: insets, mode: mode)
         }
         // 查看详情 from a row's 更多 menu. Presented here rather than by the row
@@ -90,64 +95,42 @@ struct QQMusicPageRouter: View {
         }
     }
 
+    /// One page per case. Every page reads its column insets from the
+    /// environment (set by the canvas), so nothing has to be threaded through
+    /// here — and nothing can be forgotten.
     @ViewBuilder
     private func pageContent(insets: QQMusicColumnInsets, mode: HomeLayoutMode) -> some View {
-        let leftPad = insets.left
-        let rightPad = insets.right
         switch navigation.displayed {
         case .home:
-            QQMusicHomePage(
-                navigation: navigation,
-                columnLeftInset: leftPad,
-                columnRightInset: rightPad,
-                mode: mode
-            )
+            QQMusicHomePage(navigation: navigation, mode: mode)
 
         // MARK: Account lists
         case .likedSongs:
-            QQMusicTrackListPage(
-                page: .likedSongs,
-                leftPad: leftPad,
-                rightPad: rightPad,
-                mode: mode
-            )
+            QQMusicTrackListPage(page: .likedSongs, mode: mode)
         case .newSongs(let region):
-            QQMusicTrackListPage(
-                page: .newSongs(region),
-                leftPad: leftPad,
-                rightPad: rightPad,
-                mode: mode
-            )
+            QQMusicTrackListPage(page: .newSongs(region), mode: mode)
         case .recommend:
-            QQMusicTrackListPage(
-                page: .recommend,
-                leftPad: leftPad,
-                rightPad: rightPad,
-                mode: mode
-            )
+            QQMusicTrackListPage(page: .recommend, mode: mode)
         case .search(let kind):
-            QQMusicSearchPage(kind: kind, leftPad: leftPad, rightPad: rightPad, mode: mode)
+            QQMusicSearchPage(kind: kind, mode: mode)
 
         // MARK: Entity indexes
         case .userPlaylists:
-            QQMusicPlaylistIndexPage(leftPad: leftPad, rightPad: rightPad, mode: mode)
+            QQMusicPlaylistIndexPage(mode: mode)
         case .likedAlbums:
-            QQMusicAlbumIndexPage(leftPad: leftPad, rightPad: rightPad, mode: mode)
+            QQMusicAlbumIndexPage(mode: mode)
         case .toplists:
-            QQMusicToplistIndexPage(leftPad: leftPad, rightPad: rightPad, mode: mode)
+            QQMusicToplistIndexPage(mode: mode)
         case .radio:
-            QQMusicRadioIndexPage(leftPad: leftPad, rightPad: rightPad, mode: mode)
+            QQMusicRadioIndexPage(mode: mode)
 
         // MARK: Entity detail
         case .playlist, .album, .toplist, .radioStation:
-            QQMusicEntityDetailPage(
-                page: navigation.displayed,
-                leftPad: leftPad,
-                rightPad: rightPad,
-                mode: mode
-            )
+            QQMusicEntityDetailPage(page: navigation.displayed, mode: mode)
         case .artist(let ref):
-            QQMusicArtistPage(artist: ref, leftPad: leftPad, rightPad: rightPad, mode: mode)
+            QQMusicArtistPage(artist: ref, mode: mode)
+                .id(ref.singerMid)
         }
     }
+
 }

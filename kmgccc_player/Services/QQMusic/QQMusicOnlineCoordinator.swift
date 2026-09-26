@@ -92,7 +92,6 @@ final class QQMusicOnlineCoordinator {
     private(set) var isLoadingFeed = false
     private(set) var isLoadingToplists = false
     private(set) var isSearching = false
-    private(set) var isLoadingPlaylistTracks = false
 
     /// Per-track download state, keyed by song mid, so rows can show progress.
     private(set) var downloadPhases: [String: QQMusicDownloadPhase] = [:]
@@ -285,6 +284,16 @@ final class QQMusicOnlineCoordinator {
     /// appending to a list the user has already left.
     private var listGeneration: UInt64 = 0
     private(set) var isLoadingMorePlaylistTracks = false
+    /// How many list loads are in flight.
+    ///
+    /// A count rather than a flag: opening another list while one is still
+    /// loading used to have the first load's `defer` clear the flag the second
+    /// one had just set, so the page fell back to its "nothing here" state while
+    /// a fetch was plainly running.
+    private var listLoadsInFlight = 0
+
+    /// Whether the shared track list is loading, for the page's own state.
+    var isLoadingPlaylistTracks: Bool { listLoadsInFlight > 0 }
     /// Whether the prefetch loop is currently running. Explicit, because a
     /// *finished* `Task` is neither nil nor cancelled, so task identity cannot
     /// answer "is it still feeding the queue?".
@@ -348,7 +357,7 @@ final class QQMusicOnlineCoordinator {
     }
 
     private func fetchLikedAlbums(limit: Int = 30) async throws -> [QQMusicOnlineAlbum] {
-        try await webFirst(
+        try await webFirstList(
             "liked-albums",
             web: { try await self.webAPI.fetchLikedAlbums(limit: limit) },
             helper: { try await self.helper.fetchLikedAlbums(limit: limit) }
@@ -356,10 +365,39 @@ final class QQMusicOnlineCoordinator {
     }
 
     private func fetchUserPlaylists() async throws -> [QQMusicOnlinePlaylist] {
-        try await webFirst(
+        try await webFirstList(
             "user-playlists",
             web: { try await self.webAPI.fetchUserPlaylists() },
             helper: { try await self.helper.fetchUserPlaylists() }
+        )
+    }
+
+    /// `webFirst` for a whole-list read, where an empty list is not an answer.
+    ///
+    /// These routes report none of their failures: 收藏歌单 came back `200` with
+    /// an empty list for an account that has playlists (the web endpoint's shape
+    /// had moved on), and believing it replaced the list on screen with nothing —
+    /// the rows appeared from cache and then vanished. An empty *whole-list*
+    /// result is therefore treated as "this channel did not answer" and the
+    /// helper, which asks a different endpoint, gets the question instead.
+    ///
+    /// Not used for paged reads: there, an empty page is a real answer. It is the
+    /// last page.
+    private func webFirstList<T>(
+        _ label: String,
+        web: () async throws -> [T],
+        helper: () async throws -> [T]
+    ) async throws -> [T] {
+        try await webFirst(
+            label,
+            web: {
+                let items = try await web()
+                guard !items.isEmpty else {
+                    throw QQMusicWebAPIError.emptyList(label: label)
+                }
+                return items
+            },
+            helper: helper
         )
     }
 
@@ -961,7 +999,14 @@ final class QQMusicOnlineCoordinator {
     /// than as two symmetric branches.
     private func fetchCompleteLikedSongs() async throws -> QQMusicLikedSongs {
         do {
-            return try await webAPI.fetchAllLikedSongs()
+            let complete = try await webAPI.fetchAllLikedSongs()
+            // Same rule as `webFirstList`: an empty whole-list answer from the
+            // web is not trusted over the helper, because the folder can be
+            // emptied by the user and a moved endpoint looks identical.
+            guard !complete.tracks.isEmpty else {
+                throw QQMusicWebAPIError.emptyList(label: "liked-songs-all")
+            }
+            return complete
         } catch {
             Log.warning(
                 "[QQMusicOnline] batched liked call failed, paging instead: \(error)",
@@ -1233,6 +1278,16 @@ final class QQMusicOnlineCoordinator {
     /// No in-flight guard: this is the *open* path, so a second open must win
     /// over the first rather than be dropped.
     func openRadioStation(_ station: QQMusicRadioStation) async {
+        // A station is a list too, so the same isolation rule applies: another
+        // station's rotation must not stay on screen while this one loads. The
+        // shared list is emptied only when the station really changes — this is
+        // also the path a playlist leaves behind, and `openList` has already
+        // cleared for that.
+        if activeRadioStationID != station.id, openedList == nil {
+            playlistTracks = []
+        }
+        openedList = nil
+        listGeneration &+= 1
         isLoadingRadioTracks = true
         defer { isLoadingRadioTracks = false }
         do {
@@ -1561,7 +1616,7 @@ final class QQMusicOnlineCoordinator {
     // playlist used to page the *playlist's* next batch into the album's list.
 
     /// Which list is open, so paging asks the right endpoint.
-    private enum OpenList {
+    private enum OpenList: Equatable {
         case playlist(id: Int)
         case toplist(id: Int)
         case album(id: Int)
@@ -1608,10 +1663,26 @@ final class QQMusicOnlineCoordinator {
         // A station's rotation is a different kind of list: its id drives
         // "load more" for the station, which must not fire here.
         closeRadioStation()
+
+        // Switching lists — as opposed to refreshing the same one — clears what is
+        // on screen before anything else. Leaving it showed the *previous*
+        // playlist's rows under the new playlist's header until the fetch landed,
+        // which reads as "this page is showing someone else's content". A refresh
+        // of the same list keeps its rows: they are not wrong, and blanking a page
+        // the user is already on is worse than a moment of stale data.
+        let isSwitch = openedList != list
         openedList = list
         openedPlaylistTotal = 0
         listGeneration &+= 1
         let generation = listGeneration
+        // The flag counts loads, so a superseded one finishing cannot clear the
+        // spinner of the load that replaced it.
+        listLoadsInFlight += 1
+        defer { listLoadsInFlight -= 1 }
+
+        if isSwitch {
+            playlistTracks = []
+        }
 
         if let wait = backoffRemaining() {
             Log.warning("[QQMusicOnline] list open skipped, backing off \(Int(wait.rounded(.up)))s", category: .import)
@@ -1623,9 +1694,6 @@ final class QQMusicOnlineCoordinator {
         if let cached = await cachedTracks(.playlistTracks, key: cacheKey, force: force) {
             playlistTracks = cached
         }
-
-        isLoadingPlaylistTracks = true
-        defer { isLoadingPlaylistTracks = false }
 
         do {
             // 2. the first page, plus the total.

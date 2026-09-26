@@ -147,6 +147,42 @@ final class QQMusicBrowseEnvironmentTests: XCTestCase {
         XCTAssertTrue(withAlbum.hasAlbumPage)
     }
 
+    /// A duet's 查看艺人 has to be a question, not a guess.
+    ///
+    /// The helper reports every singer now; `singerMid` is only the first, so
+    /// using it silently opened one member of the duet. The row turns more than
+    /// one into a submenu, and this is the data behind it — including the
+    /// fallback that keeps an un-updated helper working.
+    func testEverySingerIsOfferedForTheArtistPage() {
+        var track = QQMusicOnlineTrack(songMid: "001", title: "合唱", artist: "甲, 乙")
+        track.singerMid = "mid-甲"
+
+        // No list (an older helper): the single mid it does report is the answer.
+        XCTAssertEqual(track.openableArtists.map(\.mid), ["mid-甲"])
+        XCTAssertEqual(track.openableArtists.map(\.name), ["甲, 乙"])
+
+        track.singers = [
+            QQMusicSinger(mid: "mid-甲", name: "甲"),
+            QQMusicSinger(mid: "mid-乙", name: "乙"),
+        ]
+        XCTAssertEqual(track.openableArtists.map(\.mid), ["mid-甲", "mid-乙"])
+        XCTAssertEqual(track.openableArtists.map(\.name), ["甲", "乙"])
+
+        // A singer with no mid cannot be opened, so it is not offered; a singer
+        // with a mid but no name falls back to the row's own artist text.
+        track.singers = [
+            QQMusicSinger(mid: nil, name: "无名氏"),
+            QQMusicSinger(mid: "mid-丙", name: nil),
+        ]
+        XCTAssertEqual(track.openableArtists.map(\.mid), ["mid-丙"])
+        XCTAssertEqual(track.openableArtists.map(\.name), ["甲, 乙"])
+
+        // Nothing to open at all: the item is absent rather than dead.
+        track.singers = []
+        track.singerMid = nil
+        XCTAssertFalse(track.hasArtistPage)
+    }
+
     /// 查看详情 says what the catalogue and the library actually know.
     ///
     /// The library's own detail sheet resolves a *description*; an online track

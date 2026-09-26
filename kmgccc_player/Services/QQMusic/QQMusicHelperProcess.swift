@@ -131,7 +131,16 @@ nonisolated struct QQMusicOnlineTrack: Codable, Equatable, Sendable, Identifiabl
     /// gated track, which is the signal the UI uses to grey a row out instead
     /// of letting the user tap into a guaranteed failure.
     var payPlay: Int?
+    /// The first credited singer's mid, which is what a single "open the artist"
+    /// jump uses.
     var singerMid: String?
+    /// Every credited singer.
+    ///
+    /// `singerMid` is only the first of them, so a duet's 查看艺人 used to pick
+    /// one member silently. The list carries the mid/name pairs so the row can
+    /// ask which one is meant. Absent from a helper older than 2.1.0, and the row
+    /// then falls back to `singerMid`.
+    var singers: [QQMusicSinger]?
     /// Album release date, present when the source supplied it (artist "最新"
     /// ordering attaches it).
     var releaseDate: String?
@@ -142,14 +151,29 @@ nonisolated struct QQMusicOnlineTrack: Codable, Equatable, Sendable, Identifiabl
     /// comes from `resolveSongURL`.
     var isExpectedPlayable: Bool { (payPlay ?? 1) == 0 }
 
+    /// The singers 查看艺人 can open, each needing the mid the artist page is
+    /// addressed by.
+    ///
+    /// Falls back to `singerMid` when the helper is too old to report the list,
+    /// so an un-updated helper still offers the single item it can honour.
+    var openableArtists: [(mid: String, name: String)] {
+        let listed = (singers ?? []).compactMap { singer -> (mid: String, name: String)? in
+            let mid = (singer.mid ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !mid.isEmpty else { return nil }
+            let name = (singer.name ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            return (mid, name.isEmpty ? artist : name)
+        }
+        if !listed.isEmpty { return listed }
+        let mid = (singerMid ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return mid.isEmpty ? [] : [(mid, artist)]
+    }
+
     /// Whether 查看艺人 has a page to open.
     ///
-    /// False when the source did not give us the singer's mid, which is the one
+    /// False when the source did not give us any singer's mid, which is the one
     /// handle the artist page needs — the row then omits the item instead of
     /// offering one that cannot be honoured.
-    var hasArtistPage: Bool {
-        !(singerMid ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    var hasArtistPage: Bool { !openableArtists.isEmpty }
 
     /// Whether 查看专辑 has a page to open. Needs the numeric album id; the mid
     /// only yields a cover.
@@ -230,6 +254,16 @@ nonisolated struct QQMusicHelperInfo: Codable, Equatable, Sendable {
     var protocolVersion: Int
     var libraryVersion: String
     var credentialDir: Bool
+}
+
+/// One credited singer of an online track.
+///
+/// Both fields optional so a partial entry decodes instead of failing the whole
+/// track: the upstream has shapes where only a name is present, and a singer the
+/// app cannot open is not a reason to drop the song.
+nonisolated struct QQMusicSinger: Codable, Equatable, Sendable {
+    var mid: String?
+    var name: String?
 }
 
 /// An album in the user's favorites.

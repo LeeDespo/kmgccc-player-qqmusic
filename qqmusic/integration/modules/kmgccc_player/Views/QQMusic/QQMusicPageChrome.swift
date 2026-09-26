@@ -37,6 +37,25 @@ struct QQMusicColumnInsets: Equatable {
 
 }
 
+/// The columns the online pages align to, passed down the view tree.
+///
+/// An environment value rather than a constructor parameter on every page: the
+/// artist page was the one page that did not pass them on, so its header drew at
+/// the window's left edge — under the sidebar — while the rows below it stayed in
+/// the column. Nothing about that failure was visible in the page's own code, and
+/// nothing stopped the next page from repeating it. Set once by the canvas, read
+/// by whoever needs it, impossible to forget.
+private struct QQMusicColumnInsetsKey: EnvironmentKey {
+    static let defaultValue = QQMusicColumnInsets(left: 0, right: 0)
+}
+
+extension EnvironmentValues {
+    var qqMusicColumnInsets: QQMusicColumnInsets {
+        get { self[QQMusicColumnInsetsKey.self] }
+        set { self[QQMusicColumnInsetsKey.self] = newValue }
+    }
+}
+
 /// Shared canvas for every online page.
 ///
 /// Mirrors `HomeView.scrollContent`: the same ambient background behind the
@@ -56,7 +75,19 @@ struct QQMusicPageCanvas<Content: View>: View {
     /// the whole page on each tick. Only the AppKit layer behind the content
     /// subscribes.
     var onScroll: ((CGFloat) -> Void)?
+    /// Change this and the scroll position returns to the top.
+    ///
+    /// One scroll view serves every page, so its offset outlives a page change:
+    /// arriving from a long list that had been scrolled down left the next page's
+    /// content above the viewport — which looks exactly like a blank page, and
+    /// lasts until the user scrolls up.
+    var scrollResetKey: String?
     @ViewBuilder var content: (_ insets: QQMusicColumnInsets, _ mode: HomeLayoutMode) -> Content
+
+    /// Anchor for the scroll reset. A hairline rather than a zero-height view:
+    /// a zero-height one can be optimised out of the layout, and then there is
+    /// nothing to scroll to.
+    private static var topAnchorID: String { "qqmusic-page-top" }
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -84,23 +115,32 @@ struct QQMusicPageCanvas<Content: View>: View {
                     reduceMotion: reduceMotion
                 )
 
-                ScrollView(.vertical, showsIndicators: true) {
-                    LazyVStack(alignment: .leading, spacing: mode.sectionSpacing) {
-                        content(insets, mode)
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: true) {
+                        LazyVStack(alignment: .leading, spacing: mode.sectionSpacing) {
+                            Color.clear
+                                .frame(height: 0.5)
+                                .id(Self.topAnchorID)
+                            content(insets, mode)
+                                .environment(\.qqMusicColumnInsets, insets)
+                        }
+                        // Clears the unified titlebar/toolbar, exactly as Home's
+                        // own scroll content does.
+                        .padding(.top, 56)
+                        .padding(.bottom, 24)
+                        .frame(maxWidth: .infinity, alignment: .top)
                     }
-                    // Clears the unified titlebar/toolbar, exactly as Home's
-                    // own scroll content does.
-                    .padding(.top, 56)
-                    .padding(.bottom, 24)
-                    .frame(maxWidth: .infinity, alignment: .top)
-                }
-                .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                    geometry.contentOffset.y
-                } action: { _, newValue in
-                    onScroll?(newValue)
-                }
-                .transaction { transaction in
-                    transaction.animation = nil
+                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.contentOffset.y
+                    } action: { _, newValue in
+                        onScroll?(newValue)
+                    }
+                    .transaction { transaction in
+                        transaction.animation = nil
+                    }
+                    .onChange(of: scrollResetKey) { _, _ in
+                        proxy.scrollTo(Self.topAnchorID, anchor: .top)
+                    }
                 }
             }
         }
