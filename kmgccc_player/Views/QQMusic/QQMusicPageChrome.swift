@@ -213,21 +213,18 @@ struct QQMusicSectionHeader: View {
 struct QQMusicCardRail<Card: View>: View {
 
     var mode: HomeLayoutMode = .wide
-    let centerLeftPad: CGFloat
-    let centerRightPad: CGFloat
+    /// The columns the rail aligns to, read from the environment (see
+    /// `QQMusicEntityRow` for why).
+    @Environment(\.qqMusicColumnInsets) private var insets
     private let cardSize: CGFloat
     private let spacing: CGFloat
     @ViewBuilder var cards: () -> Card
 
     init(
         mode: HomeLayoutMode = .wide,
-        centerLeftPad: CGFloat,
-        centerRightPad: CGFloat,
         @ViewBuilder cards: @escaping () -> Card
     ) {
         self.mode = mode
-        self.centerLeftPad = centerLeftPad
-        self.centerRightPad = centerRightPad
         self.cardSize = Self.cardSize(for: mode)
         self.spacing = Self.spacing(for: mode)
         self.cards = cards
@@ -258,12 +255,12 @@ struct QQMusicCardRail<Card: View>: View {
             spacing: spacing,
             fadeWidth: 0,
             verticalPadding: 22,
-            leadingScrollPadding: centerLeftPad + 4,
-            trailingScrollPadding: max(4, centerRightPad - 8),
+            leadingScrollPadding: insets.left + 4,
+            trailingScrollPadding: max(4, insets.right - 8),
             showsEdgeFade: false,
             showsScrollButtons: true,
-            scrollButtonLeadingInset: centerLeftPad + 8,
-            scrollButtonTrailingInset: max(12, centerRightPad + 8)
+            scrollButtonLeadingInset: insets.left + 8,
+            scrollButtonTrailingInset: max(12, insets.right + 8)
         ) {
             cards()
         }
@@ -403,19 +400,22 @@ struct QQMusicEntityRow: View {
     var artworkURL: String?
     var circularArtwork: Bool = false
     var placeholderSystemImage: String = "music.note"
-    /// Distance from the *window* edge to this row's content box. The library's
-    /// list pages pad their list by 24 inside the center pane, so an equivalent
-    /// full-window row is inset by the pane's width plus 24.
-    var columnLeftPad: CGFloat = 0
-    var columnRightPad: CGFloat = 0
     var onOpen: (() -> Void)?
     /// Right-click menu, and the ellipsis the row draws for it. Every caller
     /// supplies one (a single "打开…" item), so the row always has actions.
     var menuItems: (() -> AnyView)?
 
     @Environment(\.colorScheme) private var colorScheme
+    /// The columns this row aligns to, plus the library's own 24pt padding.
+    /// Read here rather than passed in: the search page's artist and playlist
+    /// lists were the callers that left the parameters off, and their rows then
+    /// drew from the window's edge — under the sidebar.
+    @Environment(\.qqMusicColumnInsets) private var insets
     @EnvironmentObject private var themeStore: ThemeStore
     @State private var isHovering = false
+
+    /// The library's own content padding inside the center pane.
+    static let contentPadding: CGFloat = 24
 
     private let artworkSize: CGFloat = 60
     private let cornerRadius: CGFloat = 10
@@ -433,8 +433,8 @@ struct QQMusicEntityRow: View {
         // Rows are full-bleed across the window so their hover wash and their
         // artwork align with the library's list pages; only the content is
         // inset, which is what the library's own rows do inside their pane.
-        .padding(.leading, columnLeftPad)
-        .padding(.trailing, columnRightPad)
+        .padding(.leading, insets.left + Self.contentPadding)
+        .padding(.trailing, insets.right + Self.contentPadding)
         .background(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .fill(isHovering

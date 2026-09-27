@@ -51,8 +51,6 @@ struct QQMusicPlaylistIndexPage: View {
                         : nil,
                     artworkURL: nil,
                     placeholderSystemImage: "heart.fill",
-                    columnLeftPad: insets.left + 24,
-                    columnRightPad: insets.right + 24,
                     onOpen: { navigation.push(.likedSongs) }
                 ) {
                     AnyView(
@@ -70,8 +68,6 @@ struct QQMusicPlaylistIndexPage: View {
                         subtitle: playlist.creator,
                         meta: metaText(playlist),
                         artworkURL: playlist.coverURL,
-                        columnLeftPad: insets.left + 24,
-                        columnRightPad: insets.right + 24,
                         onOpen: {
                             navigation.push(.playlist(id: playlist.id, title: playlist.title))
                         }
@@ -153,8 +149,6 @@ struct QQMusicAlbumIndexPage: View {
                         meta: album.releaseDate,
                         artworkURL: album.coverURL,
                         placeholderSystemImage: "opticaldisc",
-                        columnLeftPad: insets.left + 24,
-                        columnRightPad: insets.right + 24,
                         onOpen: {
                             navigation.push(.album(id: album.id, title: album.title))
                         }
@@ -223,8 +217,6 @@ struct QQMusicToplistIndexPage: View {
                             meta: nil,
                             artworkURL: nil,
                             placeholderSystemImage: "chart.bar.fill",
-                            columnLeftPad: insets.left + 24,
-                            columnRightPad: insets.right + 24,
                             onOpen: {
                                 navigation.push(.toplist(id: toplist.id, title: toplist.name))
                             }
@@ -290,8 +282,6 @@ struct QQMusicRadioIndexPage: View {
                             meta: station.listenerCount.map { Self.listenerText($0) },
                             artworkURL: station.coverURL,
                             placeholderSystemImage: "dot.radiowaves.left.and.right",
-                            columnLeftPad: insets.left + 24,
-                            columnRightPad: insets.right + 24,
                             onOpen: {
                                 navigation.push(.radioStation(id: station.id, title: station.title))
                             }

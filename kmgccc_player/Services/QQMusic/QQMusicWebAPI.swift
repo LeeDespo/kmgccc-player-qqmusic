@@ -543,15 +543,28 @@ nonisolated struct QQMusicWebAPI: Sendable {
     /// Field names differ from what the helper's library returns, so this is
     /// written against the raw CGI shape: `mid`/`name`/`interval`, singers as a
     /// list, and file sizes keyed by code (`size320`, `sizeflac` lowercase).
-    private static func decodeTrack(_ raw: [String: Any]) -> QQMusicOnlineTrack? {
+    /// Internal rather than private so a test can pin what the row's menu reads
+    /// out of it: the singer list and the album id were both missing here for a
+    /// while, and nothing failed — the items simply were not offered.
+    static func decodeTrack(_ raw: [String: Any]) -> QQMusicOnlineTrack? {
         guard let songMid = (raw["mid"] as? String) ?? (raw["songmid"] as? String),
               !songMid.isEmpty
         else { return nil }
 
-        let singers = raw["singer"] as? [[String: Any]] ?? []
-        let artist = singers
-            .compactMap { $0["name"] as? String }
-            .joined(separator: " / ")
+        // The credited singers, as the helper reports them: one entry per person,
+        // so a duet can be offered as a choice instead of being guessed at. The
+        // separator here used to be " / " while the helper used ", " — two lists
+        // showing the same duet differently — and only the first mid travelled,
+        // which meant 查看艺人 opened the first singer while the page was titled
+        // with both of their names.
+        let singerEntries = raw["singer"] as? [[String: Any]] ?? []
+        let singers = singerEntries.compactMap { entry -> QQMusicSinger? in
+            let mid = entry["mid"] as? String
+            let name = entry["name"] as? String
+            guard mid != nil || name != nil else { return nil }
+            return QQMusicSinger(mid: mid, name: name)
+        }
+        let artist = singers.compactMap(\.name).joined(separator: ", ")
 
         let album = raw["album"] as? [String: Any]
         let file = raw["file"] as? [String: Any]
@@ -579,10 +592,17 @@ nonisolated struct QQMusicWebAPI: Sendable {
             artist: artist.isEmpty ? "未知艺人" : artist,
             album: album?["name"] as? String,
             albumMid: albumMid,
+            // The album's numeric id, which is what 查看专辑 opens. Without it the
+            // item was missing from every list this channel serves (我喜欢, a
+            // playlist's tracks, a ranking's) while the helper-served lists had it
+            // — the same song offering different actions depending on where you
+            // met it.
+            albumId: parseInt(album?["id"]),
             imageURL: imageURL,
             duration: parseInt(raw["interval"]),
             payPlay: payPlay,
-            singerMid: singers.first?["mid"] as? String,
+            singerMid: singers.first?.mid,
+            singers: singers,
             releaseDate: nil
         )
     }

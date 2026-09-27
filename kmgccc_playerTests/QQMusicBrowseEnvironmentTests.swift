@@ -183,6 +183,42 @@ final class QQMusicBrowseEnvironmentTests: XCTestCase {
         XCTAssertFalse(track.hasArtistPage)
     }
 
+    /// The two channels must describe a track the same way.
+    ///
+    /// The web decoder joined singers with " / " and kept only the first mid
+    /// while the helper joined with ", " and reported them all — so the same duet
+    /// read differently depending on which list it appeared in, and 查看艺人 in a
+    /// web-served list (我喜欢, a playlist's tracks) opened the first singer while
+    /// the page was titled with both names. It also never carried the album's
+    /// numeric id, so 查看专辑 was missing from exactly those lists.
+    func testWebDecodedTrackCarriesEverySingerAndTheAlbumId() throws {
+        let raw: [String: Any] = [
+            "mid": "song-1",
+            "name": "合唱",
+            "interval": 215,
+            "album": ["id": 4321, "mid": "album-mid", "name": "专辑名"],
+            "singer": [
+                ["mid": "mid-a", "name": "甲"],
+                ["mid": "mid-b", "name": "乙"],
+            ],
+            "pay": ["pay_play": 0],
+        ]
+
+        let track = try XCTUnwrap(QQMusicWebAPI.decodeTrack(raw))
+        XCTAssertEqual(track.artist, "甲, 乙", "one separator, the same as the helper's")
+        XCTAssertEqual(track.openableArtists.map(\.mid), ["mid-a", "mid-b"])
+        XCTAssertEqual(track.openableArtists.map(\.name), ["甲", "乙"])
+        XCTAssertEqual(track.albumId, 4321, "查看专辑 needs the numeric id")
+        XCTAssertTrue(track.hasAlbumPage)
+
+        // No album id in the payload: the item is absent rather than dead.
+        let withoutAlbum = try XCTUnwrap(QQMusicWebAPI.decodeTrack([
+            "mid": "song-2", "name": "歌", "singer": [["mid": "mid-a", "name": "甲"]],
+        ]))
+        XCTAssertFalse(withoutAlbum.hasAlbumPage)
+        XCTAssertEqual(withoutAlbum.openableArtists.map(\.mid), ["mid-a"])
+    }
+
     /// 查看详情 says what the catalogue and the library actually know.
     ///
     /// The library's own detail sheet resolves a *description*; an online track

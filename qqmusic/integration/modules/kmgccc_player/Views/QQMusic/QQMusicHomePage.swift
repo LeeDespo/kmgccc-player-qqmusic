@@ -104,7 +104,7 @@ struct QQMusicHomePage: View {
                 trailingPad: centerRightPad
             )
 
-            QQMusicCardRail(mode: mode, centerLeftPad: centerLeftPad, centerRightPad: centerRightPad) {
+            QQMusicCardRail(mode: mode) {
                 likedSongsCard
                 ForEach(coordinator.userPlaylists.prefix(shelfLimit)) { playlist in
                     QQMusicCard(
@@ -141,7 +141,7 @@ struct QQMusicHomePage: View {
                 trailingPad: centerRightPad
             )
 
-            QQMusicCardRail(mode: mode, centerLeftPad: centerLeftPad, centerRightPad: centerRightPad) {
+            QQMusicCardRail(mode: mode) {
                 ForEach(coordinator.likedAlbums.prefix(shelfLimit)) { album in
                     QQMusicCard(
                         title: album.title,
@@ -177,7 +177,7 @@ struct QQMusicHomePage: View {
             trailingPad: centerRightPad
         )
 
-        QQMusicCardRail(mode: mode, centerLeftPad: centerLeftPad, centerRightPad: centerRightPad) {
+        QQMusicCardRail(mode: mode) {
             ForEach(QQMusicNewSongRegion.allCases, id: \.self) { region in
                 QQMusicCard(
                     title: region.displayName,
@@ -213,7 +213,7 @@ struct QQMusicHomePage: View {
                 trailingPad: centerRightPad
             )
 
-            QQMusicCardRail(mode: mode, centerLeftPad: centerLeftPad, centerRightPad: centerRightPad) {
+            QQMusicCardRail(mode: mode) {
                 ForEach(toplists.prefix(shelfLimit)) { toplist in
                     QQMusicCard(
                         title: toplist.name,
@@ -251,7 +251,7 @@ struct QQMusicHomePage: View {
                 trailingPad: centerRightPad
             )
 
-            QQMusicCardRail(mode: mode, centerLeftPad: centerLeftPad, centerRightPad: centerRightPad) {
+            QQMusicCardRail(mode: mode) {
                 ForEach(stations.prefix(shelfLimit)) { station in
                     QQMusicCard(
                         title: station.title,
@@ -295,7 +295,7 @@ struct QQMusicHomePage: View {
                 trailingPad: centerRightPad
             )
 
-            QQMusicCardRail(mode: mode, centerLeftPad: centerLeftPad, centerRightPad: centerRightPad) {
+            QQMusicCardRail(mode: mode) {
                 ForEach(coordinator.recommendFeed.prefix(shelfLimit)) { track in
                     QQMusicCard(
                         title: track.title,
