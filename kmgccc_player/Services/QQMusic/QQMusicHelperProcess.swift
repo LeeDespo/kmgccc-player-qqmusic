@@ -178,6 +178,29 @@ nonisolated struct QQMusicOnlineTrack: Codable, Equatable, Sendable, Identifiabl
     /// Whether 查看专辑 has a page to open. Needs the numeric album id; the mid
     /// only yields a cover.
     var hasAlbumPage: Bool { (albumId ?? 0) > 0 }
+
+    /// Everything about this row that the list draws or the menu offers.
+    ///
+    /// The "did the fetched list differ from what is on screen?" checks use this
+    /// rather than the song id alone. Comparing ids was enough while a row was
+    /// only a title and a cover; it is not any more — the album id decides
+    /// whether 查看专辑 is offered and the singer list decides where 查看艺人 leads,
+    /// so a cached row that predates those fields compared *equal* to a fresh one
+    /// and was never replaced. The feature then looked broken while the code that
+    /// would fix it never ran.
+    var displayComparisonKey: String {
+        let singerKeys = (singers ?? []).map { "\($0.mid ?? "")~\($0.name ?? "")" }
+            .joined(separator: ";")
+        return [
+            songMid,
+            title,
+            artist,
+            album ?? "",
+            imageURL ?? "",
+            String(albumId ?? 0),
+            singerKeys
+        ].joined(separator: "|")
+    }
 }
 
 nonisolated struct QQMusicOnlinePlaylist: Codable, Equatable, Sendable, Identifiable {
@@ -254,6 +277,20 @@ nonisolated struct QQMusicHelperInfo: Codable, Equatable, Sendable {
     var protocolVersion: Int
     var libraryVersion: String
     var credentialDir: Bool
+}
+
+/// When and from which commit the running app was built.
+///
+/// Written into the bundle by the "Stamp QQ Music build" phase. Displayed in the
+/// QQ Music settings window and logged at launch: the feature is delivered as a
+/// patch package, so more than one build of it can exist on a machine at the same
+/// time, and "which one am I looking at" has to be answerable from inside the app.
+nonisolated enum QQMusicBuildStamp {
+    private static let key = "QQMusicBuildStamp"
+
+    static var text: String {
+        (Bundle.main.object(forInfoDictionaryKey: key) as? String) ?? "开发构建"
+    }
 }
 
 /// One credited singer of an online track.

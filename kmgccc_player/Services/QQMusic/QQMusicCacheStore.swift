@@ -76,7 +76,7 @@ actor QQMusicCacheStore {
 
     /// Return a cached payload when it is still fresh.
     func catalog(_ category: QQMusicCacheCategory, key: String) -> Data? {
-        let cacheKey = "\(category.rawValue)|\(key)"
+        let cacheKey = "\(Self.catalogFormatVersion)|\(category.rawValue)|\(key)"
         if let entry = memoryCatalog[cacheKey],
            Date().timeIntervalSince(entry.date) < category.timeToLive {
             return entry.data
@@ -110,7 +110,7 @@ actor QQMusicCacheStore {
     /// The payload is not deleted here: a revalidation that fails should still
     /// leave the user with the last known list rather than an empty page.
     func staleCatalog(_ category: QQMusicCacheCategory, key: String) -> Data? {
-        let cacheKey = "\(category.rawValue)|\(key)"
+        let cacheKey = "\(Self.catalogFormatVersion)|\(category.rawValue)|\(key)"
         if let entry = memoryCatalog[cacheKey] {
             return entry.data
         }
@@ -121,7 +121,7 @@ actor QQMusicCacheStore {
     }
 
     func storeCatalog(_ data: Data, category: QQMusicCacheCategory, key: String) {
-        memoryCatalog["\(category.rawValue)|\(key)"] = (Date(), data)
+        memoryCatalog["\(Self.catalogFormatVersion)|\(category.rawValue)|\(key)"] = (Date(), data)
         let url = catalogFileURL(category: category, key: key)
         do {
             try fileManager.createDirectory(
@@ -137,7 +137,7 @@ actor QQMusicCacheStore {
     /// Drop catalogue entries whose payload no longer parses or that the caller
     /// considers invalid, so a bad cache cannot wedge a page permanently.
     func invalidateCatalog(_ category: QQMusicCacheCategory, key: String) {
-        memoryCatalog["\(category.rawValue)|\(key)"] = nil
+        memoryCatalog["\(Self.catalogFormatVersion)|\(category.rawValue)|\(key)"] = nil
         try? fileManager.removeItem(at: catalogFileURL(category: category, key: key))
     }
 
@@ -234,10 +234,26 @@ actor QQMusicCacheStore {
 
     // MARK: - Paths
 
+    /// Bumped whenever the *shape* of a cached payload or the meaning of a field
+    /// changes, which makes every entry written before the bump unreadable.
+    ///
+    /// A catalogue cache is derived data, so the honest response to "the rows on
+    /// screen no longer describe what this version of the app draws" is to ignore
+    /// them and fetch again — one round of requests, no user-visible state lost.
+    /// The alternative, which is what happened, is far worse: rows decoded by an
+    /// older build stay on screen because the loader's "did it change?" check
+    /// compares song ids, and a field the newer build needs (the album id, the
+    /// per-singer list) is simply absent from the decoded row. The feature then
+    /// looks broken while the code that would fix it never gets a chance to run.
+    ///
+    /// 2 — `albumId` and `singers` joined `QQMusicOnlineTrack`, and the web
+    ///     decoder began joining artist names with ", ".
+    private static let catalogFormatVersion = 2
+
     private func catalogFileURL(category: QQMusicCacheCategory, key: String) -> URL {
         paths.qqMusicCatalogCacheURL
             .appendingPathComponent(category.rawValue, isDirectory: true)
-            .appendingPathComponent("\(Self.safeName(key)).json")
+            .appendingPathComponent("\(Self.safeName("v\(Self.catalogFormatVersion)-\(key)")).json")
     }
 
     private func artworkFileURL(_ remoteURL: String) -> URL {

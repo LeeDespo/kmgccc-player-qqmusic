@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-index 81b5c94f..3450f75f 100644
+index 81b5c94f..c218033a 100644
 --- a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 +++ b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-@@ -104,6 +104,293 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
+@@ -104,6 +104,330 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
      let changed: Bool
  }
  
@@ -80,6 +80,29 @@ index 81b5c94f..3450f75f 100644
 +    /// Whether 查看专辑 has a page to open. Needs the numeric album id; the mid
 +    /// only yields a cover.
 +    var hasAlbumPage: Bool { (albumId ?? 0) > 0 }
++
++    /// Everything about this row that the list draws or the menu offers.
++    ///
++    /// The "did the fetched list differ from what is on screen?" checks use this
++    /// rather than the song id alone. Comparing ids was enough while a row was
++    /// only a title and a cover; it is not any more — the album id decides
++    /// whether 查看专辑 is offered and the singer list decides where 查看艺人 leads,
++    /// so a cached row that predates those fields compared *equal* to a fresh one
++    /// and was never replaced. The feature then looked broken while the code that
++    /// would fix it never ran.
++    var displayComparisonKey: String {
++        let singerKeys = (singers ?? []).map { "\($0.mid ?? "")~\($0.name ?? "")" }
++            .joined(separator: ";")
++        return [
++            songMid,
++            title,
++            artist,
++            album ?? "",
++            imageURL ?? "",
++            String(albumId ?? 0),
++            singerKeys
++        ].joined(separator: "|")
++    }
 +}
 +
 +nonisolated struct QQMusicOnlinePlaylist: Codable, Equatable, Sendable, Identifiable {
@@ -156,6 +179,20 @@ index 81b5c94f..3450f75f 100644
 +    var protocolVersion: Int
 +    var libraryVersion: String
 +    var credentialDir: Bool
++}
++
++/// When and from which commit the running app was built.
++///
++/// Written into the bundle by the "Stamp QQ Music build" phase. Displayed in the
++/// QQ Music settings window and logged at launch: the feature is delivered as a
++/// patch package, so more than one build of it can exist on a machine at the same
++/// time, and "which one am I looking at" has to be answerable from inside the app.
++nonisolated enum QQMusicBuildStamp {
++    private static let key = "QQMusicBuildStamp"
++
++    static var text: String {
++        (Bundle.main.object(forInfoDictionaryKey: key) as? String) ?? "开发构建"
++    }
 +}
 +
 +/// One credited singer of an online track.
@@ -296,7 +333,7 @@ index 81b5c94f..3450f75f 100644
  nonisolated enum MetadataDetailApplicator {
      static func applyMissingFields(
          _ detail: ArtistMetadataDetail,
-@@ -627,6 +914,20 @@ actor QQMusicHelperProcess {
+@@ -627,6 +951,20 @@ actor QQMusicHelperProcess {
          let ok: Bool
          let candidates: [QQMusicArtworkCandidate]?
          let detail: QQMusicMetadataDetail?
@@ -317,7 +354,7 @@ index 81b5c94f..3450f75f 100644
          let error: String?
      }
  
-@@ -668,18 +969,166 @@ actor QQMusicHelperProcess {
+@@ -668,18 +1006,166 @@ actor QQMusicHelperProcess {
          let duration: Int?
      }
  
@@ -489,7 +526,7 @@ index 81b5c94f..3450f75f 100644
      private var recentStderr = ""
      private var pendingRequests: [String: PendingRequest] = [:]
      private var idleShutdownTask: Task<Void, Never>?
-@@ -776,6 +1225,427 @@ actor QQMusicHelperProcess {
+@@ -776,6 +1262,427 @@ actor QQMusicHelperProcess {
          )
      }
  
@@ -917,7 +954,7 @@ index 81b5c94f..3450f75f 100644
      func terminate() {
          stopProcess(failingPendingWith: QQMusicHelperError.cancelled)
      }
-@@ -968,9 +1838,11 @@ actor QQMusicHelperProcess {
+@@ -968,9 +1875,11 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -931,7 +968,7 @@ index 81b5c94f..3450f75f 100644
              }
          }
  
-@@ -981,7 +1853,9 @@ actor QQMusicHelperProcess {
+@@ -981,7 +1890,9 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -942,7 +979,7 @@ index 81b5c94f..3450f75f 100644
              Task {
                  await self?.appendStderr(text)
              }
-@@ -1006,20 +1880,41 @@ actor QQMusicHelperProcess {
+@@ -1006,20 +1917,41 @@ actor QQMusicHelperProcess {
          self.stdinHandle = stdinPipe.fileHandleForWriting
          self.stdoutPipe = stdoutPipe
          self.stderrPipe = stderrPipe
@@ -993,7 +1030,7 @@ index 81b5c94f..3450f75f 100644
          }
      }
  
-@@ -1091,7 +1986,7 @@ actor QQMusicHelperProcess {
+@@ -1091,7 +2023,7 @@ actor QQMusicHelperProcess {
          stdinHandle = nil
          stdoutPipe = nil
          stderrPipe = nil
@@ -1002,7 +1039,7 @@ index 81b5c94f..3450f75f 100644
      }
  
      private func markActivity() {
-@@ -1132,6 +2027,7 @@ actor QQMusicHelperProcess {
+@@ -1132,6 +2064,7 @@ actor QQMusicHelperProcess {
      }
  
      private func recordFailure(reason: String) {
@@ -1010,7 +1047,7 @@ index 81b5c94f..3450f75f 100644
          let now = Date()
          recentFailureDates = recentFailureDates.filter {
              now.timeIntervalSince($0) <= failureWindow
-@@ -1152,6 +2048,16 @@ actor QQMusicHelperProcess {
+@@ -1152,6 +2085,16 @@ actor QQMusicHelperProcess {
      }
  
      private func checkCircuitBreaker() throws {
@@ -1027,7 +1064,7 @@ index 81b5c94f..3450f75f 100644
          guard let until = circuitOpenUntil else { return }
          if Date() < until {
              Log.warning("[QQMusicHelperProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)
-@@ -1163,30 +2069,47 @@ actor QQMusicHelperProcess {
+@@ -1163,30 +2106,47 @@ actor QQMusicHelperProcess {
      }
  
      private func findLaunchCandidate() -> LaunchCandidate? {
@@ -1095,7 +1132,7 @@ index 81b5c94f..3450f75f 100644
      }
  
      private func bundledBinaryURL() -> URL {
-@@ -1198,6 +2121,30 @@ actor QQMusicHelperProcess {
+@@ -1198,6 +2158,30 @@ actor QQMusicHelperProcess {
              .appendingPathComponent("qqmusic-helper", isDirectory: false)
      }
  

@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player.xcodeproj/project.pbxproj b/kmgccc_player.xcodeproj/project.pbxproj
-index 26b833ba..29d4952a 100644
+index 26b833ba..c22a6ce0 100644
 --- a/kmgccc_player.xcodeproj/project.pbxproj
 +++ b/kmgccc_player.xcodeproj/project.pbxproj
 @@ -7,6 +7,15 @@
@@ -50,7 +50,41 @@ index 26b833ba..29d4952a 100644
  				C02000000000000000000017 /* CrashReportModels.swift */,
  				C02000000000000000000018 /* CrashReportSanitizer.swift */,
  				C02000000000000000000019 /* CrashReportStore.swift */,
-@@ -695,6 +722,15 @@
+@@ -430,6 +457,7 @@
+ 				9396ADAC2FA12C0100000003 /* Copy MediaRemoteAdapter runtime */,
+ 				93CF3F842F344E9F0004C8E4 /* Copy LDDC runtime */,
+ 				93D91A122FA5000000010001 /* Copy QQMusic helper */,
++				93D91A152FA5000000010004 /* Stamp QQ Music build */,
+ 				93D91A132FA5000000010002 /* Copy SACAD helper */,
+ 				93D91A142FA5000000010003 /* Run Optional Build Hook */,
+ 			);
+@@ -608,6 +636,25 @@
+ 			shellPath = /bin/bash;
+ 			shellScript = "set -euo pipefail\nSRC=\"${PROJECT_DIR}/.build/products/lddc\"\nDST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Tools/lddc-server\"\nif [ ! -x \"${SRC}/lddc-server\" ] || [ ! -d \"${SRC}/_internal\" ]; then\n  echo \"error: Missing LDDC build product.\"\n  echo \"error: Run ./scripts/bootstrap.sh before building.\"\n  exit 1\nfi\nrm -rf \"${DST}\"\nmkdir -p \"$(dirname \"${DST}\")\"\nCOPYFILE_DISABLE=1 /usr/bin/ditto \"${SRC}\" \"${DST}\"\nchmod 755 \"${DST}/lddc-server\"\n/usr/bin/xattr -cr \"${DST}\" 2>/dev/null || true\nwhile IFS= read -r -d '' item; do\n  if /usr/bin/file \"${item}\" | /usr/bin/grep -q 'Mach-O'; then\n    /usr/bin/codesign --force --sign - \"${item}\" >/dev/null 2>&1 || true\n  fi\ndone < <(/usr/bin/find \"${DST}\" -type f -print0)\n";
+ 		};
++		93D91A152FA5000000010004 /* Stamp QQ Music build */ = {
++			isa = PBXShellScriptBuildPhase;
++			alwaysOutOfDate = 1;
++			buildActionMask = 2147483647;
++			files = (
++			);
++			inputFileListPaths = (
++			);
++			inputPaths = (
++			);
++			name = "Stamp QQ Music build";
++			outputFileListPaths = (
++			);
++			outputPaths = (
++			);
++			runOnlyForDeploymentPostprocessing = 0;
++			shellPath = /bin/sh;
++			shellScript = "set -uo pipefail\n# Stamp the app with the commit and time it was built. The online source is\n# delivered as a patch package, so an app can be built from several different\n# trees and directories on one machine; without a stamp there is no way to tell\n# a stale build from an unfixed bug, and \"it still does not work\" costs a round\n# trip through the source to answer.\nPLIST=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/Info.plist\"\n[ -f \"${PLIST}\" ] || exit 0\nCOMMIT=\"$(git -C \"${PROJECT_DIR}\" rev-parse --short HEAD 2>/dev/null || echo unknown)\"\nDIRTY=\"\"\nif ! git -C \"${PROJECT_DIR}\" diff --quiet 2>/dev/null; then DIRTY=\"+\"; fi\nSTAMP=\"${COMMIT}${DIRTY} $(date +%Y-%m-%d\\ %H:%M)\"\n/usr/libexec/PlistBuddy -c \"Delete :QQMusicBuildStamp\" \"${PLIST}\" >/dev/null 2>&1 || true\n/usr/libexec/PlistBuddy -c \"Add :QQMusicBuildStamp string ${STAMP}\" \"${PLIST}\" >/dev/null 2>&1 || true\necho \"note: stamped QQ Music build ${STAMP}\"\n";
++		};
+ 		93D91A122FA5000000010001 /* Copy QQMusic helper */ = {
+ 			isa = PBXShellScriptBuildPhase;
+ 			alwaysOutOfDate = 1;
+@@ -695,6 +742,15 @@
  				C02000000000000000000001 /* kmgccc_playerTests/MetadataMatchScorerTests.swift in Sources */,
  				C02000000000000000000002 /* kmgccc_playerTests/SkinRoutePolicyTests.swift in Sources */,
  				C02000000000000000000005 /* kmgccc_playerTests/CrashReportingTests.swift in Sources */,

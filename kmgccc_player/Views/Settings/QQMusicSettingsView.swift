@@ -530,6 +530,11 @@ struct QQMusicSettingsView: View {
                 labeledValue("组件版本", helperInfo?.helperVersion ?? "未知")
                 labeledValue("协议版本", helperInfo.map { "v\($0.protocolVersion)" } ?? "未知")
                 labeledValue("QQMusicAPI 版本", helperInfo?.libraryVersion ?? "未知")
+                // Which build this is. The online source ships as a patch package
+                // and an app can be built from several trees on one machine, so
+                // without this line a stale build and an unfixed bug look
+                // identical from the outside.
+                labeledValue("本功能构建", QQMusicBuildStamp.text)
 
                 Text("QQ 音乐的接口是逆向来的，随时可能变化。Helper 与应用分离，可单独更新：把新版 qqmusic-helper 及其 _internal.bundle 放入下方目录即可，无需重新构建应用。")
                     .settingsDescriptionStyle()

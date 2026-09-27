@@ -947,7 +947,7 @@ final class QQMusicOnlineCoordinator {
             // Another region may have been picked while this was in flight; its
             // response is the one that belongs on screen.
             guard newSongsRegion == region else { return }
-            let changed = fetched.map(\.songMid) != newSongs.map(\.songMid)
+            let changed = fetched.map(\.displayComparisonKey) != newSongs.map(\.displayComparisonKey)
             if changed || !servedFromCache {
                 newSongs = fetched
             }
@@ -1043,11 +1043,12 @@ final class QQMusicOnlineCoordinator {
         do {
             // 2. the whole folder.
             let complete = try await fetchCompleteLikedSongs()
-            // The cover takes part in "did it change": it is derived, so a fix to
-            // how covers are produced has to be able to supersede what is cached
-            // rather than being dismissed as "same tracks, nothing changed".
-            let changed = complete.tracks.map(\.songMid) != likedSongs.map(\.songMid)
-                || complete.tracks.map(\.imageURL) != likedSongs.map(\.imageURL)
+            // Compared by everything the row shows (see
+            // `displayComparisonKey`), not by song id: a fix to how a cover, an
+            // album id or a singer list is produced has to be able to supersede
+            // what is on screen rather than being dismissed as "same tracks".
+            let changed = complete.tracks.map(\.displayComparisonKey)
+                != likedSongs.map(\.displayComparisonKey)
             likedSongsTotal = max(complete.total, complete.tracks.count)
             // This response enumerates the folder, so it is the cheapest source of
             // the liked-mid set the hearts read: one request answers both.
@@ -1804,7 +1805,8 @@ final class QQMusicOnlineCoordinator {
             // list is exactly what this check cannot see. A force always fetches
             // the complete list, so the button always means something.
             let unchanged = !force
-                && first.tracks.map(\.songMid) == playlistTracks.prefix(first.tracks.count).map(\.songMid)
+                && first.tracks.map(\.displayComparisonKey)
+                    == playlistTracks.prefix(first.tracks.count).map(\.displayComparisonKey)
                 && (first.total <= 0 || playlistTracks.count == first.total)
             guard !unchanged else { return }
 

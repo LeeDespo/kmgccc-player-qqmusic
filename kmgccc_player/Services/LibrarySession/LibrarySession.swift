@@ -104,6 +104,7 @@ final class LibrarySession: LibrarySessionLifecycle {
 
         // Constructed here rather than injected so the online source always
         // targets this session's library, player and staging root.
+        Log.info("[QQMusicOnline] build \(QQMusicBuildStamp.text)", category: .import)
         let onlineCoordinator = QQMusicOnlineCoordinator()
         onlineCoordinator.importService = fileImportService
         onlineCoordinator.paths = context.paths
