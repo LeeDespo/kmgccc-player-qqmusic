@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-index 81b5c94f..c218033a 100644
+index 81b5c94f..0fc83580 100644
 --- a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 +++ b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-@@ -104,6 +104,330 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
+@@ -104,6 +104,333 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
      let changed: Bool
  }
  
@@ -251,6 +251,9 @@ index 81b5c94f..c218033a 100644
 +    var coverURL: String?
 +    var songCount: Int?
 +    var albumCount: Int?
++    /// Followers. Present for a followed singer (both channels report it) and nil
++    /// for a search hit that did not carry it — the row then shows no count.
++    var fanCount: Int?
 +
 +    var id: String { singerMid }
 +}
@@ -333,7 +336,7 @@ index 81b5c94f..c218033a 100644
  nonisolated enum MetadataDetailApplicator {
      static func applyMissingFields(
          _ detail: ArtistMetadataDetail,
-@@ -627,6 +951,20 @@ actor QQMusicHelperProcess {
+@@ -627,6 +954,20 @@ actor QQMusicHelperProcess {
          let ok: Bool
          let candidates: [QQMusicArtworkCandidate]?
          let detail: QQMusicMetadataDetail?
@@ -354,7 +357,7 @@ index 81b5c94f..c218033a 100644
          let error: String?
      }
  
-@@ -668,18 +1006,166 @@ actor QQMusicHelperProcess {
+@@ -668,18 +1009,171 @@ actor QQMusicHelperProcess {
          let duration: Int?
      }
  
@@ -381,6 +384,11 @@ index 81b5c94f..c218033a 100644
 +
 +    private struct SearchArtistsParams: Encodable, Sendable {
 +        let keyword: String
++        let limit: Int
++    }
++
++    private struct FollowedArtistsParams: Encodable, Sendable {
++        let page: Int
 +        let limit: Int
 +    }
 +
@@ -526,7 +534,7 @@ index 81b5c94f..c218033a 100644
      private var recentStderr = ""
      private var pendingRequests: [String: PendingRequest] = [:]
      private var idleShutdownTask: Task<Void, Never>?
-@@ -776,6 +1262,427 @@ actor QQMusicHelperProcess {
+@@ -776,6 +1270,435 @@ actor QQMusicHelperProcess {
          )
      }
  
@@ -759,6 +767,14 @@ index 81b5c94f..c218033a 100644
 +        return response.artistDetail
 +    }
 +
++    func fetchFollowedArtists(page: Int = 1, limit: Int = 30) async throws -> [QQMusicOnlineArtist] {
++        let response = try await sendRetrying(
++            method: "fetch_followed_artists",
++            params: FollowedArtistsParams(page: page, limit: limit)
++        )
++        return response.artists ?? []
++    }
++
 +    func searchArtists(keyword: String, limit: Int = 20) async throws -> [QQMusicOnlineArtist] {
 +        let response = try await sendRetrying(
 +            method: "search_artists",
@@ -954,7 +970,7 @@ index 81b5c94f..c218033a 100644
      func terminate() {
          stopProcess(failingPendingWith: QQMusicHelperError.cancelled)
      }
-@@ -968,9 +1875,11 @@ actor QQMusicHelperProcess {
+@@ -968,9 +1891,11 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -968,7 +984,7 @@ index 81b5c94f..c218033a 100644
              }
          }
  
-@@ -981,7 +1890,9 @@ actor QQMusicHelperProcess {
+@@ -981,7 +1906,9 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -979,7 +995,7 @@ index 81b5c94f..c218033a 100644
              Task {
                  await self?.appendStderr(text)
              }
-@@ -1006,20 +1917,41 @@ actor QQMusicHelperProcess {
+@@ -1006,20 +1933,41 @@ actor QQMusicHelperProcess {
          self.stdinHandle = stdinPipe.fileHandleForWriting
          self.stdoutPipe = stdoutPipe
          self.stderrPipe = stderrPipe
@@ -1030,7 +1046,7 @@ index 81b5c94f..c218033a 100644
          }
      }
  
-@@ -1091,7 +2023,7 @@ actor QQMusicHelperProcess {
+@@ -1091,7 +2039,7 @@ actor QQMusicHelperProcess {
          stdinHandle = nil
          stdoutPipe = nil
          stderrPipe = nil
@@ -1039,7 +1055,7 @@ index 81b5c94f..c218033a 100644
      }
  
      private func markActivity() {
-@@ -1132,6 +2064,7 @@ actor QQMusicHelperProcess {
+@@ -1132,6 +2080,7 @@ actor QQMusicHelperProcess {
      }
  
      private func recordFailure(reason: String) {
@@ -1047,7 +1063,7 @@ index 81b5c94f..c218033a 100644
          let now = Date()
          recentFailureDates = recentFailureDates.filter {
              now.timeIntervalSince($0) <= failureWindow
-@@ -1152,6 +2085,16 @@ actor QQMusicHelperProcess {
+@@ -1152,6 +2101,16 @@ actor QQMusicHelperProcess {
      }
  
      private func checkCircuitBreaker() throws {
@@ -1064,7 +1080,7 @@ index 81b5c94f..c218033a 100644
          guard let until = circuitOpenUntil else { return }
          if Date() < until {
              Log.warning("[QQMusicHelperProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)
-@@ -1163,30 +2106,47 @@ actor QQMusicHelperProcess {
+@@ -1163,30 +2122,47 @@ actor QQMusicHelperProcess {
      }
  
      private func findLaunchCandidate() -> LaunchCandidate? {
@@ -1132,7 +1148,7 @@ index 81b5c94f..c218033a 100644
      }
  
      private func bundledBinaryURL() -> URL {
-@@ -1198,6 +2158,30 @@ actor QQMusicHelperProcess {
+@@ -1198,6 +2174,30 @@ actor QQMusicHelperProcess {
              .appendingPathComponent("qqmusic-helper", isDirectory: false)
      }
  

@@ -124,13 +124,19 @@ actor QQMusicDownloadService {
     func download(
         _ track: QQMusicOnlineTrack,
         stagingDirectory: URL,
+        lyricChannel: QQMusicFetchChannel = .helper,
         progressHandler: (@Sendable (QQMusicDownloadPhase) -> Void)? = nil
     ) async throws -> QQMusicStagedDownload {
         if let existing = inFlight[track.songMid] {
             return try await existing.value
         }
         let task = Task<QQMusicStagedDownload, Error> {
-            try await performDownload(track, stagingDirectory: stagingDirectory, progressHandler: progressHandler)
+            try await performDownload(
+                track,
+                stagingDirectory: stagingDirectory,
+                lyricChannel: lyricChannel,
+                progressHandler: progressHandler
+            )
         }
         inFlight[track.songMid] = task
         defer { inFlight[track.songMid] = nil }
@@ -151,6 +157,7 @@ actor QQMusicDownloadService {
     private func performDownload(
         _ track: QQMusicOnlineTrack,
         stagingDirectory: URL,
+        lyricChannel: QQMusicFetchChannel,
         progressHandler: (@Sendable (QQMusicDownloadPhase) -> Void)?
     ) async throws -> QQMusicStagedDownload {
         let songMid = track.songMid
@@ -193,7 +200,7 @@ actor QQMusicDownloadService {
         // discard an otherwise good download.
         record(.fetchingExtras, for: songMid, handler: progressHandler)
         async let artwork = fetchArtwork(for: track)
-        async let lyrics = fetchLyrics(for: track)
+        async let lyrics = fetchLyrics(for: track, preferring: lyricChannel)
         let (artworkData, lyricPayload) = await (artwork, lyrics)
 
         record(.done, for: songMid, handler: progressHandler)
@@ -231,16 +238,41 @@ actor QQMusicDownloadService {
     /// The direct HTTP client is tried first (roughly a quarter of the helper's
     /// round trip) with the helper as the fallback, so a change in the web path
     /// cannot cost an import its lyrics.
-    private func fetchLyrics(for track: QQMusicOnlineTrack) async -> QQMusicLyricPayload? {
+    /// The lyric for a track being downloaded.
+    ///
+    /// The channel is the user's choice for lyrics (Settings → 在线内容) and the
+    /// other one is the fallback, exactly as on the browse reads. It matters more
+    /// here than there: the helper's lyric can carry word-level timing, so a
+    /// track downloaded through the web path and one downloaded through the
+    /// helper end up with visibly different lyrics in the library — and the lyric
+    /// is written into the library once, at download time, so the choice is made
+    /// once per track.
+    private func fetchLyrics(
+        for track: QQMusicOnlineTrack,
+        preferring channel: QQMusicFetchChannel
+    ) async -> QQMusicLyricPayload? {
         let payload: QQMusicLyricPayload?
-        do {
-            payload = try await QQMusicWebAPI.shared.fetchLyric(songMid: track.songMid)
-        } catch {
-            Log.warning(
-                "[QQMusicDownload] web lyric failed, falling back to helper: \(error)",
-                category: .import
-            )
-            payload = try? await helper.fetchLyric(songMid: track.songMid, songId: track.songId)
+        switch channel {
+        case .helper:
+            do {
+                payload = try await helper.fetchLyric(songMid: track.songMid, songId: track.songId)
+            } catch {
+                Log.warning(
+                    "[QQMusicDownload] helper lyric failed, falling back to the web path: \(error)",
+                    category: .import
+                )
+                payload = try? await QQMusicWebAPI.shared.fetchLyric(songMid: track.songMid)
+            }
+        case .web:
+            do {
+                payload = try await QQMusicWebAPI.shared.fetchLyric(songMid: track.songMid)
+            } catch {
+                Log.warning(
+                    "[QQMusicDownload] web lyric failed, falling back to helper: \(error)",
+                    category: .import
+                )
+                payload = try? await helper.fetchLyric(songMid: track.songMid, songId: track.songId)
+            }
         }
         guard let payload, !(payload.lyric ?? "").isEmpty else { return nil }
         return payload

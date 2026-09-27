@@ -35,7 +35,7 @@ nonisolated enum QQMusicCacheCategory: String, Sendable {
     /// "我喜欢" tracks, keyed by page. Short TTL: the user may have just liked
     /// something on their phone.
     case likedSongs
-    /// The account's own playlists and favorited albums.
+    /// The account's own playlists, favorited albums and followed singers.
     case userLibrary
     /// Radio station groups; the list is stable for a long time.
     case radioStations

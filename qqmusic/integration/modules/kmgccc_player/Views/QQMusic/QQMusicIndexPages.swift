@@ -112,6 +112,70 @@ struct QQMusicPlaylistIndexPage: View {
     }
 }
 
+// MARK: - Followed artists
+
+/// 关注的歌手, on the same row style as the other indexes.
+struct QQMusicArtistIndexPage: View {
+
+    let mode: HomeLayoutMode
+
+    /// The columns this page aligns to. Supplied by the canvas.
+    @Environment(\.qqMusicColumnInsets) private var insets
+    @Environment(QQMusicOnlineCoordinator.self) private var coordinator
+    @Environment(QQMusicNavigation.self) private var navigation
+
+    var body: some View {
+        indexHeader(
+            title: "关注的歌手",
+            count: coordinator.followedArtists.count,
+            leftPad: insets.left,
+            rightPad: insets.right
+        )
+
+        if coordinator.followedArtists.isEmpty {
+            if coordinator.isLoadingFollowedArtists {
+                QQMusicListStateView(kind: .loading("正在载入…"))
+            } else {
+                QQMusicListStateView(
+                    kind: .empty("还没有关注的歌手", systemImage: "person.crop.circle")
+                )
+            }
+        } else {
+            VStack(spacing: 0) {
+                LazyVStack(spacing: 0) {
+                    ForEach(coordinator.followedArtists) { artist in
+                        QQMusicEntityRow(
+                            title: artist.name,
+                            subtitle: nil,
+                            meta: Self.fanText(artist.fanCount),
+                            artworkURL: artist.coverURL,
+                            circularArtwork: true,
+                            placeholderSystemImage: "person.fill",
+                            onOpen: { navigation.push(.artist(QQMusicArtistRef(artist))) }
+                        ) {
+                            AnyView(
+                                Button {
+                                    navigation.push(.artist(QQMusicArtistRef(artist)))
+                                } label: {
+                                    Label("打开歌手", systemImage: "person.crop.circle")
+                                }
+                            )
+                        }
+                    }
+                }
+                Color.clear.frame(height: QQMusicPageCanvas<EmptyView>.listBottomInset)
+            }
+        }
+    }
+
+    /// "1.2 万粉丝". Only the web channel reports a follower count, so a list
+    /// served by the helper simply shows no count rather than a zero.
+    static func fanText(_ count: Int?) -> String? {
+        guard let count, count > 0 else { return nil }
+        return QQMusicTrackListChrome.compactCount(count, suffix: "粉丝")
+    }
+}
+
 // MARK: - Albums
 
 struct QQMusicAlbumIndexPage: View {

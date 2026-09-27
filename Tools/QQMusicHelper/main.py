@@ -49,7 +49,7 @@ MAX_IMAGE_SIZE = 800
 # Bumped when the request/response shapes below change incompatibly. The host
 # refuses to talk to a helper whose protocol major it does not understand, so a
 # newer helper build cannot silently mis-parse.
-HELPER_VERSION = "2.1.0"
+HELPER_VERSION = "2.2.0"
 PROTOCOL_VERSION = 2
 
 # Advertised by `get_helper_info` and checked by the dispatcher, so a host can
@@ -84,6 +84,7 @@ KNOWN_METHODS: tuple[str, ...] = (
     "search_track_artwork",
     "search_album_artwork",
     "fetch_artist_biography",
+    "fetch_followed_artists",
     "fetch_album_detail",
     "fetch_song_detail",
 )
@@ -1902,6 +1903,48 @@ async def search_artists(params: dict[str, Any]) -> list[dict[str, Any]]:
     return payload
 
 
+async def fetch_followed_artists(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """The singers the account follows ("关注的歌手").
+
+    Addressed by `HostUin` = the credential's *encrypted* uin, which the library
+    hands to its caller rather than deriving. (`music.musicasset.SingerFavRead`,
+    the endpoint this was first tried with, answers 500003 — the capability was
+    always there, that route is not it.)
+    """
+    _require_dependency()
+    credential = load_credential()
+    if credential is None:
+        raise ValueError("需要登录后才能读取关注的歌手")
+    euin = str(getattr(credential, "encrypt_uin", "") or "").strip()
+    if not euin:
+        raise ValueError("登录凭据缺少 encrypt_uin，请重新登录")
+
+    page = max(1, _first_int(params, ("page",)) or 1)
+    limit = max(1, min(_first_int(params, ("limit",)) or 30, 50))
+    response = await _execute_client_request(
+        lambda client: client.user.get_follow_singers(euin, page=page, num=limit)
+    )
+    artists: list[dict[str, Any]] = []
+    for item in _items_from_search_result(response, ("users", "Users", "List")):
+        mid = _first_text(item, ("MID", "mid", "singerMid"))
+        if not mid:
+            continue
+        artists.append(
+            {
+                "source": SOURCE,
+                "singerMid": mid,
+                "name": _first_text(item, ("Name", "name", "singerName")),
+                "coverURL": _sanitize_image_url(
+                    _first_text(item, ("AvatarUrl", "avatarUrl", "pic")) or _singer_cover_url(mid)
+                ),
+                "songCount": None,
+                "albumCount": None,
+                "fanCount": _first_int(item, ("FanNum", "fanNum")),
+            }
+        )
+    return artists
+
+
 async def fetch_artist_biography(params: dict[str, Any]) -> dict[str, Any]:
     """Artist biography and basic facts, by singer mid.
 
@@ -2076,6 +2119,14 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
         artists = await search_artists(params)
         duration_ms = int((time.monotonic() - started_at) * 1000)
         _log(f"response id={request_id} method={method} artists={len(artists)} durationMs={duration_ms}")
+        return {"id": request_id, "ok": True, "artists": artists}
+    elif method == "fetch_followed_artists":
+        artists = await fetch_followed_artists(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(
+            f"response id={request_id} method={method} "
+            f"artists={len(artists)} durationMs={duration_ms}"
+        )
         return {"id": request_id, "ok": True, "artists": artists}
     elif method == "fetch_artist_biography":
         detail = await fetch_artist_biography(params)

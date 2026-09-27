@@ -400,17 +400,27 @@ struct QQMusicSettingsView: View {
             SettingsHeaderLabel(title: "在线内容", systemImage: "square.grid.2x2")
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("“猜你喜欢”每次向上游取 5 首。滑到底或当前队列快播完时会自动取下一批，并过滤掉已在列表里的歌曲。")
+                Text("在线内容来自两条通道，可以分别指定用哪条。**指定的那条先试，另一条仍然兜底**——所以选哪条都不会把某个页面弄坏。")
                     .settingsDescriptionStyle()
-                labeledValue("每次取回", "5 首／次（上游限制）")
-                Text("推荐、歌单与封面会缓存在本地，短时间内重复进入不会重新请求上游，这也是避免风控的主要手段。")
-                    .settingsDescriptionStyle()
+
+                ForEach(QQMusicChannelSubject.allCases) { subject in
+                    channelRow(subject)
+                    if subject != QQMusicChannelSubject.allCases.last {
+                        Divider().opacity(0.4)
+                    }
+                }
 
                 Divider().opacity(0.4)
 
-                Text("“我的”页可查看账号的收藏与自建歌单（我喜欢 / 收藏专辑 / 我的歌单）。")
+                Text("以下内容只有一条通道能取，所以没有可选：")
                     .settingsDescriptionStyle()
-                Text("收藏（喜欢）可在播放栏直接操作，上游需要几秒同步。歌单的新建、改名、增删目前无法在应用内完成。")
+                ForEach(QQMusicLockedContent.allCases) { locked in
+                    lockedRow(locked)
+                }
+
+                Divider().opacity(0.4)
+
+                Text("推荐、歌单与封面会缓存在本地，短时间内重复进入不会重新请求上游，这也是避免风控的主要手段。“猜你喜欢”每次向上游取 5 首，滑到底或队列快播完时自动取下一批。")
                     .settingsDescriptionStyle()
             }
             .padding(SettingsStyleTokens.groupPadding)
@@ -435,10 +445,76 @@ struct QQMusicSettingsView: View {
                 likeButtonRow
                 Divider().opacity(0.4)
                 preloadRow
+                Divider().opacity(0.4)
+                launchHomeRow
             }
             .padding(SettingsStyleTokens.groupPadding)
             .background(sectionBackground)
         }
+    }
+
+    /// One content kind's channel, as a menu picker — the same control the
+    /// download-quality row above it uses.
+    @ViewBuilder
+    private func channelRow(_ subject: QQMusicChannelSubject) -> some View {
+        let settings = AppSettings.shared
+        let selection = Binding(
+            get: { settings.qqMusicChannel(for: subject) },
+            set: { settings.setQQMusicChannel($0, for: subject) }
+        )
+
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(subject.displayName).settingsRowLabelStyle()
+                    Text(subject.scope).settingsDescriptionStyle()
+                }
+                Spacer(minLength: 16)
+                Picker("", selection: selection) {
+                    ForEach(QQMusicFetchChannel.allCases) { channel in
+                        Text(channel.displayName).tag(channel)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+            Text(subject.channelNote).settingsDescriptionStyle()
+        }
+    }
+
+    /// Content only one channel serves: shown, not hidden, with the reason — the
+    /// app's own convention for a locked control (`lockedSharingRow` in the data
+    /// settings keeps the switch visible and disabled for the same reason).
+    @ViewBuilder
+    private func lockedRow(_ locked: QQMusicLockedContent) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                Text(locked.displayName).settingsRowLabelStyle()
+                Spacer(minLength: 16)
+                Picker("", selection: .constant(QQMusicFetchChannel.helper)) {
+                    Text(QQMusicFetchChannel.helper.displayName).tag(QQMusicFetchChannel.helper)
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .fixedSize()
+                .disabled(true)
+            }
+            Text(locked.reason).settingsDescriptionStyle()
+        }
+        .opacity(0.55)
+    }
+
+    private var launchHomeRow: some View {
+        let settings = AppSettings.shared
+        return SettingsSwitchRow(
+            title: "启动时进入 QQ 音乐",
+            isOn: Binding(
+                get: { settings.qqMusicLaunchHome },
+                set: { settings.qqMusicLaunchHome = $0 }
+            ),
+            detail: "打开应用直接进入 QQ 音乐专属页面，而不是本地资料库。切换发生在首帧渲染之前，所以不会先闪一下本地主页。"
+        )
     }
 
     private var prefetchDepthRow: some View {

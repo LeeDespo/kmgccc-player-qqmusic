@@ -58,6 +58,9 @@ final class QQMusicOnlineCoordinator {
     private(set) var likedSongs: [QQMusicOnlineTrack] = []
     private(set) var likedSongsTotal = 0
     private(set) var likedAlbums: [QQMusicOnlineAlbum] = []
+    /// The singers the account follows.
+    private(set) var followedArtists: [QQMusicOnlineArtist] = []
+    private(set) var isLoadingFollowedArtists = false
     private(set) var userPlaylists: [QQMusicOnlinePlaylist] = []
     // Radio stations
     private(set) var radioGroups: [QQMusicRadioGroup] = []
@@ -338,6 +341,33 @@ final class QQMusicOnlineCoordinator {
     /// user who is simply signed out does not get a warning on every call.
     private func webFirst<T>(
         _ label: String,
+        subject: QQMusicChannelSubject,
+        web: () async throws -> T,
+        helper: () async throws -> T
+    ) async throws -> T {
+        // Which channel is tried first is the user's choice per subject; the other
+        // one is always the fallback, whichever way round the choice is. That is
+        // the whole contract: preferring a channel must not be able to break a
+        // page that the other channel can serve.
+        let preferred = AppSettings.shared.qqMusicChannel(for: subject)
+        switch preferred {
+        case .web:
+            return try await webThen(label, web: web, helper: helper)
+        case .helper:
+            do {
+                return try await helper()
+            } catch {
+                Log.warning(
+                    "[QQMusicOnline] helper \(label) failed, falling back to the web path: \(error)",
+                    category: .import
+                )
+                return try await web()
+            }
+        }
+    }
+
+    private func webThen<T>(
+        _ label: String,
         web: () async throws -> T,
         helper: () async throws -> T
     ) async throws -> T {
@@ -360,6 +390,7 @@ final class QQMusicOnlineCoordinator {
     private func fetchLikedSongs(page: Int, limit: Int) async throws -> QQMusicLikedSongs {
         try await webFirst(
             "liked-songs",
+            subject: .accountLists,
             web: { try await self.webAPI.fetchLikedSongs(page: page, limit: limit) },
             helper: { try await self.helper.fetchLikedSongs(page: page, limit: limit) }
         )
@@ -368,14 +399,62 @@ final class QQMusicOnlineCoordinator {
     private func fetchLikedAlbums(limit: Int = 30) async throws -> [QQMusicOnlineAlbum] {
         try await webFirstList(
             "liked-albums",
+            subject: .accountLists,
             web: { try await self.webAPI.fetchLikedAlbums(limit: limit) },
             helper: { try await self.helper.fetchLikedAlbums(limit: limit) }
         )
     }
 
+    private func fetchFollowedArtists(limit: Int = 30) async throws -> [QQMusicOnlineArtist] {
+        try await webFirstList(
+            "followed-artists",
+            subject: .followedArtists,
+            web: { try await self.webAPI.fetchFollowedArtists(limit: limit) },
+            helper: { try await self.helper.fetchFollowedArtists(limit: limit) }
+        )
+    }
+
+    /// Load 关注的歌手, in the shape every account list here uses: paint the cache,
+    /// fetch the list, replace it in one step only if it differs.
+    func loadFollowedArtists(force: Bool = false) async {
+        guard !isLoadingFollowedArtists else { return }
+        if !force, !followedArtists.isEmpty { return }
+        if backoffRemaining() != nil {
+            scheduleRetryAfterBackoff()
+            return
+        }
+        isLoadingFollowedArtists = true
+        defer { isLoadingFollowedArtists = false }
+
+        if followedArtists.isEmpty,
+           let store = cacheStore,
+           let data = await store.staleCatalog(.userLibrary, key: "followedArtists"),
+           let cached = try? JSONDecoder().decode([QQMusicOnlineArtist].self, from: data),
+           !cached.isEmpty {
+            followedArtists = cached
+        }
+
+        do {
+            let fetched = try await fetchFollowedArtists()
+            if let store = cacheStore, !fetched.isEmpty,
+               let data = try? JSONEncoder().encode(fetched) {
+                await store.storeCatalog(data, category: .userLibrary, key: "followedArtists")
+            }
+            // Same rule as the other account lists: replace wholesale, but only
+            // when the list actually differs.
+            let key: (QQMusicOnlineArtist) -> String = { "\($0.singerMid)|\($0.name)|\($0.coverURL ?? "")" }
+            if fetched.map(key) != followedArtists.map(key) {
+                followedArtists = fetched
+            }
+        } catch {
+            Log.warning("[QQMusicOnline] followed artists failed: \(noteFailure(error))", category: .import)
+        }
+    }
+
     private func fetchUserPlaylists() async throws -> [QQMusicOnlinePlaylist] {
         try await webFirstList(
             "user-playlists",
+            subject: .accountLists,
             web: { try await self.webAPI.fetchUserPlaylists() },
             helper: { try await self.helper.fetchUserPlaylists() }
         )
@@ -394,11 +473,13 @@ final class QQMusicOnlineCoordinator {
     /// last page.
     private func webFirstList<T>(
         _ label: String,
+        subject: QQMusicChannelSubject,
         web: () async throws -> [T],
         helper: () async throws -> [T]
     ) async throws -> [T] {
         try await webFirst(
             label,
+            subject: subject,
             web: {
                 let items = try await web()
                 guard !items.isEmpty else {
@@ -416,6 +497,7 @@ final class QQMusicOnlineCoordinator {
     ) async throws -> QQMusicLyricPayload {
         try await webFirst(
             "lyric",
+            subject: .lyrics,
             web: { try await self.webAPI.fetchLyric(songMid: songMid) },
             helper: { try await self.helper.fetchLyric(songMid: songMid, songId: songId) }
         )
@@ -435,6 +517,7 @@ final class QQMusicOnlineCoordinator {
     ) async throws -> (tracks: [QQMusicOnlineTrack], total: Int) {
         try await webFirst(
             "playlist-page",
+            subject: .trackLists,
             web: { try await self.webAPI.fetchPlaylistTracks(songlistId: songlistId, offset: offset, limit: limit) },
             helper: {
                 // The helper pages by number, not by offset. Deriving the page
@@ -506,6 +589,9 @@ final class QQMusicOnlineCoordinator {
 
         case .likedAlbums:
             await loadLikedAlbums(force: force)
+
+        case .followedArtists:
+            await loadFollowedArtists(force: force)
 
         case .newSongs(let region):
             await loadNewSongs(region: region, force: force)
@@ -673,14 +759,12 @@ final class QQMusicOnlineCoordinator {
         switch page {
         case .likedSongs, .newSongs, .playlist, .album, .toplist:
             return true
-        case .home, .userPlaylists, .likedAlbums, .toplists, .radio, .recommend,
-             .search, .radioStation, .artist:
+        case .home, .userPlaylists, .likedAlbums, .followedArtists, .toplists,
+             .radio, .recommend, .search, .radioStation, .artist:
             return false
         }
     }
 
-    /// Whether an upstream failure looks like rate limiting, so we back off
-    /// instead of retrying immediately.
     /// One line describing a failure, for the log.
     ///
     /// Every failure path must go through this: recognising rate limiting is
@@ -771,6 +855,7 @@ final class QQMusicOnlineCoordinator {
         await loadLikedSongs(force: force)
         await loadLikedAlbums(force: force)
         await loadUserPlaylists(force: force)
+        await loadFollowedArtists(force: force)
     }
 
     func preloadAtLaunch() async {
@@ -2520,7 +2605,8 @@ final class QQMusicOnlineCoordinator {
             staging = try await downloader.download(
                 track,
                 stagingDirectory: paths.importStagingRootURL
-                    .appendingPathComponent("qqmusic", isDirectory: true)
+                    .appendingPathComponent("qqmusic", isDirectory: true),
+                lyricChannel: AppSettings.shared.qqMusicChannel(for: .lyrics)
             ) { [weak self] phase in
                 Task { @MainActor [weak self] in
                     self?.downloadPhases[track.songMid] = phase

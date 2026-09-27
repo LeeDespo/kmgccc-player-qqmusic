@@ -42,7 +42,17 @@ struct QQMusicPageRouter: View {
             // nothing to do with where the user should land.
             scrollResetKey: navigation.displayKey
         ) { insets, mode in
+            // One page replaces another in place, and the swap is animated the way
+            // the app animates its own page changes: a directional move plus a
+            // fade, on the curve `HomeInsightsSection` uses for the same job. The
+            // `.id` is what makes SwiftUI treat the two pages as different views,
+            // and the explicit `.animation(_:value:)` is needed because the canvas
+            // strips animations from its scroll content (a child's modifier runs
+            // after the parent's, so this restores it for this value only).
             pageContent(insets: insets, mode: mode)
+                .id(navigation.displayKey)
+                .transition(pageTransition)
+                .animation(.smooth(duration: 0.32), value: navigation.displayKey)
         }
         // 查看详情 from a row's 更多 menu. Presented here rather than by the row
         // itself: rows are recycled as they scroll, and a sheet they owned would
@@ -95,6 +105,18 @@ struct QQMusicPageRouter: View {
         }
     }
 
+    /// Deeper pages slide in from the trailing edge and leave towards the
+    /// leading one; going back reverses both. Copied from
+    /// `HomeInsightsSection.monthTransition`, which does the same for a calendar's
+    /// direction and is the app's only other directional page change.
+    private var pageTransition: AnyTransition {
+        let forward = navigation.lastTransitionDirection >= 0
+        return .asymmetric(
+            insertion: .move(edge: forward ? .trailing : .leading).combined(with: .opacity),
+            removal: .move(edge: forward ? .leading : .trailing).combined(with: .opacity)
+        )
+    }
+
     /// One page per case. Every page reads its column insets from the
     /// environment (set by the canvas), so nothing has to be threaded through
     /// here — and nothing can be forgotten.
@@ -119,6 +141,8 @@ struct QQMusicPageRouter: View {
             QQMusicPlaylistIndexPage(mode: mode)
         case .likedAlbums:
             QQMusicAlbumIndexPage(mode: mode)
+        case .followedArtists:
+            QQMusicArtistIndexPage(mode: mode)
         case .toplists:
             QQMusicToplistIndexPage(mode: mode)
         case .radio:

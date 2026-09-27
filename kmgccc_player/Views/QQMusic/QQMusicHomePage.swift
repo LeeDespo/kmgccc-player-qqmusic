@@ -38,6 +38,9 @@ struct QQMusicHomePage: View {
     @Environment(\.qqMusicColumnInsets) private var insets
     @Environment(QQMusicOnlineCoordinator.self) private var coordinator
 
+    /// Which entry of the recommend feed the 精选 card is showing.
+    @State private var heroIndex = 0
+
     /// Cards shown per shelf before deferring to the full list.
     ///
     /// The same trade the library's home makes: a bounded slice keeps the
@@ -55,12 +58,68 @@ struct QQMusicHomePage: View {
             trailingPad: centerRightPad
         )
 
+        heroShelf
         playlistsShelf
         albumsShelf
+        followedArtistsShelf
         newSongsShelf
         toplistsShelf
         radioShelf
         recommendShelf
+    }
+
+    // MARK: - 精选
+
+    /// The featured card, at the top of the page as Home has it.
+    ///
+    /// Its content is the recommend feed — the online source's own "guess you
+    /// like" — because that is what the app's hero is: a preference-weighted pick
+    /// from what the source has to offer. 换一首 moves to the next entry, and asks
+    /// the feed for more when it runs out, so the button never runs dry.
+    @ViewBuilder
+    private var heroShelf: some View {
+        if let track = heroTrack {
+            QQMusicHeroCard(
+                track: track,
+                containerWidth: contentColumnWidth,
+                mode: mode,
+                onPlay: { playHero(track) },
+                onSwitch: switchHero
+            )
+            .padding(.leading, centerLeftPad)
+            .padding(.trailing, centerRightPad)
+        }
+    }
+
+    private var heroTrack: QQMusicOnlineTrack? {
+        let feed = coordinator.recommendFeed
+        guard !feed.isEmpty else { return nil }
+        return feed[heroIndex % feed.count]
+    }
+
+    private func switchHero() {
+        heroIndex &+= 1
+        // The feed is short (the upstream hands back a handful per call), so a
+        // switch that ran past the end asks for more rather than repeating.
+        if heroIndex >= coordinator.recommendFeed.count {
+            Task { await coordinator.extendRecommendFeed() }
+        }
+    }
+
+    private func playHero(_ track: QQMusicOnlineTrack) {
+        let feed = coordinator.recommendFeed
+        let start = feed.firstIndex { $0.songMid == track.songMid } ?? 0
+        Task {
+            await coordinator.startPlayback(feed, startingAt: start, pageable: true)
+        }
+    }
+
+    /// The content column's width, which the wide hero's height follows.
+    private var contentColumnWidth: CGFloat {
+        let center = HomeWindowLayoutState.shared.geometry.centerWidth
+        let fallback = HomeWindowLayoutState.shared.discreteSnapshot.contentWidthBucket
+        let width = center > 1 ? center : CGFloat(fallback)
+        return max(200, width - mode.horizontalPadding * 2)
     }
 
     // MARK: - Shelves
@@ -157,6 +216,41 @@ struct QQMusicHomePage: View {
                             urlString: album.coverURL,
                             size: cardSize,
                             cornerRadius: cardSize * 0.06
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /// 关注的歌手, directly under 收藏专辑 as asked.
+    @ViewBuilder
+    private var followedArtistsShelf: some View {
+        if !coordinator.followedArtists.isEmpty {
+            QQMusicSectionHeader(
+                title: "关注的歌手",
+                mode: mode,
+                seeAllTitle: "查看全部",
+                onSeeAll: { navigation.push(.followedArtists) },
+                subtitle: "\(coordinator.followedArtists.count) 位",
+                leadingPad: centerLeftPad,
+                trailingPad: centerRightPad
+            )
+
+            QQMusicCardRail(mode: mode) {
+                ForEach(coordinator.followedArtists.prefix(shelfLimit)) { artist in
+                    QQMusicCard(
+                        title: artist.name,
+                        subtitle: QQMusicArtistIndexPage.fanText(artist.fanCount),
+                        size: cardSize,
+                        titleColor: .primary,
+                        subtitleColor: .secondary,
+                        onOpen: { navigation.push(.artist(QQMusicArtistRef(artist))) }
+                    ) {
+                        QQMusicArtworkView(
+                            urlString: artist.coverURL,
+                            size: cardSize,
+                            cornerRadius: cardSize / 2
                         )
                     }
                 }

@@ -349,6 +349,9 @@ nonisolated struct QQMusicOnlineArtist: Codable, Equatable, Sendable, Identifiab
     var coverURL: String?
     var songCount: Int?
     var albumCount: Int?
+    /// Followers. Present for a followed singer (both channels report it) and nil
+    /// for a search hit that did not carry it — the row then shows no count.
+    var fanCount: Int?
 
     var id: String { singerMid }
 }
@@ -1032,6 +1035,11 @@ actor QQMusicHelperProcess {
         let limit: Int
     }
 
+    private struct FollowedArtistsParams: Encodable, Sendable {
+        let page: Int
+        let limit: Int
+    }
+
     private struct ArtistMidisParams: Encodable, Sendable {
         let singerMid: String
         let limit: Int
@@ -1489,6 +1497,14 @@ actor QQMusicHelperProcess {
             params: ArtistDetailParams(name: nil, singerMid: singerMid)
         )
         return response.artistDetail
+    }
+
+    func fetchFollowedArtists(page: Int = 1, limit: Int = 30) async throws -> [QQMusicOnlineArtist] {
+        let response = try await sendRetrying(
+            method: "fetch_followed_artists",
+            params: FollowedArtistsParams(page: page, limit: limit)
+        )
+        return response.artists ?? []
     }
 
     func searchArtists(keyword: String, limit: Int = 20) async throws -> [QQMusicOnlineArtist] {

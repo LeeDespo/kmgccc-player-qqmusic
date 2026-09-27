@@ -44,6 +44,13 @@ import Foundation
 nonisolated struct QQMusicWebCredential: Sendable, Equatable {
     let musicID: String
     let musicKey: String
+    /// `encrypt_uin` — the account's *encrypted* id.
+    ///
+    /// Most endpoints address the account by the numeric uin, but the follow
+    /// relation one takes this instead (`HostUin`), and the library does not
+    /// derive it either — it is handed to it by the caller. The helper writes it
+    /// into the credential file, so it is already on disk; this just reads it.
+    let encryptedUin: String
 
     var isUsable: Bool { !musicID.isEmpty && !musicKey.isEmpty }
 
@@ -115,7 +122,12 @@ nonisolated struct QQMusicWebAPI: Sendable {
         let musicID = (object["str_musicid"] as? String)
             ?? (object["musicid"].map { String(describing: $0) } ?? "")
         let musicKey = (object["musickey"] as? String) ?? ""
-        let credential = QQMusicWebCredential(musicID: musicID, musicKey: musicKey)
+        let encryptedUin = (object["encrypt_uin"] as? String) ?? ""
+        let credential = QQMusicWebCredential(
+            musicID: musicID,
+            musicKey: musicKey,
+            encryptedUin: encryptedUin
+        )
         return credential.isUsable ? credential : nil
     }
 
@@ -217,6 +229,46 @@ nonisolated struct QQMusicWebAPI: Sendable {
                 coverURL: Self.albumCoverURL(mid: entry["albummid"] as? String),
                 artist: entry["singername"] as? String,
                 releaseDate: Self.parseTimestamp(entry["pubtime"])
+            )
+        }
+    }
+
+    /// The singers the account follows.
+    ///
+    /// `music.concern.RelationList/GetFollowSingerList` addressed by `HostUin` —
+    /// the credential's *encrypted* uin, not the numeric one. (The module this was
+    /// first tried with, `music.musicasset.SingerFavRead`, answers `500003`; the
+    /// capability was there, the endpoint was wrong.)
+    ///
+    /// Cover URLs come back as `http://y.gtimg.cn/...`, so they go through the
+    /// normaliser like every other cover — the app has no ATS exception and the
+    /// images would otherwise be silently blank.
+    func fetchFollowedArtists(limit: Int = 30) async throws -> [QQMusicOnlineArtist] {
+        guard let credential = loadCredential(), !credential.encryptedUin.isEmpty else {
+            throw QQMusicWebAPIError.noCredential
+        }
+        let request = makeRequest(
+            credential: credential,
+            module: "music.concern.RelationList",
+            method: "GetFollowSingerList",
+            param: ["HostUin": credential.encryptedUin, "From": 0, "Size": limit]
+        )
+        let data = try await send(request)
+        let payload = (data["req_0"] as? [String: Any])?["data"] as? [String: Any]
+        let entries = payload?["List"] as? [[String: Any]] ?? []
+        return entries.compactMap { entry in
+            let mid = (entry["MID"] as? String) ?? (entry["mid"] as? String) ?? ""
+            guard !mid.isEmpty else { return nil }
+            let name = (entry["Name"] as? String) ?? (entry["name"] as? String) ?? ""
+            return QQMusicOnlineArtist(
+                singerMid: mid,
+                name: name.isEmpty ? "未知歌手" : name,
+                coverURL: Self.normalizedArtworkURL(
+                    (entry["AvatarUrl"] as? String) ?? (entry["avatarUrl"] as? String)
+                ),
+                songCount: nil,
+                albumCount: nil,
+                fanCount: Self.parseInt(entry["FanNum"]) ?? Self.parseInt(entry["fanNum"])
             )
         }
     }

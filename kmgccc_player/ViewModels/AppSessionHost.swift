@@ -942,6 +942,20 @@ final class AppSessionHost: ObservableObject {
         } else {
             scheduleDeferredLaunchPromptsIfNeeded()
         }
+        // "Open on the online source", if the user asked for it (QQ Music settings
+        // → 播放与下载). Applied here rather than after the window appears: the
+        // window's `show()` is gated on `hasCompletedInitialSetup`, so setting the
+        // mode before it means the first frame drawn is already the online page —
+        // no flash of the local library on the way. The session exists by now, so
+        // the online surface has something to render.
+        //
+        // Skipped while a debug launch scenario is configured: that harness sets
+        // its own mode later and would fight this.
+        if AppSettings.shared.qqMusicLaunchHome, DebugLaunchScenario.current == nil {
+            qqMusicOnlineCoordinator?.resetBrowsing()
+            uiState.showQQMusicOnline()
+        }
+
         hasCompletedInitialSetup = true
         do {
             try await automationIPCServer?.start()
