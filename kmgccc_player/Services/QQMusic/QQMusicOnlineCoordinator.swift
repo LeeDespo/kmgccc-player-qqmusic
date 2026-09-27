@@ -298,11 +298,20 @@ final class QQMusicOnlineCoordinator {
     /// *finished* `Task` is neither nil nor cancelled, so task identity cannot
     /// answer "is it still feeding the queue?".
     private var isPrefetching = false
-    /// Guards browsing-wide preparation, which several pages can trigger.
-    private var isPreparingForBrowsing = false
+    /// How many browsing-wide preparations are running. A count for the same
+    /// reason as `listLoadsInFlight`: one finishing must not clear the state of
+    /// one still running.
+    private var isPreparingForBrowsing = 0
     /// Bumped whenever a loop starts or is stopped, so a finishing loop can tell
     /// whether the flag still belongs to it.
     private var prefetchGeneration: UInt64 = 0
+    /// The scheduled retry for a rate-limited load. One at a time.
+    private var backoffRetryTask: Task<Void, Never>?
+    /// Bumped per search, so the newest query is the one that lands. One per
+    /// search type: the three run against different endpoints and never overlap.
+    private var searchGeneration: UInt64 = 0
+    private var artistSearchGeneration: UInt64 = 0
+    private var playlistSearchGeneration: UInt64 = 0
 
     init(
         helper: QQMusicHelperProcess = .shared,
@@ -452,9 +461,14 @@ final class QQMusicOnlineCoordinator {
     /// liked-mid set the hearts read from — a row's heart is wrong until that
     /// set has been filled.
     func prepareForBrowsing(force: Bool = false) async {
-        guard !isPreparingForBrowsing else { return }
-        isPreparingForBrowsing = true
-        defer { isPreparingForBrowsing = false }
+        // A count, not a flag, and no early return: this is driven by the
+        // surface's `.task`, which SwiftUI cancels when the surface goes away, so
+        // a re-entry could find the *previous* prepare still "in flight" (its
+        // guard set, its cancellation unobserved for a moment) and drop its own —
+        // landing the page with nothing loaded and no way back except leaving
+        // again. Each loader inside guards itself, so overlap is cheap.
+        isPreparingForBrowsing += 1
+        defer { isPreparingForBrowsing -= 1 }
 
         await loadInitialContentIfNeeded(force: force)
         await ensureLikedSongMidsIfNeeded(force: force)
@@ -554,6 +568,8 @@ final class QQMusicOnlineCoordinator {
     /// the same "start over" gesture as clicking 主页 in the library, so it
     /// lands on the landing page rather than resuming a previous drill-down.
     func resetBrowsing() {
+        backoffRetryTask?.cancel()
+        backoffRetryTask = nil
         navigation.popToRoot()
         // A selection belongs to the page it was started on, so entering from the
         // sidebar drops it along with the history.
@@ -678,12 +694,42 @@ final class QQMusicOnlineCoordinator {
         let text = String(describing: error)
         if text.contains("Ratelimited") || text.contains("风控") || text.contains("安全验证") {
             rateLimitedUntil = Date().addingTimeInterval(30)
+            // Scheduled from here rather than from the loaders' entry checks: this
+            // is the moment the limit is recorded, and the loader that tripped it
+            // is about to return. Relying on the *next* entry to schedule meant a
+            // page whose only load had just been limited sat empty with no retry
+            // pending at all.
+            scheduleRetryAfterBackoff()
             return "访问过于频繁，已暂停请求 30 秒"
         }
         if Self.isLoginRequired(error) {
             return "该接口需要登录 QQ 音乐账号（匿名会话被拒）"
         }
         return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+    }
+
+    /// Come back to the page on screen once the rate-limit backoff expires.
+    ///
+    /// Every loader returns early while backing off, and nothing used to come
+    /// back: a page whose first request was rate-limited stayed empty until the
+    /// user left the online surface and re-entered it — pressing 刷新 did nothing
+    /// either, because that load returns early for the same reason. Scheduling
+    /// one retry turns "empty until you go away and come back" into "a pause".
+    ///
+    /// Deliberately one retry per backoff window, not a loop: if the upstream is
+    /// still refusing, the retry sets a fresh window and schedules the next one,
+    /// which works out to at most two requests a minute — the same thing a user
+    /// pressing 刷新 repeatedly would do, and far below anything that looks like
+    /// abuse.
+    private func scheduleRetryAfterBackoff() {
+        guard let wait = backoffRemaining() else { return }
+        guard backoffRetryTask == nil else { return }
+        backoffRetryTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(wait))
+            guard let self, !Task.isCancelled else { return }
+            self.backoffRetryTask = nil
+            await self.loadContent(for: self.navigation.displayed, force: true)
+        }
     }
 
     private func backoffRemaining() -> TimeInterval? {
@@ -770,7 +816,8 @@ final class QQMusicOnlineCoordinator {
     func loadRecommendFeed(force: Bool = false) async {
         guard !isLoadingFeed else { return }
         if !force, !recommendFeed.isEmpty { return }
-        if let wait = backoffRemaining() {
+        if backoffRemaining() != nil {
+            scheduleRetryAfterBackoff()
             return
         }
         isLoadingFeed = true
@@ -825,7 +872,8 @@ final class QQMusicOnlineCoordinator {
     @discardableResult
     func extendRecommendFeed() async -> [QQMusicOnlineTrack] {
         guard !isExtendingFeed else { return [] }
-        if let wait = backoffRemaining() {
+        if backoffRemaining() != nil {
+            scheduleRetryAfterBackoff()
             return []
         }
         isExtendingFeed = true
@@ -869,7 +917,8 @@ final class QQMusicOnlineCoordinator {
     /// queue is wanted, unlike the guess-you-like radio which yields 5.
     func loadNewSongs(region: QQMusicNewSongRegion, force: Bool = false) async {
         if !force, newSongsRegion == region, !newSongs.isEmpty { return }
-        if let wait = backoffRemaining() {
+        if backoffRemaining() != nil {
+            scheduleRetryAfterBackoff()
             return
         }
         // A region is a different list, not a refresh of the same one: showing
@@ -895,6 +944,9 @@ final class QQMusicOnlineCoordinator {
 
         do {
             let fetched = try await helper.fetchNewSongs(region: region)
+            // Another region may have been picked while this was in flight; its
+            // response is the one that belongs on screen.
+            guard newSongsRegion == region else { return }
             let changed = fetched.map(\.songMid) != newSongs.map(\.songMid)
             if changed || !servedFromCache {
                 newSongs = fetched
@@ -912,18 +964,26 @@ final class QQMusicOnlineCoordinator {
             searchedPlaylists = []
             return
         }
-        if let wait = backoffRemaining() {
+        if backoffRemaining() != nil {
+            scheduleRetryAfterBackoff()
             return
         }
+        // Newest wins, for the same reason as the artist search.
+        playlistSearchGeneration &+= 1
+        let generation = playlistSearchGeneration
         isSearchingPlaylists = true
-        defer { isSearchingPlaylists = false }
+        defer {
+            if generation == playlistSearchGeneration { isSearchingPlaylists = false }
+        }
         do {
             if let cached = await cachedPlaylists(.playlistSearch, key: trimmed, force: force) {
+                guard generation == playlistSearchGeneration else { return }
                 searchedPlaylists = cached
                 return
             }
             let fetched = try await helper.searchPlaylists(keyword: trimmed, limit: 30)
             await storePlaylists(fetched, category: .playlistSearch, key: trimmed)
+            guard generation == playlistSearchGeneration else { return }
             searchedPlaylists = fetched
         } catch {
             // Keep what is displayed; a failed search is not an empty result.
@@ -958,6 +1018,19 @@ final class QQMusicOnlineCoordinator {
     func loadLikedSongs(force: Bool = false) async {
         guard !isLoadingLikedSongs else { return }
         if !force, !likedSongs.isEmpty { return }
+        // Claimed before the first `await`: with the assignment after the cache
+        // read, two callers could both pass the guard above and the first one to
+        // finish would clear the flag the second had just set — so the page fell
+        // back to its empty state while a fetch was still running.
+        if backoffRemaining() != nil {
+            // These three used to keep asking while rate-limited — the account
+            // lists are the read path most likely to trip it, and they were the
+            // ones with no check.
+            scheduleRetryAfterBackoff()
+            return
+        }
+        isLoadingLikedSongs = true
+        defer { isLoadingLikedSongs = false }
 
         // 1. paint. Nothing on screen yet, so anything the cache holds is an
         // improvement — and it holds the whole folder, which is what makes the
@@ -966,9 +1039,6 @@ final class QQMusicOnlineCoordinator {
             likedSongs = cached.tracks
             likedSongsTotal = cached.total
         }
-
-        isLoadingLikedSongs = true
-        defer { isLoadingLikedSongs = false }
 
         do {
             // 2. the whole folder.
@@ -1091,6 +1161,7 @@ final class QQMusicOnlineCoordinator {
     func loadLikedAlbums(force: Bool = false) async {
         guard !isLoadingLikedAlbums else { return }
         if !force, !likedAlbums.isEmpty { return }
+        // Claimed before the cache read, for the reason in `loadLikedSongs`.
         var servedFromCache = false
         if let cached = await cachedAlbums(force: force) {
             likedAlbums = cached
@@ -1139,6 +1210,7 @@ final class QQMusicOnlineCoordinator {
     func loadUserPlaylists(force: Bool = false) async {
         guard !isLoadingUserPlaylists else { return }
         if !force, !userPlaylists.isEmpty { return }
+        // Claimed before the cache read, for the reason in `loadLikedSongs`.
         var servedFromCache = false
         if let cached = await cachedUserPlaylists(force: force) {
             userPlaylists = cached
@@ -1250,7 +1322,8 @@ final class QQMusicOnlineCoordinator {
     func loadRadioStations(force: Bool = false) async {
         guard !isLoadingRadioStations else { return }
         if !force, !radioGroups.isEmpty { return }
-        if let wait = backoffRemaining() {
+        if backoffRemaining() != nil {
+            scheduleRetryAfterBackoff()
             return
         }
         isLoadingRadioStations = true
@@ -1278,14 +1351,17 @@ final class QQMusicOnlineCoordinator {
     /// No in-flight guard: this is the *open* path, so a second open must win
     /// over the first rather than be dropped.
     func openRadioStation(_ station: QQMusicRadioStation) async {
-        // A station is a list too, so the same isolation rule applies: another
-        // station's rotation must not stay on screen while this one loads. The
-        // shared list is emptied only when the station really changes — this is
-        // also the path a playlist leaves behind, and `openList` has already
-        // cleared for that.
-        if activeRadioStationID != station.id, openedList == nil {
+        // A station is a list too, so the same isolation rule applies: whatever
+        // is on screen must be something else's only while that something else is
+        // still loading. Switching to a station from a playlist, or from another
+        // station, clears first; re-opening the station already showing keeps its
+        // rows (a refresh), which is the same distinction `openList` makes.
+        let isSwitch = openedList != nil || activeRadioStationID != station.id
+        if isSwitch {
             playlistTracks = []
         }
+        // A station owns the shared list now, so nothing may page a playlist into
+        // it (and `loadMoreRadioTracks` is what runs instead).
         openedList = nil
         listGeneration &+= 1
         isLoadingRadioTracks = true
@@ -1338,17 +1414,25 @@ final class QQMusicOnlineCoordinator {
             searchedArtists = []
             return
         }
-        if let wait = backoffRemaining() {
+        if backoffRemaining() != nil {
+            scheduleRetryAfterBackoff()
             return
         }
+        // Newest wins, like `search`: without this, a superseded artist search
+        // could land last and replace the results of the query the user is on.
+        artistSearchGeneration &+= 1
+        let generation = artistSearchGeneration
         isSearchingArtists = true
-        defer { isSearchingArtists = false }
+        defer {
+            if generation == artistSearchGeneration { isSearchingArtists = false }
+        }
         do {
             if !force,
                let store = cacheStore,
                let data = await store.catalog(.artistSearch, key: trimmed),
                let cached = try? JSONDecoder().decode([QQMusicOnlineArtist].self, from: data),
                !cached.isEmpty {
+                guard generation == artistSearchGeneration else { return }
                 searchedArtists = cached
                 return
             }
@@ -1356,6 +1440,7 @@ final class QQMusicOnlineCoordinator {
             if let store = cacheStore, let data = try? JSONEncoder().encode(artists) {
                 await store.storeCatalog(data, category: .artistSearch, key: trimmed)
             }
+            guard generation == artistSearchGeneration else { return }
             searchedArtists = artists
         } catch {
             Log.warning("[QQMusicOnline] artist search failed: \(noteFailure(error))", category: .import)
@@ -1554,7 +1639,8 @@ final class QQMusicOnlineCoordinator {
     func loadToplists(force: Bool = false) async {
         guard !isLoadingToplists else { return }
         if !force, !toplistGroups.isEmpty { return }
-        if let wait = backoffRemaining() {
+        if backoffRemaining() != nil {
+            scheduleRetryAfterBackoff()
             return
         }
         isLoadingToplists = true
@@ -1581,22 +1667,29 @@ final class QQMusicOnlineCoordinator {
             searchResults = []
             return
         }
-        // One search at a time: the toolbar and a page can both ask, and two
-        // writers on one array is how a result list ends up holding the answer to
-        // a query the user has already replaced.
-        guard !isSearching else { return }
-        if let wait = backoffRemaining() {
+        if backoffRemaining() != nil {
+            scheduleRetryAfterBackoff()
             return
         }
+        // The newest query wins rather than being dropped: an early return here
+        // would leave the previous query's results on screen with no indication
+        // that the new one never ran. Only the latest may write the array and the
+        // loading flag, which is why both are guarded by the generation.
+        searchGeneration &+= 1
+        let generation = searchGeneration
         isSearching = true
-        defer { isSearching = false }
+        defer {
+            if generation == searchGeneration { isSearching = false }
+        }
         do {
             if let cached = await cachedTracks(.search, key: trimmed, force: force) {
+                guard generation == searchGeneration else { return }
                 searchResults = cached
                 return
             }
             let fetched = try await helper.searchSongs(keyword: trimmed, limit: 30)
             await storeTracks(fetched, category: .search, key: trimmed)
+            guard generation == searchGeneration else { return }
             searchResults = fetched
         } catch {
             // Keep the previous results; the new query simply did not land.
@@ -1680,13 +1773,15 @@ final class QQMusicOnlineCoordinator {
         listLoadsInFlight += 1
         defer { listLoadsInFlight -= 1 }
 
-        if isSwitch {
-            playlistTracks = []
+        if backoffRemaining() != nil {
+            // Checked before clearing: a rate-limited open must not empty the page
+            // it was going to replace. The retry below opens it for real.
+            scheduleRetryAfterBackoff()
+            return
         }
 
-        if let wait = backoffRemaining() {
-            Log.warning("[QQMusicOnline] list open skipped, backing off \(Int(wait.rounded(.up)))s", category: .import)
-            return
+        if isSwitch {
+            playlistTracks = []
         }
 
         // 1. paint

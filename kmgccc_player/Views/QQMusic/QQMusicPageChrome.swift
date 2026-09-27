@@ -98,16 +98,38 @@ struct QQMusicPageCanvas<Content: View>: View {
 
     private var layout = HomeWindowLayoutState.shared
 
+    /// The last snapshot that had usable geometry.
+    ///
+    /// `HomeWindowLayoutState` reports an *empty* snapshot whenever a layout pass
+    /// finds no center column — which happens while the panes are being
+    /// rearranged, including the moment the online surface takes over the center
+    /// pane — and it commits a new one only when the geometry next changes. This
+    /// canvas used to draw nothing at all in that state, so the page went blank,
+    /// and stayed blank until some unrelated layout event arrived: the reported
+    /// "nothing helps, not 刷新 and not 返回, only toggling a sidebar page and
+    /// coming back".
+    ///
+    /// Holding the last good values means a bad report costs a frame of stale
+    /// alignment instead of a blank window, and the page corrects itself as soon
+    /// as real geometry is reported again.
+    @State private var settled: (insets: QQMusicColumnInsets, mode: HomeLayoutMode)?
+
     var body: some View {
         let snap = layout.discreteSnapshot
-        let mode = HomeLayoutMode.from(snap.mode)
-        let insets = QQMusicColumnInsets(
-            left: CGFloat(snap.leftInset),
-            right: CGFloat(snap.rightInset)
+        let reported = (
+            insets: QQMusicColumnInsets(left: CGFloat(snap.leftInset), right: CGFloat(snap.rightInset)),
+            mode: HomeLayoutMode.from(snap.mode)
         )
+        let effective = snap.hasValidLayout ? reported : (settled ?? reported)
+        let mode = effective.mode
+        let insets = effective.insets
 
         ZStack(alignment: .topLeading) {
-            if snap.hasValidLayout {
+            // Drawn unconditionally: content that appears with slightly stale
+            // alignment for a frame is strictly better than an empty window, and
+            // the background is what makes the page look like a page while it
+            // arrives.
+            Group {
                 HomeAmbientShapesBackground(
                     sourceColor: themeStore.semanticPalette.ambientSurface,
                     sourceAnalysis: themeStore.semanticPalette.analysis,
@@ -145,6 +167,13 @@ struct QQMusicPageCanvas<Content: View>: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onChange(of: snap, initial: true) { _, newValue in
+            guard newValue.hasValidLayout else { return }
+            settled = (
+                QQMusicColumnInsets(left: CGFloat(newValue.leftInset), right: CGFloat(newValue.rightInset)),
+                HomeLayoutMode.from(newValue.mode)
+            )
+        }
     }
 
     /// Blank space below the last row of every list.

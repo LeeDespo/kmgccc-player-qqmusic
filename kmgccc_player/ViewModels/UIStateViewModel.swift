@@ -380,6 +380,7 @@ final class UIStateViewModel {
     }
 
     func showLibrary() {
+        HomeWindowLayoutState.shared.setQQMusicMode(false)
         withAnimation(.easeInOut(duration: 0.3)) {
             playbackHistoryDate = nil
             contentMode = .library
@@ -398,6 +399,13 @@ final class UIStateViewModel {
             playbackHistoryDate = nil
             contentMode = .qqMusicOnline
         }
+        // Published here rather than only from the center pane's own `onAppear`:
+        // the flag gates whether the online surface is drawn at all, so it must
+        // follow the mode. Leaving it to a view meant that any moment the pane was
+        // not evaluating (a library swap, a transiently absent view model) left
+        // the flag stale — and a stale `false` renders nothing, with the toolbar's
+        // own actions guarded into no-ops inside that unrendered subtree.
+        HomeWindowLayoutState.shared.setQQMusicMode(true)
     }
 
     /// Called continuously by library list to keep the latest visible anchor snapshot.

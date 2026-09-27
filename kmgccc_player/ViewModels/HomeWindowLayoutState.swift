@@ -267,7 +267,14 @@ final class HomeWindowLayoutState {
     /// separate from the other two conditions, so local-library behaviour is
     /// unchanged whenever content mode is not `.qqMusicOnline`.
     var allowsHomeInteraction: Bool {
-        (isHomeMode || isQQMusicMode) && !isEmbeddedFullscreenActive && !isHomeSearchActive
+        guard !isEmbeddedFullscreenActive else { return false }
+        // `isHomeSearchActive` describes the *library* home page showing its
+        // all-song search results, so it belongs to that term only. Inheriting it
+        // here meant a leftover "home search active" from the library blanked
+        // every online page, and nothing inside that subtree could bring it back
+        // (刷新 and 返回 are guarded in the toolbar, which draws regardless).
+        // Local-library behaviour is untouched: `isHomeMode` still requires it.
+        return isQQMusicMode || (isHomeMode && !isHomeSearchActive)
     }
 
     /// Live frame of the Mini Player view in SwiftUI `.global` coordinates

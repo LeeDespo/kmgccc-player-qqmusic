@@ -40,6 +40,13 @@ struct QQMusicFullWindowRoot: View {
                         navigation: coordinator.navigation,
                         selection: coordinator.selection
                     )
+            } else {
+                // No session yet. Drawing nothing here is what a blank window
+                // looks like, so say what is happening instead: the session is
+                // established asynchronously, and this is the state in between.
+                ThemedBaseBackgroundColorView()
+                ProgressView()
+                    .controlSize(.small)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

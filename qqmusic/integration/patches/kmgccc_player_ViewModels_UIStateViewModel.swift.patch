@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/ViewModels/UIStateViewModel.swift b/kmgccc_player/ViewModels/UIStateViewModel.swift
-index 827cfacf..9b5b60a0 100644
+index 827cfacf..82c71414 100644
 --- a/kmgccc_player/ViewModels/UIStateViewModel.swift
 +++ b/kmgccc_player/ViewModels/UIStateViewModel.swift
 @@ -19,6 +19,10 @@ enum ContentMode: Equatable {
@@ -13,7 +13,15 @@ index 827cfacf..9b5b60a0 100644
  }
  
  enum SidebarNoticeStyle: Sendable {
-@@ -389,6 +393,13 @@ final class UIStateViewModel {
+@@ -376,6 +380,7 @@ final class UIStateViewModel {
+     }
+ 
+     func showLibrary() {
++        HomeWindowLayoutState.shared.setQQMusicMode(false)
+         withAnimation(.easeInOut(duration: 0.3)) {
+             playbackHistoryDate = nil
+             contentMode = .library
+@@ -389,6 +394,20 @@ final class UIStateViewModel {
          }
      }
  
@@ -22,6 +30,13 @@ index 827cfacf..9b5b60a0 100644
 +            playbackHistoryDate = nil
 +            contentMode = .qqMusicOnline
 +        }
++        // Published here rather than only from the center pane's own `onAppear`:
++        // the flag gates whether the online surface is drawn at all, so it must
++        // follow the mode. Leaving it to a view meant that any moment the pane was
++        // not evaluating (a library swap, a transiently absent view model) left
++        // the flag stale — and a stale `false` renders nothing, with the toolbar's
++        // own actions guarded into no-ops inside that unrendered subtree.
++        HomeWindowLayoutState.shared.setQQMusicMode(true)
 +    }
 +
      /// Called continuously by library list to keep the latest visible anchor snapshot.
