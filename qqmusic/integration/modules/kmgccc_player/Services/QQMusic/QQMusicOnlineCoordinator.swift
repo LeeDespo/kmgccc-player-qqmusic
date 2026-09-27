@@ -189,6 +189,55 @@ final class QQMusicOnlineCoordinator {
         trackForDetail = track
     }
 
+    // MARK: - 歌曲描述
+
+    /// The track whose description sheet is open, if any.
+    ///
+    /// A second presentation point rather than a flag on `trackForDetail`,
+    /// because the two sheets say different things about the same song: 查看详情
+    /// is the catalogue's facts (album, length, quality, whether it is in the
+    /// library), 查看歌曲描述 is the prose QQ Music publishes about it.
+    var trackForDescription: QQMusicOnlineTrack?
+
+    func showTrackDescription(_ track: QQMusicOnlineTrack) {
+        trackForDescription = track
+    }
+
+    /// Song descriptions already fetched, keyed by song mid.
+    ///
+    /// They do not change, and the hero card and the 查看歌曲描述 sheet ask for the
+    /// same one — without this, opening the sheet after the card had shown it
+    /// would cost a second round trip.
+    private var songDescriptions: [String: String] = [:]
+
+    /// The catalogue's own prose about `track`, or nil when it has none.
+    ///
+    /// An **empty answer is an answer**. Most songs carry no 简介 at all (checked
+    /// live: four of six sampled tracks had none), so treating empty as "this
+    /// channel did not answer" would make every one of them cost both channels.
+    /// That is the opposite of the whole-list rule in `webFirstList`, where an
+    /// empty list means the route's shape moved — the difference is that a song
+    /// with no prose is normal, while an account with no playlists it does have
+    /// is not. Failures still fall back; that is `webFirst`'s job.
+    func songDescription(for track: QQMusicOnlineTrack) async -> String? {
+        guard !track.songMid.isEmpty else { return nil }
+        if let cached = songDescriptions[track.songMid] {
+            return cached.isEmpty ? nil : cached
+        }
+        do {
+            let text = try await fetchSongDescription(songMid: track.songMid)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            songDescriptions[track.songMid] = text
+            return text.isEmpty ? nil : text
+        } catch {
+            Log.warning(
+                "[QQMusicOnline] song description failed: \(noteFailure(error))",
+                category: .import
+            )
+            return nil
+        }
+    }
+
     /// Set once a library session exists; the coordinator cannot import without it.
     var importService: FileImportService?
     var paths: LibraryPaths? {
@@ -500,6 +549,23 @@ final class QQMusicOnlineCoordinator {
             subject: .lyrics,
             web: { try await self.webAPI.fetchLyric(songMid: songMid) },
             helper: { try await self.helper.fetchLyric(songMid: songMid, songId: songId) }
+        )
+    }
+
+    /// The song's 简介, web-first with a helper fallback like everything else.
+    ///
+    /// The helper route is the full metadata read the import enrichment already
+    /// uses (`fetch_song_detail`, the same upstream module), so it returns the
+    /// same prose — it just pays for a process and a client to get it.
+    private func fetchSongDescription(songMid: String) async throws -> String {
+        try await webFirst(
+            "song-description",
+            subject: .songIntro,
+            web: { try await self.webAPI.fetchSongDescription(songMid: songMid) },
+            helper: {
+                let detail = try await self.helper.fetchSongDetail(songMid: songMid)
+                return detail.description ?? ""
+            }
         )
     }
 
@@ -2095,6 +2161,10 @@ final class QQMusicOnlineCoordinator {
         // queue, is what makes shuffle cover every track instead of the handful
         // downloaded so far.
         //
+        // `keeping: seed.songMid` is what puts the track the user pressed play on
+        // at the head of that order; the prefetch loop below downloads along it,
+        // so this is also what the listener hears first.
+        //
         // The rebuild is forced rather than incremental: this is a new session,
         // and leaving the previous order in place would make the preview below
         // skip the rebuild entirely.
@@ -2162,11 +2232,11 @@ final class QQMusicOnlineCoordinator {
 
     /// Rebuild `playbackOrder` from `sessionAllSongMids`.
     ///
-    /// `keeping` is the track that must stay as the current position; it is
-    /// pinned to the cursor so a mode switch or a list refresh never interrupts
-    /// what is playing. Everything before it keeps its relative order (already
-    /// played, so no reason to disturb it); everything after is reshuffled or
-    /// left in list order.
+    /// `keeping` is the track at the cursor. The rebuilt order starts there, so a
+    /// mode switch or a list refresh never interrupts what is playing: in
+    /// shuffle the rest of the list is permuted, otherwise it is the list's tail.
+    /// What already played is not in the result at all — it lives in the engine's
+    /// own queue, which is where 上一首 reads it from.
     private func rebuildPlaybackOrder(keeping currentMid: String?) {
         let mids = sessionAllSongMids
         guard !mids.isEmpty else {
@@ -2339,15 +2409,12 @@ final class QQMusicOnlineCoordinator {
         isPrefetching = false
     }
 
-    /// Feed the player queue along `playbackOrder`.
+    /// Feed the player queue so it always holds the next tracks of our order.
     ///
     /// The engine's shuffle pulls its next track from whatever sits immediately
     /// after the current one, and `insertTracksAfterCurrent` writes into exactly
-    /// that slot. So inserting in *our* shuffled order is what makes the engine
-    /// play that order — the coordinator decides, the engine just advances. This
-    /// is also why the previous code was wrong in a subtle way: it inserted in
-    /// list order, which is what made shuffle indistinguishable from sequential.
-    /// Feed the player queue so it always holds the next tracks of our order.
+    /// that slot. So inserting in *our* order is what makes the engine play that
+    /// order — the coordinator decides, the engine just advances.
     ///
     /// Two things this deliberately does *not* do, both of which caused playback
     /// to stop dead before:
@@ -2408,6 +2475,13 @@ final class QQMusicOnlineCoordinator {
             // Searched across the whole order, not just what follows the current
             // track: the engine may advance onto a track it picked itself, and
             // that must not stop us from feeding the rest.
+            //
+            // Safe to start at the head because the order *begins* at the track
+            // the session was started on and only ever contains what has not
+            // played — and that track is in the queue, so the search resumes at
+            // whatever follows it. (An order that carried the rows above the
+            // cursor at its head is what used to make every session download the
+            // top of the list first, shuffle or not.)
             //
             // `skippedSongMids` is excluded because a track that cannot be
             // downloaded never enters the queue, so without this it would be

@@ -374,14 +374,20 @@ struct QQMusicTrackRow: View {
             .contentShape(Rectangle())
     }
 
-    /// What the ellipsis offers — the five items the library's rows carry for a
-    /// track, adapted to what is reachable online:
+    /// What the ellipsis offers — the library's items for a track, adapted to
+    /// what is reachable online:
     ///
-    ///   播放 · 下一首播放 ｜ 查看详情 · 查看艺人 · 查看专辑
+    ///   播放 · 下一首播放 ｜ 查看详情 · 查看歌曲描述 · 查看艺人 · 查看专辑
     ///
     /// 查看艺人 / 查看专辑 appear only when we hold something to open (a singer
     /// mid / an album id), which is how the library hides navigation too: an
     /// item that cannot be honoured is absent rather than present and dead.
+    ///
+    /// 查看歌曲描述 is always present, and that is deliberate: whether the
+    /// catalogue publishes a 简介 for a song is only known after asking, and most
+    /// songs have none — so deciding the menu by it would cost one upstream
+    /// request *per row*. The sheet it opens has the app's own empty state for
+    /// the case where there is nothing to read.
     @ViewBuilder
     private var menuContent: some View {
         Button(action: onPlay) {
@@ -400,6 +406,14 @@ struct QQMusicTrackRow: View {
             coordinator.showTrackDetail(track)
         } label: {
             Label("查看详情", systemImage: "doc.text")
+        }
+
+        // The song's own prose, which 查看详情 does not carry: that sheet is the
+        // facts — album, length, quality, whether the library already holds it.
+        Button {
+            coordinator.showTrackDescription(track)
+        } label: {
+            Label("查看歌曲描述", systemImage: "text.quote")
         }
 
         // One artist opens directly; several become a question, because picking

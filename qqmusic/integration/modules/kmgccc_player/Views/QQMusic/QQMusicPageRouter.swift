@@ -43,22 +43,34 @@ struct QQMusicPageRouter: View {
             scrollResetKey: navigation.displayKey
         ) { insets, mode in
             // One page replaces another in place, and the swap is animated the way
-            // the app animates its own page changes: a directional move plus a
-            // fade, on the curve `HomeInsightsSection` uses for the same job. The
-            // `.id` is what makes SwiftUI treat the two pages as different views,
-            // and the explicit `.animation(_:value:)` is needed because the canvas
-            // strips animations from its scroll content (a child's modifier runs
-            // after the parent's, so this restores it for this value only).
+            // the app animates its own page changes: the outgoing page fades out
+            // while the incoming one fades in, both staying put.
+            //
+            // Deliberately *not* a move. The app's own page swap — the `Group`
+            // switching on `libraryVM.currentSelection` in
+            // `AppKitMainSplitPanes`, which is what 主页 → 专辑 → 返回 runs
+            // through — declares no transition at all, so SwiftUI inserts and
+            // removes with its default `.opacity` and the change reads as a
+            // cross-fade. A directional slide was tried here first and did not
+            // match it.
+            //
+            // The `.id` is what makes SwiftUI treat the two pages as different
+            // views, and the explicit `.animation(_:value:)` is needed because the
+            // canvas strips animations from its scroll content (a child's modifier
+            // runs after the parent's, so this restores it for this value only).
             pageContent(insets: insets, mode: mode)
                 .id(navigation.displayKey)
-                .transition(pageTransition)
-                .animation(.smooth(duration: 0.32), value: navigation.displayKey)
+                .transition(.opacity)
+                .animation(.easeInOut(duration: 0.3), value: navigation.displayKey)
         }
-        // 查看详情 from a row's 更多 menu. Presented here rather than by the row
-        // itself: rows are recycled as they scroll, and a sheet they owned would
-        // be dismissed by that.
+        // 查看详情 / 查看歌曲描述 from a row's 更多 menu. Presented here rather
+        // than by the row itself: rows are recycled as they scroll, and a sheet
+        // they owned would be dismissed by that.
         .sheet(item: $coordinator.trackForDetail) { track in
             QQMusicTrackDetailSheet(track: track)
+        }
+        .sheet(item: $coordinator.trackForDescription) { track in
+            QQMusicTrackDescriptionSheet(track: track)
         }
         .task(id: coordinator.libraryAvailabilityToken) {
             // Browsing-wide bookkeeping, independent of which page shows:
@@ -103,18 +115,6 @@ struct QQMusicPageRouter: View {
                 )
             }
         }
-    }
-
-    /// Deeper pages slide in from the trailing edge and leave towards the
-    /// leading one; going back reverses both. Copied from
-    /// `HomeInsightsSection.monthTransition`, which does the same for a calendar's
-    /// direction and is the app's only other directional page change.
-    private var pageTransition: AnyTransition {
-        let forward = navigation.lastTransitionDirection >= 0
-        return .asymmetric(
-            insertion: .move(edge: forward ? .trailing : .leading).combined(with: .opacity),
-            removal: .move(edge: forward ? .leading : .trailing).combined(with: .opacity)
-        )
     }
 
     /// One page per case. Every page reads its column insets from the

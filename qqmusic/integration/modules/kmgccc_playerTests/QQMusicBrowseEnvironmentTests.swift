@@ -485,6 +485,43 @@ final class QQMusicBrowseEnvironmentTests: XCTestCase {
         XCTAssertFalse(coordinator.canSelectTracks(for: page), "nothing to select without rows")
     }
 
+    /// The song's 简介, as `查看歌曲描述` and the featured card read it.
+    ///
+    /// Two things this pins. The prose is nested two levels down
+    /// (`info.intro.content[].value`), so it is easy to look for it in the wrong
+    /// place and silently get nothing. And **no 简介 must decode to an empty
+    /// string, not to a failure** — most songs have none, and treating empty as
+    /// "this channel did not answer" would send every one of them to the second
+    /// channel.
+    func testSongDescriptionReadsTheIntroGroupAndTreatsItsAbsenceAsEmpty() throws {
+        XCTAssertEqual(
+            QQMusicWebAPI.decodeSongDescription([
+                "info": [
+                    "intro": [
+                        "title": "简介",
+                        "content": [
+                            ["value": "第一段"],
+                            ["value": "  "],
+                            ["value": "第二段"],
+                        ],
+                    ],
+                    "company": ["content": [["value": "某唱片"]]],
+                ],
+            ]),
+            "第一段\n第二段",
+            "one paragraph per content item, blanks dropped"
+        )
+
+        // A song the catalogue has no prose for: `intro` is simply not there.
+        XCTAssertEqual(
+            QQMusicWebAPI.decodeSongDescription([
+                "info": ["company": ["content": [["value": "某唱片"]]]],
+            ]),
+            ""
+        )
+        XCTAssertEqual(QQMusicWebAPI.decodeSongDescription([:]), "")
+    }
+
     private func makeActions() -> AppKitMainToolbarItemFactory.Actions {
         .init(
             target: NSObject(),

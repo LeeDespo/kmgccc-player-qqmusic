@@ -388,6 +388,54 @@ nonisolated struct QQMusicWebAPI: Sendable {
         )
     }
 
+    /// The catalogue's own prose about one song — its 简介.
+    ///
+    /// `music.pf_song_detail_svr/get_song_detail_yqq` answers with an `info`
+    /// object holding one group per topic (`intro`, `company`, `genre`, `lan`,
+    /// `pub_time`), each a list of content items. Only `intro` is read here: the
+    /// other groups are labels the app already knows from the track itself, and a
+    /// song with none of them is normal — so the *absence* of a group is not a
+    /// failure, while a malformed envelope still is.
+    ///
+    /// Read through the `web` channel by default; the helper serves the same
+    /// endpoint and returns the same prose (see `QQMusicChannelSubject.songIntro`).
+    func fetchSongDescription(songMid: String) async throws -> String {
+        guard let credential = loadCredential() else {
+            throw QQMusicWebAPIError.noCredential
+        }
+        let request = makeRequest(
+            credential: credential,
+            module: "music.pf_song_detail_svr",
+            method: "get_song_detail_yqq",
+            param: ["song_mid": songMid]
+        )
+        let data = try Self.payload(try await send(request))
+        return Self.decodeSongDescription(data)
+    }
+
+    /// The prose out of a `get_song_detail_yqq` payload.
+    ///
+    /// Internal rather than private so a test can pin it: the prose is nested two
+    /// levels down (`info.intro.content[].value`), and which groups the endpoint
+    /// carries varies by song — 简介 is simply absent for most, which must read as
+    /// "no description" rather than as a decode failure.
+    static func decodeSongDescription(_ payload: [String: Any]) -> String {
+        let info = payload["info"] as? [String: Any]
+        return contentValues(info?["intro"]).joined(separator: "\n")
+    }
+
+    /// The `content[].value` strings of one `info` group, in order.
+    private static func contentValues(_ group: Any?) -> [String] {
+        guard let group = group as? [String: Any],
+              let content = group["content"] as? [[String: Any]]
+        else { return [] }
+        return content.compactMap { item in
+            guard let value = item["value"] as? String else { return nil }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+    }
+
     /// Shared call to the legacy profile-assets endpoint used by favourites.
     ///
     /// `reqtype` selects the collection: 2 is albums, 3 is playlists. This is

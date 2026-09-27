@@ -190,15 +190,6 @@ nonisolated enum QQMusicPage: Hashable, Sendable {
 @MainActor
 final class QQMusicNavigation {
 
-    /// Which way the last move went: `1` deeper, `-1` back.
-    ///
-    /// The router keys its transition on this, so going back slides the other
-    /// way — the app's own page swap (`HomeInsightsSection.monthTransition`) does
-    /// the same with a calendar's direction, and a stack has one too. Recorded
-    /// here rather than derived in the view: only the stack knows which of its
-    /// three mutators ran.
-    private(set) var lastTransitionDirection = 1
-
     /// Pages above the landing page, most recent last. Empty means the landing
     /// page is showing, which is why `canGoBack` tracks emptiness rather than
     /// counting a root entry.
@@ -222,7 +213,6 @@ final class QQMusicNavigation {
         guard page != stack.last else { return }
         stack.append(page)
         forwardStack.removeAll()
-        lastTransitionDirection = 1
     }
 
     /// Replace the page on screen without growing the stack.
@@ -245,7 +235,6 @@ final class QQMusicNavigation {
     func goBack() -> QQMusicPage? {
         guard let popped = stack.popLast() else { return nil }
         forwardStack.append(popped)
-        lastTransitionDirection = -1
         return stack.last
     }
 
@@ -253,7 +242,6 @@ final class QQMusicNavigation {
     func goForward() -> QQMusicPage? {
         guard let next = forwardStack.popLast() else { return nil }
         stack.append(next)
-        lastTransitionDirection = 1
         return next
     }
 
@@ -264,6 +252,5 @@ final class QQMusicNavigation {
     func popToRoot() {
         stack.removeAll()
         forwardStack.removeAll()
-        lastTransitionDirection = -1
     }
 }

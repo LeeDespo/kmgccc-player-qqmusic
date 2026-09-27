@@ -5,11 +5,14 @@
 //  The listening order an online session plays in.
 //
 //  This is where "shuffle plays in list order" came from, and the failure is
-//  silent — the list still plays, just in the wrong order, over a range that
-//  looks arbitrary because it is limited to what has been downloaded. The
-//  properties pinned here are the ones that make shuffle audibly different from
-//  sequential, plus the ones that keep a mid-session rebuild from disturbing
-//  what is already playing.
+//  silent — the list still plays, just in the wrong order. The properties pinned
+//  here are the two the listener actually hears:
+//
+//    * the order starts on the track that was asked for, never on the list's
+//      first row (an order that begins with the head makes a click on the 10th
+//      row play the 1st — and makes shuffle indistinguishable from sequential);
+//    * with shuffle on, the order is a permutation of the whole list rather than
+//      the list again.
 //
 
 import XCTest
@@ -44,16 +47,6 @@ final class QQMusicPlaybackOrderTests: XCTestCase {
         )
     }
 
-    // MARK: - Invariants that hold either way
-
-    func testEveryTrackAppearsExactlyOnce() {
-        for shuffle in [true, false] {
-            let order = make(shuffle: shuffle)
-            XCTAssertEqual(order.count, list.count)
-            XCTAssertEqual(Set(order), Set(list), "shuffle=\(shuffle) lost or duplicated a track")
-        }
-    }
-
     func testEmptyListProducesEmptyOrder() {
         var generator = SeededGenerator(seed: 1)
         let order = QQMusicPlaybackOrder.make(
@@ -65,37 +58,45 @@ final class QQMusicPlaybackOrderTests: XCTestCase {
         XCTAssertTrue(order.isEmpty)
     }
 
-    /// The track that is playing stays where it is: moving it would interrupt
-    /// playback, and reshuffling behind it would make "previous" jump somewhere
-    /// unrelated.
-    func testAnchorHoldsItsPositionAndPlayedPrefixIsPreserved() {
-        let anchor = "song-7"
-        let expectedPlayedPrefix = Array(list.prefix(6))   // songs 1...6
+    // MARK: - Where the session starts
 
+    /// The track that was asked for plays first. Starting anywhere else is the
+    /// bug the listener reported as "点第 10 首却从第 1 首开始".
+    func testOrderStartsOnTheRequestedTrack() {
         for shuffle in [true, false] {
-            let order = make(shuffle: shuffle, keeping: anchor)
-            XCTAssertEqual(order[0..<6].map { $0 }, expectedPlayedPrefix, "shuffle=\(shuffle)")
-            XCTAssertEqual(order[6], anchor, "shuffle=\(shuffle)")
+            let order = make(shuffle: shuffle, keeping: "song-10")
+            XCTAssertEqual(order.first, "song-10", "shuffle=\(shuffle)")
         }
     }
 
-    /// An anchor that is not in the list falls back to the head rather than
-    /// producing a list with a hole in it.
-    func testUnknownAnchorFallsBackToTheHead() {
-        let order = make(shuffle: true, keeping: "not-in-the-list")
-        XCTAssertEqual(order.count, list.count)
-        XCTAssertEqual(order.first, "song-1")
-        XCTAssertEqual(Set(order), Set(list))
+    /// Sequential is the library's "play from here": the tail of the list, in
+    /// order, and nothing from above the cursor.
+    func testSequentialPlaysTheListTailFromTheCursor() {
+        let order = make(shuffle: false, keeping: "song-7")
+        XCTAssertEqual(order, Array(list.suffix(14)))          // songs 7...20
+        XCTAssertEqual(order.count, 14)
     }
 
-    // MARK: - The difference between the two modes
-
-    func testSequentialOrderIsTheListOrder() {
+    /// A whole-list play (the header's 播放) has no cursor to speak of, so it
+    /// starts at the top and covers everything.
+    func testSequentialFromTheHeadIsTheListOrder() {
         XCTAssertEqual(make(shuffle: false), list)
+        XCTAssertEqual(make(shuffle: false, keeping: "song-1"), list)
     }
 
-    /// The property that was silently absent: with shuffle on, the unplayed part
-    /// must actually be a permutation, not the list again.
+    // MARK: - Shuffle
+
+    /// Shuffle must cover the *whole* list, including the rows above the cursor:
+    /// shuffling only the tail would be shuffling the wrong list.
+    func testShuffleCoversEveryTrackIncludingThoseAboveTheCursor() {
+        let order = make(shuffle: true, keeping: "song-10")
+        XCTAssertEqual(order.count, list.count)
+        XCTAssertEqual(Set(order), Set(list))
+        XCTAssertEqual(order.first, "song-10")
+    }
+
+    /// The property that was silently absent: with shuffle on, the order must be
+    /// a permutation rather than the list again.
     func testShuffledOrderIsNotTheListOrder() {
         let order = make(shuffle: true)
         XCTAssertNotEqual(
@@ -112,14 +113,12 @@ final class QQMusicPlaybackOrderTests: XCTestCase {
         XCTAssertNotEqual(first, second)
     }
 
-    /// Shuffling is confined to the unplayed remainder: everything before the
-    /// cursor keeps its order, so the history stays truthful.
-    func testShuffleDoesNotTouchTheAlreadyPlayedPortion() {
-        let anchor = "song-10"
-        let order = make(shuffle: true, keeping: anchor)
-
-        XCTAssertEqual(Array(order.prefix(9)), Array(list.prefix(9)))
-        XCTAssertEqual(order[9], anchor)
-        XCTAssertEqual(Set(order.suffix(10)), Set(list.suffix(10)))
+    /// An anchor that is not in the list falls back to the head rather than
+    /// producing a list with a hole in it.
+    func testUnknownAnchorFallsBackToTheHead() {
+        let order = make(shuffle: true, keeping: "not-in-the-list")
+        XCTAssertEqual(order.count, list.count)
+        XCTAssertEqual(order.first, "song-1")
+        XCTAssertEqual(Set(order), Set(list))
     }
 }

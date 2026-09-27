@@ -59,6 +59,9 @@ nonisolated enum QQMusicChannelSubject: String, CaseIterable, Identifiable, Send
     case trackLists
     /// The lyric fetched when a track is downloaded.
     case lyrics
+    /// The song's own 简介, shown on the online home's featured card and behind
+    /// 查看歌曲描述.
+    case songIntro
     /// 关注的歌手.
     case followedArtists
 
@@ -69,6 +72,7 @@ nonisolated enum QQMusicChannelSubject: String, CaseIterable, Identifiable, Send
         case .accountLists: return "账号列表"
         case .trackLists: return "曲目列表"
         case .lyrics: return "歌词"
+        case .songIntro: return "歌曲描述"
         case .followedArtists: return "关注的歌手"
         }
     }
@@ -78,6 +82,7 @@ nonisolated enum QQMusicChannelSubject: String, CaseIterable, Identifiable, Send
         case .accountLists: return "我喜欢、收藏专辑、收藏歌单"
         case .trackLists: return "歌单曲目、排行榜曲目"
         case .lyrics: return "下载歌曲时取回的歌词"
+        case .songIntro: return "精选大卡片的简介、「查看歌曲描述」"
         case .followedArtists: return "关注的歌手列表"
         }
     }
@@ -90,9 +95,16 @@ nonisolated enum QQMusicChannelSubject: String, CaseIterable, Identifiable, Send
     /// speed hardly matters, while the extra detail it carries is the whole
     /// point — word-level timing, which the web route's line-level payload does
     /// not have.
+    ///
+    /// The song's 简介 defaults to the web client for the same reason the lists
+    /// do: both channels read the same `get_song_detail` module, so they return
+    /// the *same* prose — and this one is fetched while browsing (on every 换一首
+    /// on the featured card), which is exactly when the helper's extra second is
+    /// felt. Choosing the helper is one click away for anyone who wants the whole
+    /// catalogue read from one side.
     var defaultChannel: QQMusicFetchChannel {
         switch self {
-        case .accountLists, .trackLists, .followedArtists: return .web
+        case .accountLists, .trackLists, .songIntro, .followedArtists: return .web
         case .lyrics: return .helper
         }
     }
@@ -105,6 +117,8 @@ nonisolated enum QQMusicChannelSubject: String, CaseIterable, Identifiable, Send
             return "两边返回的内容相同，网页更快；选 Helper 时网页仍会兜底。"
         case .lyrics:
             return "Helper 的歌词更完整（可含逐字时间），推荐保持 Helper；选网页时 Helper 仍会兜底。"
+        case .songIntro:
+            return "两边读的是同一个上游模块，返回同一份简介，网页更快；选 Helper 时网页仍会兜底。"
         }
     }
 }

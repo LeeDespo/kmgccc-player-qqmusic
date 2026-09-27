@@ -10,8 +10,12 @@
 //  What differs is the content model: `HomeHeroView` is built around a library
 //  `Track` (playback queue, edit sheets, context menu), and an online track has
 //  none of that until it has been downloaded. So this draws the same card with an
-//  online track, and offers the two actions that make sense for one: 播放 and
-//  换一首.
+//  online track: title, artist line, and the catalogue's 简介 beneath them — the
+//  app's hero shows a description there too, from the user's own note or the
+//  album's — then the two actions that make sense for an online track: 播放 and
+//  换一首. The description block is `HomeHeroView`'s: the app's own
+//  `AppKitFullTextScrollView`, ultra-light ink, one line shorter per layout, and
+//  a click that opens the full 歌曲描述 reader.
 //
 //  The backdrop is rendered by the app's own `CoverGradientBlurRenderer` with
 //  `HomeHeroView`'s config — a full-bleed blurred cover with a crisp leading
@@ -32,12 +36,11 @@ struct QQMusicHeroCard: View {
     let onSwitch: () -> Void
 
     @Environment(\.qqMusicArtworkLoader) private var artworkLoader
+    @Environment(QQMusicOnlineCoordinator.self) private var coordinator
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.qqMusicColumnInsets) private var insets
-    @EnvironmentObject private var themeStore: ThemeStore
 
     @State private var backdrop: NSImage?
+    @State private var description: String?
     @State private var isHovering = false
 
     // MARK: - Metrics (copied from HomeHeroView)
@@ -96,6 +99,10 @@ struct QQMusicHeroCard: View {
         ZStack(alignment: .topLeading) {
             backdropLayer
 
+            // Title, artist line and the catalogue's 简介, stacked exactly as
+            // `HomeHeroView.trackInfoView` stacks them — the description sits
+            // under the artist line and above the buttons, and is absent (taking
+            // its space with it) for the many songs that have none.
             VStack(alignment: .leading, spacing: 6) {
                 Text(track.title)
                     .font(.system(size: titleFontSize, weight: .semibold))
@@ -106,6 +113,8 @@ struct QQMusicHeroCard: View {
                     .font(.system(size: subtitleFontSize, weight: .medium))
                     .foregroundStyle(.white.opacity(0.82))
                     .lineLimit(1)
+
+                descriptionLine
             }
             .padding(.top, heroTopPadding)
             .padding(.leading, heroPadding + artworkLeadingWidth)
@@ -135,6 +144,72 @@ struct QQMusicHeroCard: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: onPlay)
         .task(id: track.songMid) { await loadBackdrop() }
+        .task(id: track.songMid) {
+            description = nil
+            description = await coordinator.songDescription(for: track)
+        }
+    }
+
+    // MARK: - Description
+
+    /// A tall, scrollable block of prose, the app's hero treatment: the app's own
+    /// `AppKitFullTextScrollView`, ultra-light ink, and a click that opens the
+    /// full 歌曲描述 reader rather than scrolling in a card this size.
+    @ViewBuilder
+    private var descriptionLine: some View {
+        let text = (description ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty {
+            AppKitFullTextScrollView(
+                text: text,
+                font: NSFont.systemFont(ofSize: descriptionFontSize, weight: .ultraLight),
+                textColor: NSColor.white.withAlphaComponent(0.78),
+                lineSpacing: 1.5,
+                showsVerticalScroller: false,
+                onClick: { coordinator.showTrackDescription(track) }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: descriptionScrollHeight, alignment: .top)
+            .clipped()
+            .padding(.top, 4)
+        }
+    }
+
+    /// `HomeHeroView`'s numbers, one line shorter in each layout: this card's
+    /// buttons sit on the same row as the description's last line (the app's hero
+    /// has a taller content column), so the block is capped where it still clears
+    /// them.
+    private var descriptionLineCount: Int {
+        switch mode {
+        case .wide: return 6
+        case .medium: return 5
+        case .compact: return 4
+        case .narrow: return 3
+        }
+    }
+
+    private var descriptionFontSize: CGFloat {
+        mode == .narrow ? 11.5 : 13
+    }
+
+    /// One line's height for the current size, measured rather than assumed, so
+    /// the block matches the text it holds. Cached by size because building an
+    /// `NSLayoutManager` per body evaluation is expensive.
+    private static var lineHeightCache: [CGFloat: CGFloat] = [:]
+
+    private var descriptionLineHeight: CGFloat {
+        let size = descriptionFontSize
+        if let cached = Self.lineHeightCache[size] { return cached }
+        let height = NSLayoutManager().defaultLineHeight(
+            for: NSFont.systemFont(ofSize: size, weight: .ultraLight)
+        )
+        Self.lineHeightCache[size] = height
+        return height
+    }
+
+    private var descriptionScrollHeight: CGFloat {
+        let lineSpacing: CGFloat = 1.5
+        let lines = CGFloat(descriptionLineCount)
+        return ceil(descriptionLineHeight * lines + lineSpacing * max(0, lines - 1) + 1)
     }
 
     // MARK: - Backdrop
