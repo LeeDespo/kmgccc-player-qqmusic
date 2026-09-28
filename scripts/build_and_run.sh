@@ -24,12 +24,24 @@ echo "========================================"
 echo "Building $APP_NAME ($CONFIGURATION) via xcodebuild..."
 echo "========================================"
 
+# Signing team. The project pins the upstream author's team in its target build
+# settings, which nobody else can use, so building anywhere else needs an
+# override. Folder it in from the environment, because the accepted alternative
+# — Config/LocalOverrides.xcconfig — cannot carry this key: target build settings
+# in the project file take precedence over the project-level xcconfig, so a
+# DEVELOPMENT_TEAM written there is silently ignored.
+TEAM_ARGUMENT=()
+if [ -n "${DEVELOPMENT_TEAM:-}" ]; then
+    TEAM_ARGUMENT=("DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM")
+fi
+
 xcodebuild \
     -project "$REPO_ROOT/kmgccc_player.xcodeproj" \
     -scheme "$APP_NAME" \
     -configuration "$CONFIGURATION" \
     -destination 'platform=macOS' \
     -derivedDataPath "$DERIVED_DATA_PATH" \
+    "${TEAM_ARGUMENT[@]}" \
     CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-YES}" \
     build
 

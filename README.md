@@ -65,19 +65,37 @@ cp -R /path/to/kmgccc_player-2.3.1+QQMusic.1.0.0-patch/integration ./qqmusic/int
 DEVELOPMENT_TEAM=<你的 team id> ./scripts/build_and_run.sh
 ```
 
-工程里钉的是**上游作者**的签名 team，所以要覆盖成你自己的。补丁应用失败是**预期行为**：`patches/` 里的 diff
-只有在上下文仍然匹配时才干净应用，上游动了同一处就会失败——输出会指名是哪个文件、哪份补丁，一条失败不挡住其余的。
-步骤与移植办法见 [`qqmusic/integration/README.md`](qqmusic/integration/README.md)。
+这几条**已验证**：在一份干净的 `b0de7aa6` 上应用补丁包后照抄执行，构建成功、应用能启动。
+工程里钉的是**上游作者**的签名 team，别人用不了，所以要覆盖成你自己的——本补丁包对
+`scripts/build_and_run.sh` 的唯一改动就是把这个环境变量转发给 `xcodebuild`（没有证书可以改用
+`CODE_SIGNING_ALLOWED=NO ./scripts/build_and_run.sh`；`Config/LocalOverrides.xcconfig` 改不动它，
+那个 key 写在工程的 target build settings 里，优先级更高）。
 
-不想本地编译 helper？Release 里那份 DMG 中的应用已经带了构建好的 helper，复制到
-`~/Library/Application Support/kmgccc.player/QQMusicHelper/` 即可（应用优先从那里加载）。
+补丁应用失败是**预期行为**：`patches/` 里的 diff 只有在上下文仍然匹配时才干净应用，上游动了同一处就会失败——
+输出会指名是哪个文件、哪份补丁，一条失败不挡住其余的。步骤与移植办法见
+[`qqmusic/integration/README.md`](qqmusic/integration/README.md)。
+
+不想本地编译 helper？Release 里那份 DMG 中的应用已经带了构建好的 helper，复制过去即可：
+
+```sh
+cp -R /Applications/kmgccc_player.app/Contents/Resources/Tools/qqmusic-helper/* \
+      ~/Library/Application\ Support/kmgccc.player/QQMusicHelper/
+xattr -cr ~/Library/Application\ Support/kmgccc.player/QQMusicHelper   # 不能省，见下
+```
+
+第二行不能省：从下载来的 DMG 复制出的文件带 `com.apple.quarantine`，带隔离属性的 helper 会被系统直接杀掉
+（退出码 137），而应用只会写一行日志——表现是"在线音源整个不工作"，看起来像接口失效。
 
 ## 四、安装 DMG 版
 
-把 `kmgccc_player.app` 拖进「应用程序」。因为没有开发者签名，从网上下载后 macOS 会拦住它，任选一种放行：
+把 `kmgccc_player.app` 拖进「应用程序」。应用只有 **ad-hoc 签名**（没有开发者账号、没有公证），所以首次打开
+macOS 会拦住它——这是正常的未受信任提示，任选一种放行：
 
 - 在「应用程序」里右键点它 → 打开 → 再点「打开」；
 - 或执行一次 `xattr -dr com.apple.quarantine /Applications/kmgccc_player.app`。
+
+（打包脚本会在写完构建戳记后做 ad-hoc 签名并断言签名有效：只用 `CODE_SIGNING_ALLOWED=NO` 构建出来的 bundle
+签名是**坏的**，macOS 会把它报成"已损坏"，那种情况下上面两种放行方式都不管用。）
 
 系统要求：macOS 26.0 或更新版本、Apple Silicon Mac。第一次用 QQ 音乐时，点侧边栏的「QQ 音乐」扫码登录；
 注意**在线下载需要「托管」资料库**——原位引用模式的资料库只能浏览，因为导入管线不接受应用自己产生的文件。

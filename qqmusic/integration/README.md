@@ -42,8 +42,12 @@ cd /path/to/kmgccc_player
 ./qqmusic/integration/apply.sh --repo . --verify
 
 ./scripts/bootstrap.sh --component qqmusic-helper
-./scripts/build_and_run.sh
+DEVELOPMENT_TEAM=<你的 team id> ./scripts/build_and_run.sh
 ```
+
+工程里钉的是上游作者的签名 team，别人用不了，所以必须覆盖。补丁包把 `scripts/build_and_run.sh`
+也带上了（本补丁包对该文件的唯一改动就是把这个 `DEVELOPMENT_TEAM` 转发给 `xcodebuild`）；
+没有证书时改用 `CODE_SIGNING_ALLOWED=NO ./scripts/build_and_run.sh`（这一项上游本来就转发）。
 
 目标目录**不需要是 git 仓库**。先看会做什么、不实际改动：
 
@@ -174,8 +178,12 @@ kmgccc_player/Views/Settings/
 - **签名**：原工程用作者自己的 team（`TYU73KR9WW`），本机无法使用。
   `test-cycle.sh` 会自动从钥匙串取本机 team id；手工构建时覆盖：
   ```sh
-  xcodebuild ... DEVELOPMENT_TEAM=<你的teamID>
+  DEVELOPMENT_TEAM=<你的teamID> ./scripts/build_and_run.sh
+  # 或直接 xcodebuild ... DEVELOPMENT_TEAM=<你的teamID>
   ```
+  `Config/LocalOverrides.xcconfig` **不行**：那个 key 写在工程文件的 target build settings 里，
+  优先级高于工程级 xcconfig，写进去会被静默忽略（实测）。本补丁包因此给
+  `scripts/build_and_run.sh` 加了一行转发。没有证书就用 `CODE_SIGNING_ALLOWED=NO`（上游本来就支持）。
 - **Node 22 + corepack**（AMLL 构建）：npm 官方源不通时用 `registry.npmmirror.com`。
 
 ---

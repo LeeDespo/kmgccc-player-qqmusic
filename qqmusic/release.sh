@@ -101,7 +101,7 @@ fi
     || fail "the bundle has no QQ Music helper; run ./scripts/bootstrap.sh first"
 "$REPO_ROOT/scripts/check-app-bundle.sh" "$APP"
 
-step "stamp and verify"
+step "stamp, sign, verify"
 COMMIT="$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 DIRTY=""
 git -C "$REPO_ROOT" diff --quiet 2>/dev/null || DIRTY="+"
@@ -112,6 +112,24 @@ PLIST="$APP/Contents/Info.plist"
 WRITTEN="$(/usr/libexec/PlistBuddy -c "Print :QQMusicBuildStamp" "$PLIST")"
 [[ "$WRITTEN" == "$STAMP" ]] || fail "the stamp did not stick (expected '${STAMP}', found '${WRITTEN}')"
 printf 'stamped: %s\n' "$STAMP"
+
+# Ad-hoc sign the bundle, *after* the stamp so the sealed manifest covers it.
+#
+# `CODE_SIGNING_ALLOWED=NO` leaves the main binary carrying the linker's ad-hoc
+# signature while the bundle has no sealed resources — and macOS reads that
+# mismatch as "code has no resources but signature indicates they must be
+# present", i.e. a damaged app. The documented Gatekeeper bypass (right-click →
+# open, or clearing the quarantine attribute) does not fix a *broken* signature,
+# so a release built that way greets every downloader with 应用已损坏.
+#
+# An ad-hoc signature is not a trust signature: Gatekeeper still refuses the
+# first launch, which is why the installer note explains how to allow it. What it
+# buys is a bundle whose signature is consistent with its contents.
+codesign --force --deep --sign - "$APP" >/dev/null 2>&1 \
+    || fail "ad-hoc signing failed"
+codesign --verify --deep --strict "$APP" >/dev/null 2>&1 \
+    || fail "the signed bundle does not verify"
+printf 'signed:  ad-hoc (%s)\n' "$(codesign -dv "$APP" 2>&1 | sed -n 's/^Signature=//p')"
 
 step "assemble DMG"
 rm -rf "$OUT_DIR"

@@ -38,7 +38,8 @@
 ## 安装（DMG）
 
 1. 打开 DMG，把 `kmgccc_player.app` 拖进「应用程序」。
-2. 首次打开会被 Gatekeeper 拦住（未签名、未公证），任选一种放行：
+2. 首次打开会被 Gatekeeper 拦住（应用只有 ad-hoc 签名、没有公证，这是**正常的未受信任**提示，
+   不是"已损坏"），任选一种放行：
    - 右键点它 → 打开 → 再点「打开」；
    - 或执行一次 `xattr -dr com.apple.quarantine /Applications/kmgccc_player.app`。
 3. 启动后点侧边栏最下面的「QQ 音乐」，用手机 QQ 扫码登录。
@@ -61,17 +62,26 @@ cp -R /path/to/kmgccc_player-2.3.1+QQMusic.1.0.0-patch/integration ./qqmusic/int
 DEVELOPMENT_TEAM=<你的 team id> ./scripts/build_and_run.sh
 ```
 
-工程里钉的是上游作者的签名 team，所以要覆盖成你自己的。补丁应用失败是**预期行为**：`patches/` 里的 diff 只有在
-上下文仍然匹配时才干净应用；输出会指名是哪个文件、哪份补丁，一条失败不挡住其余的。细节见补丁包内
-`integration/README.md`。
+工程里钉的是上游作者的签名 team，所以要覆盖成你自己的——补丁包对 `scripts/build_and_run.sh` 的唯一改动就是
+把这个环境变量转发给 `xcodebuild`（`Config/LocalOverrides.xcconfig` 改不动它：那个 key 在工程的
+target build settings 里，优先级更高）。没有证书就用 `CODE_SIGNING_ALLOWED=NO ./scripts/build_and_run.sh`。
 
-不想本地编译 helper？这份 DMG 里的应用已经带了构建好的 helper：把
-`kmgccc_player.app/Contents/Resources/Tools/qqmusic-helper`（连同 `_internal.bundle`）复制到
-`~/Library/Application Support/kmgccc.player/QQMusicHelper/` 即可，应用优先从那里加载。
+补丁应用失败是**预期行为**：`patches/` 里的 diff 只有在上下文仍然匹配时才干净应用；输出会指名是哪个文件、
+哪份补丁，一条失败不挡住其余的。细节见补丁包内 `integration/README.md`。
+
+不想本地编译 helper？这份 DMG 里的应用已经带了构建好的 helper，复制过去即可（第二行不能省，下载来的文件带
+`com.apple.quarantine`，带隔离属性的 helper 会被系统直接杀掉，而应用只会写一行日志）：
+
+```sh
+cp -R /Applications/kmgccc_player.app/Contents/Resources/Tools/qqmusic-helper/* \
+      ~/Library/Application\ Support/kmgccc.player/QQMusicHelper/
+xattr -cr ~/Library/Application\ Support/kmgccc.player/QQMusicHelper
+```
 
 ## 已知限制
 
-- 未签名、未公证（没有 Apple 开发者账号）。
+- **ad-hoc 签名**（`codesign -s -`），没有开发者签名、没有公证——签名只保证 bundle 与内容一致，
+  不代表受信任，所以首次打开必须放行一次。
 - 只对基线 `b0de7aa6`（2.3.1）验证过。上游更新后重放补丁大概率有冲突，需要人工移植。
 - QQ 音乐接口是逆向来的，随时可能变化。helper 可独立替换，接口变化时优先换它而不是重新构建应用。
 - 这个构建：见 DMG 内 `安装说明.txt`，或应用内「QQ 音乐设置 → Helper 组件 → 本功能构建」。

@@ -79,7 +79,13 @@ git -C "$FROM" cat-file -e "${BASE}^{commit}" 2>/dev/null \
 # not, so they have to travel with it.
 is_shippable_path() {
   case "$1" in
-    kmgccc_player/*|kmgccc_playerTests/*|Tools/QQMusicHelper/*|scripts/components/qqmusic-helper.sh|.gitignore) return 0 ;;
+    kmgccc_player/*|kmgccc_playerTests/*|Tools/QQMusicHelper/*|.gitignore) return 0 ;;
+    # Two upstream scripts carry a small accommodation for building this fork on
+    # any machine but the upstream author's, and they have to travel with the
+    # package: `build_and_run.sh` is the command upstream's own docs tell people
+    # to run, and without the patch following this package's README hits a
+    # signing error instead of a build.
+    scripts/build_and_run.sh|scripts/components/qqmusic-helper.sh) return 0 ;;
     # The app's sources live in file-system-synchronized folders, so they need
     # no project entries — but the TEST target is an explicit file list. Without
     # this file the package would copy the test files into a tree that never

@@ -64,10 +64,15 @@ cp -R /path/to/这个补丁包/integration ./qqmusic/integration
 DEVELOPMENT_TEAM=<你的 team id> ./scripts/build_and_run.sh
 ```
 
-工程里钉的是原作者（上游）的签名 team，所以要覆盖成你自己的。
+这些命令**已验证可用**：在一份干净的 `b0de7aa6` 上应用本补丁包后照抄执行，构建成功且应用能启动。
+工程里钉的是原作者（上游）的签名 team，别人用不了，所以要覆盖成你自己的——本补丁包对
+`scripts/build_and_run.sh` 的唯一改动就是把这个环境变量转发给 `xcodebuild`。
+没有证书时改用 `CODE_SIGNING_ALLOWED=NO ./scripts/build_and_run.sh`。
 
-> 不想在本地编译 helper？本补丁包的 Release 页里那份 DMG 中的应用已经带了构建好的 helper，
-> 解法在下一节。
+> **`Config/LocalOverrides.xcconfig` 做不到这件事**：`DEVELOPMENT_TEAM` 写在工程文件的
+> target build settings 里，优先级高于工程级 xcconfig，写进去会被静默忽略（实测）。
+
+> 不想在本地编译 helper？Release 页里那份 DMG 中的应用已经带了构建好的 helper，见下一节。
 
 ### 4. helper：可外部替换的独立组件
 
@@ -77,8 +82,19 @@ DEVELOPMENT_TEAM=<你的 team id> ./scripts/build_and_run.sh
 ~/Library/Application Support/kmgccc.player/QQMusicHelper/
 ```
 
-所以有两个办法：`./scripts/bootstrap.sh --component qqmusic-helper` 自己构建，或者把 DMG 里
-`kmgccc_player.app/Contents/Resources/Tools/qqmusic-helper`（连同 `_internal.bundle`）整个复制到上面那个目录。
+所以有两个办法：`./scripts/bootstrap.sh --component qqmusic-helper` 自己构建，或者从 DMG 里
+把应用内那份复制过去（在「应用程序」里右键应用 → 显示包内容，或直接用下面的命令）：
+
+```sh
+cp -R /Applications/kmgccc_player.app/Contents/Resources/Tools/qqmusic-helper/* \
+      ~/Library/Application\ Support/kmgccc.player/QQMusicHelper/
+xattr -cr ~/Library/Application\ Support/kmgccc.player/QQMusicHelper
+```
+
+**第二行不能省。** 从网上下载的 DMG 复制出来的文件带 `com.apple.quarantine`，会被系统直接
+SIGKILL（退出码 137），而应用只会写一行日志——表现是"在线音源整个不工作"，看起来像接口失效。
+给应用本身放行（`xattr -dr com.apple.quarantine /Applications/kmgccc_player.app`）**不会**
+顺带解决复制出来的副本。
 
 ## 三、注意事项
 
