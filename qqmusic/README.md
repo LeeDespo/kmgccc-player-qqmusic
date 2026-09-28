@@ -43,6 +43,15 @@ qqmusic/
 网页快约四倍）；**歌词默认走 Helper**（它的歌词可含逐字时间）。只有一条通道能取的内容在设置里显示但置灰，
 并写明原因。
 
+**Helper 那一格的内部还有一层：`qqmusic-api-python`（第三方 Python 库）↔ `Tools/QQMusicHelper/main.py`
+（本项目自己的程序）。** 库负责签名、cookie、平台参数与模块方法（`client.lyric.get_lyric` 是逐字歌词的来源，
+`client.song.get_song_urls` 是取流）；helper 负责 JSON 协议与能力自报、**库里没包成公开方法的接口**
+（用 `client.song._build_cgi` / `_build_http` 直接打上游，共 10 处）、字段归一化（含补上库模型没有的
+`albumId` / `singers`）、以及取流音质阶梯等业务动作。所以"helper 可独立替换"这件事包含换库版本：
+`requirements.txt` 钉 `qqmusic-api-python==0.7.3`，PyInstaller 把运行时和库一起打进 `_internal.bundle/`，
+使用者的机器不需要装 Python。应用侧**只显示、不校验** helper 的版本号（设置 → Helper 组件）。
+详见根 `README.md` 的「Helper 组件」一节。
+
 有一个例外要记住：**整表读取时网页返回空列表按"没作答"处理，改问另一条；而歌曲简介返回空就是答案**——
 大多数歌本来就没有简介，把空当成"没答"会让每首歌都白跑两条通道。
 |

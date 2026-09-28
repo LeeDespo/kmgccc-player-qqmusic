@@ -9,6 +9,8 @@
 - 基线（`BASE`）：`b0de7aa6` — kmgccc_player 2.3.1
 - 补丁版本：`1.0.0`（与上游版本分开，见应用内 QQ 音乐设置 → Helper 组件 → 「本功能版本」）
 - 已在一份干净的 `b0de7aa6` 检出上验证：重放后产物与开发分支一致，构建成功、单元测试通过、应用能启动
+- 同页 Release 的 DMG 是同一份代码的应用成品：ad-hoc 签名、未公证，首次打开需要放行一次（那条命令在
+  Release 正文里；`xattr -dr com.apple.quarantine /Applications/kmgccc_player.app`）
 
 ---
 
@@ -33,6 +35,28 @@
 功能改动；崩溃与统计会发到上游作者的服务器，而对方无法据此做任何事。
 
 功能的完整设计说明见 `FEATURES.md`（即仓库里的 `qqmusic/README.md`）。
+
+### helper 组件与 qqmusic-api-python 的关系
+
+在线音源的接口调用分两层：[qqmusic-api-python](https://github.com/L-1124/QQMusicApi) 是**第三方 Python 库**；
+`Tools/QQMusicHelper` 是**本项目自己的程序**，它把那个库当底层引擎，再包一层应用能用的东西。应用（Swift）
+从不直接调用那个库——两者之间是一条 stdin/stdout 的 JSON 协议。
+
+- **库负责**：请求签名、cookie 拼装、平台参数、响应解析，以及各模块方法（`client.song/album/singer/lyric/
+  search/top/songlist/recommend/user/login.*`）。逐字歌词来自 `client.lyric.get_lyric`，取流地址来自
+  `client.song.get_song_urls`。
+- **helper 负责**：① JSON 协议与方法白名单、`get_helper_info` 自报版本；② 库里没有包成公开方法的接口
+  （用 `client.song._build_cgi` / `_build_http` 直接打上游：新歌、我喜欢、收藏专辑、专辑曲目、我的歌单、
+  歌单写操作、电台等，共 10 处）；③ 归一化（把搜索/歌单/电台/榜单的不同嵌套形状统一成一套字段，
+  封面强制 https）；④ 业务动作（取流音质阶梯、凭据落盘、60 秒空闲自杀、限流退避）。它还兼着上游原本
+  的用途：本地歌曲的元数据补全。
+- **可独立替换**：helper 优先从 `~/Library/Application Support/kmgccc.player/QQMusicHelper/` 加载，
+  bundle 内的副本只作兜底——上游接口变化时换那个二进制即可，不必重新构建应用。`requirements.txt` 钉
+  `qqmusic-api-python==0.7.3`，PyInstaller 把 Python 运行时和库一起打包，**使用者的机器不需要装 Python**。
+- 应用里另有**一条独立通道** `QQMusicWebAPI`（自己直连上游 HTTP，不经 helper）；设置里的「在线内容 →
+  获取通道」决定谁先试、另一条兜底。
+- 应用侧**没有做 helper 版本闸门**：只显示版本号（设置 → Helper 组件）。换上一个形状不兼容的 helper，
+  表现是某个页面报错再退回另一条通道，而不是启动时明确拒绝。
 
 ## 二、怎么用这个补丁包
 

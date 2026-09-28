@@ -11,7 +11,8 @@
 ## 附件
 
 - **`kmgccc_player-2.3.1+QQMusic.1.0.0-arm64.dmg`** — 已经打好补丁的 macOS 应用（Apple Silicon，macOS 26+）。
-  拖进「应用程序」即可；没有开发者签名与公证，首次打开需要放行（见下）。
+  内含 `/Applications` 快捷方式与 `安装说明.txt`。应用是 **ad-hoc 签名**（无证书、无 TeamID、无公证），
+  首次打开需要放行一次——具体会发生什么见下面「安装」一节。
 - **`kmgccc_player-2.3.1+QQMusic.1.0.0-patch.tar.gz`** — 补丁包本体。用它可以：
   自己从上游源码构建；或者把功能搬到别的上游版本上（上游更新后重放，冲突需人工移植）。
 
@@ -38,14 +39,58 @@
 ## 安装（DMG）
 
 1. 打开 DMG，把 `kmgccc_player.app` 拖进「应用程序」。
-2. 首次打开会被 Gatekeeper 拦住（应用只有 ad-hoc 签名、没有公证，这是**正常的未受信任**提示，
-   不是"已损坏"），任选一种放行：
-   - 右键点它 → 打开 → 再点「打开」；
-   - 或执行一次 `xattr -dr com.apple.quarantine /Applications/kmgccc_player.app`。
+2. **首次打开会被 Gatekeeper 拦一次**，这是预期的。提示大意是"Apple 无法验证它是否包含恶意软件"或
+   "来自身份不明的开发者"——**不是**"已损坏"。任选一种放行（第一条在任何 macOS 版本上都能用）：
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/kmgccc_player.app
+   ```
+
+   - 或者先双击一次让它被拦下，再进 **系统设置 → 隐私与安全性 → 安全性 → 仍要打开**。
+     （macOS 15 起 Apple 取消了"右键 → 打开"这条快捷方式，只在更旧的系统上还有效。）
+
+   为什么可以确定不是"已损坏"：打包脚本在写完构建戳记后做 ad-hoc 签名，并**断言** `codesign --verify
+   --deep --strict` 通过，否则中止发布。用 `CODE_SIGNING_ALLOWED=NO` 直接构建出来的 bundle 签名是坏的
+   （`code has no resources but signature indicates they must be present`），macOS 把它当"已损坏"，
+   而且"清 quarantine / 仍要打开"都修不了——所以这一步不能省。
 3. 启动后点侧边栏最下面的「QQ 音乐」，用手机 QQ 扫码登录。
 4. 注意：**在线下载需要「托管」资料库**——原位引用模式的资料库只能浏览，因为导入管线不接受应用自己产生的文件。
 
 系统要求：macOS 26.0 或更新版本、Apple Silicon Mac。
+
+## Helper 组件是什么（它和 qqmusic-api-python 的关系）
+
+在线音源的接口调用分两层：[qqmusic-api-python](https://github.com/L-1124/QQMusicApi) 是**第三方 Python 库**；
+`Tools/QQMusicHelper` 是**本项目自己的 Python 程序**，它把那个库当作底层引擎，再往上包一层应用能用的东西。
+应用（Swift）从不直接调用这个库——两者之间是一条 stdin/stdout 的 JSON 协议。
+
+```
+kmgccc_player（Swift）
+   │  stdin/stdout 一行一个 JSON
+   ▼
+qqmusic-helper（本项目：Tools/QQMusicHelper/main.py，PyInstaller 打成独立二进制）
+   │  直接调用
+   ▼
+qqmusic_api（第三方库：Client / Credential / 各模块 / 签名 / 数据模型）
+```
+
+**库负责**：请求签名、cookie 拼装、平台参数、响应到模型的解析，以及各模块方法
+（`client.song/album/singer/lyric/search/top/songlist/recommend/user/login.*`）。逐字歌词来自
+`client.lyric.get_lyric`，取流地址与 vkey 来自 `client.song.get_song_urls`。
+
+**helper 自己负责**：① 协议层（一行一个 JSON、方法白名单、`get_helper_info` 自报版本与能力）；
+② 库里没有包成公开方法的接口——用 `client.song._build_cgi` / `_build_http` 直接打上游（新歌、我喜欢、
+收藏专辑、专辑曲目、我的歌单、歌单写操作、电台等，共 10 处）；③ 归一化（把搜索/歌单/电台/榜单不同嵌套
+形状统一成一套字段，封面强制 https）；④ 业务动作（取流音质阶梯、凭据落盘、60 秒空闲自杀、限流退避）。
+它还兼着上游原本的用途：本地歌曲的元数据补全。
+
+**可独立替换**：helper 优先从 `~/Library/Application Support/kmgccc.player/QQMusicHelper/` 加载，
+bundle 内副本只作兜底，所以上游接口变化时换那个二进制即可，不必重新构建应用。`requirements.txt` 钉
+`qqmusic-api-python==0.7.3`，PyInstaller 把 Python 运行时和这个库一起打包，**使用者的机器不需要装 Python**。
+应用内「QQ 音乐设置 → Helper 组件」会显示 helper 版本、协议版本与库版本。
+
+应用里另有**一条完全独立的通道** `QQMusicWebAPI`（自己直连 `u.y.qq.com/cgi-bin/musicu.fcg`，不经 helper
+也不经这个库）；设置里的「在线内容 → 获取通道」决定谁先试、另一条兜底。
 
 ## 从源码构建（用补丁包）
 
@@ -84,6 +129,8 @@ xattr -cr ~/Library/Application\ Support/kmgccc.player/QQMusicHelper
   不代表受信任，所以首次打开必须放行一次。
 - 只对基线 `b0de7aa6`（2.3.1）验证过。上游更新后重放补丁大概率有冲突，需要人工移植。
 - QQ 音乐接口是逆向来的，随时可能变化。helper 可独立替换，接口变化时优先换它而不是重新构建应用。
+- 应用侧**没有做 helper 版本闸门**：`main.py` 注释里说"宿主会拒绝不兼容的协议版本"，实际只把版本号显示出来。
+  换上一个响应形状不兼容的 helper，表现会是某个页面报错（再退回另一条通道），而不是启动时明确拒绝。
 - 这个构建：见 DMG 内 `安装说明.txt`，或应用内「QQ 音乐设置 → Helper 组件 → 本功能构建」。
 
 ## 参考的项目
