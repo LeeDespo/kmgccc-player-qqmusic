@@ -42,26 +42,24 @@ struct QQMusicPageRouter: View {
             // nothing to do with where the user should land.
             scrollResetKey: navigation.displayKey
         ) { insets, mode in
-            // One page replaces another in place, and the swap is animated the way
-            // the app animates its own page changes: the outgoing page fades out
-            // while the incoming one fades in, both staying put.
+            // One page replaces another in place, with no transition of its own.
             //
-            // Deliberately *not* a move. The app's own page swap — the `Group`
-            // switching on `libraryVM.currentSelection` in
-            // `AppKitMainSplitPanes`, which is what 主页 → 专辑 → 返回 runs
-            // through — declares no transition at all, so SwiftUI inserts and
-            // removes with its default `.opacity` and the change reads as a
-            // cross-fade. A directional slide was tried here first and did not
-            // match it.
+            // The movement the user asked for is not a transition at all: the app
+            // animates its **Home page arriving**. `HomeView` draws its scroll
+            // content with `.opacity(hasAppeared ? 1 : 0)`,
+            // `.offset(y: hasAppeared ? 0 : 12)` and
+            // `.animation(.easeOut(duration: 0.4), value: hasAppeared)`, flipping
+            // the flag 80ms after appearing — so 侧边栏 → 主页 and 艺人二级页 → 主页
+            // are a fade with a 12pt rise, and nothing slides sideways.
             //
-            // The `.id` is what makes SwiftUI treat the two pages as different
-            // views, and the explicit `.animation(_:value:)` is needed because the
-            // canvas strips animations from its scroll content (a child's modifier
-            // runs after the parent's, so this restores it for this value only).
+            // `QQMusicHomePage` carries that same entrance (see
+            // `QQMusicLandingEntrance`), which covers both of those movements here:
+            // the sidebar entry lands on it, and so does 返回 from any second-level
+            // page. Second-level pages themselves get no entrance, which is also
+            // what the app does — `PlaylistDetailView` appears at once, and only
+            // its header colours fade in as they resolve.
             pageContent(insets: insets, mode: mode)
                 .id(navigation.displayKey)
-                .transition(.opacity)
-                .animation(.easeInOut(duration: 0.3), value: navigation.displayKey)
         }
         // 查看详情 / 查看歌曲描述 from a row's 更多 menu. Presented here rather
         // than by the row itself: rows are recycled as they scroll, and a sheet
@@ -125,6 +123,7 @@ struct QQMusicPageRouter: View {
         switch navigation.displayed {
         case .home:
             QQMusicHomePage(navigation: navigation, mode: mode)
+                .modifier(QQMusicLandingEntrance())
 
         // MARK: Account lists
         case .likedSongs:
@@ -157,4 +156,46 @@ struct QQMusicPageRouter: View {
         }
     }
 
+}
+
+/// The app's own entrance for its Home page, applied to the online landing page.
+///
+/// `HomeView` draws its scroll content as
+/// `.opacity(hasAppeared ? 1 : 0)`, `.offset(y: hasAppeared ? 0 : 12)`,
+/// `.animation(.easeOut(duration: 0.4), value: hasAppeared)`, and flips
+/// `hasAppeared` 80ms after appearing (or at once, with `reduceMotion`). That is
+/// the whole of what the user sees when entering 主页 — from the sidebar, or
+/// coming back from a second-level page — and it is what they asked this surface
+/// to copy. Nothing slides; the page settles.
+///
+/// It re-runs on every arrival because the router identifies pages by
+/// `displayKey`: leaving and returning to the landing page builds it afresh, so
+/// `onAppear` fires again and the flag starts false.
+private struct QQMusicLandingEntrance: ViewModifier {
+
+    @State private var hasAppeared = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 12)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.4), value: hasAppeared)
+            .onAppear(perform: reveal)
+    }
+
+    /// The delay is `HomeView`'s: it gives the page one frame to lay out before
+    /// the fade starts, so the rise reads as the content arriving rather than as
+    /// a layout jitter being animated.
+    private func reveal() {
+        if reduceMotion {
+            hasAppeared = true
+            return
+        }
+        Task {
+            try? await Task.sleep(for: .milliseconds(80))
+            guard !Task.isCancelled else { return }
+            hasAppeared = true
+        }
+    }
 }

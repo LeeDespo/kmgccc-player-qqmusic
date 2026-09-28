@@ -51,6 +51,26 @@ nonisolated enum QQMusicFetchChannel: String, CaseIterable, Identifiable, Sendab
     }
 }
 
+/// Which channel answered a subject's most recent request, and whether it had to
+/// be the fallback.
+///
+/// Surfaced in Settings so the contract above is *visible*: preferring a channel
+/// looks identical to working until something fails, and "did choosing Helper
+/// break the lyrics?" should be answerable from the page, not from a log.
+nonisolated struct QQMusicChannelOutcome: Equatable, Sendable {
+    /// The channel whose answer was used.
+    let channel: QQMusicFetchChannel
+    /// True when the preferred channel failed first and the other one answered.
+    let didFallBack: Bool
+
+    /// "明白了" style line for the settings row.
+    var summary: String {
+        didFallBack
+            ? "最近一次由 \(channel.displayName) 兜底回答。"
+            : "最近一次由 \(channel.displayName) 回答。"
+    }
+}
+
 /// A kind of online content whose channel the user can choose.
 nonisolated enum QQMusicChannelSubject: String, CaseIterable, Identifiable, Sendable {
     /// 我喜欢 / 收藏专辑 / 收藏歌单.
@@ -109,16 +129,17 @@ nonisolated enum QQMusicChannelSubject: String, CaseIterable, Identifiable, Send
         }
     }
 
-    /// The two channels' own description of what each returns, shown so the
-    /// choice can be made on facts rather than on a hunch.
+    /// The fact that decides which channel is the better *default* for this
+    /// subject, stated without repeating the fallback rule the row above it
+    /// already spells out.
     var channelNote: String {
         switch self {
         case .accountLists, .trackLists, .followedArtists:
-            return "两边返回的内容相同，网页更快；选 Helper 时网页仍会兜底。"
+            return "两边返回的结果相同。"
         case .lyrics:
-            return "Helper 的歌词更完整（可含逐字时间），推荐保持 Helper；选网页时 Helper 仍会兜底。"
+            return "Helper 的歌词更完整，可含逐字时间。"
         case .songIntro:
-            return "两边读的是同一个上游模块，返回同一份简介，网页更快；选 Helper 时网页仍会兜底。"
+            return "两边读的是同一个上游模块，返回同一份简介。"
         }
     }
 }

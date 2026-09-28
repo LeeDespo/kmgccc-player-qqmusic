@@ -238,6 +238,26 @@ final class QQMusicOnlineCoordinator {
         }
     }
 
+    /// How often the local library has played this online track.
+    ///
+    /// The app's hero reports the library's own preference stats, and an online
+    /// track has them exactly when it has been played: playback downloads it
+    /// through the import pipeline first, so it is a library track from then on.
+    /// A song that has never played here therefore reads as 0 and the stats line
+    /// shows the duration alone — which is what the app's hero does for an
+    /// unplayed local track too.
+    ///
+    /// Deliberately not an upstream listen count: the endpoints this source reads
+    /// carry none (the song-detail module returns 简介, 公司, 流派, 语种 and 发行时间
+    /// and nothing else numeric).
+    func localPlayCount(for songMid: String) -> Int {
+        guard !songMid.isEmpty,
+              let libraryViewModel,
+              let local = libraryViewModel.allTracks.first(where: { $0.qqMusicSongMid == songMid })
+        else { return 0 }
+        return libraryViewModel.preferenceStats(for: local.id).playCount
+    }
+
     /// Set once a library session exists; the coordinator cannot import without it.
     var importService: FileImportService?
     var paths: LibraryPaths? {
@@ -398,32 +418,59 @@ final class QQMusicOnlineCoordinator {
         // one is always the fallback, whichever way round the choice is. That is
         // the whole contract: preferring a channel must not be able to break a
         // page that the other channel can serve.
+        //
+        // Each outcome is recorded so the settings page can show which channel
+        // actually answered — the fallback is otherwise invisible, and "did
+        // choosing Helper break the lyrics?" is not something a user should have
+        // to read a log to answer.
         let preferred = AppSettings.shared.qqMusicChannel(for: subject)
         switch preferred {
         case .web:
-            return try await webThen(label, web: web, helper: helper)
+            let answered = try await webThen(label, web: web, helper: helper)
+            recordChannelOutcome(
+                .init(channel: answered.channel, didFallBack: answered.channel != .web),
+                for: subject
+            )
+            return answered.value
         case .helper:
             do {
-                return try await helper()
+                let result = try await helper()
+                recordChannelOutcome(.init(channel: .helper, didFallBack: false), for: subject)
+                return result
             } catch {
                 Log.warning(
                     "[QQMusicOnline] helper \(label) failed, falling back to the web path: \(error)",
                     category: .import
                 )
-                return try await web()
+                let result = try await web()
+                recordChannelOutcome(.init(channel: .web, didFallBack: true), for: subject)
+                return result
             }
         }
     }
+
+    /// Record which channel answered a subject's last request.
+    private func recordChannelOutcome(
+        _ outcome: QQMusicChannelOutcome,
+        for subject: QQMusicChannelSubject
+    ) {
+        guard channelOutcomes[subject] != outcome else { return }
+        channelOutcomes[subject] = outcome
+    }
+
+    /// The last outcome per subject, so the settings page can show which channel
+    /// actually answered. Empty until a read of that subject has completed.
+    private(set) var channelOutcomes: [QQMusicChannelSubject: QQMusicChannelOutcome] = [:]
 
     private func webThen<T>(
         _ label: String,
         web: () async throws -> T,
         helper: () async throws -> T
-    ) async throws -> T {
+    ) async throws -> (value: T, channel: QQMusicFetchChannel) {
         do {
             let result = try await web()
             webReadsSucceeded.insert(label)
-            return result
+            return (result, .web)
         } catch {
             if webReadsSucceeded.contains(label) {
                 Log.warning(
@@ -432,7 +479,7 @@ final class QQMusicOnlineCoordinator {
                 )
             }
             webReadsSucceeded.remove(label)
-            return try await helper()
+            return (try await helper(), .helper)
         }
     }
 
@@ -2300,7 +2347,15 @@ final class QQMusicOnlineCoordinator {
     private func handlePlaybackModeChange() async {
         guard !sessionAllSongMids.isEmpty else { return }
         guard wantsShuffle != orderIsShuffled else { return }
-        let current = playerViewModel?.currentTrack?.qqMusicSongMid
+        // The cursor has to be a track *of this session*. `make` falls back to
+        // the head of the list for an unknown anchor — right for a session that
+        // is starting, wrong here: it would place the playlist's first row at the
+        // front of the order, and the prefetch loop would then queue the top of
+        // the list behind whatever is playing. `activePlayingSongMid` covers the
+        // moment `currentTrack` is briefly unset during a track swap.
+        guard let current = playerViewModel?.currentTrack?.qqMusicSongMid ?? activePlayingSongMid,
+              sessionAllSongMids.contains(current)
+        else { return }
         rebuildPlaybackOrder(keeping: current)
         // The order changed, so the queue no longer reflects it. Restart the
         // loop, which now pulls from the rebuilt order.

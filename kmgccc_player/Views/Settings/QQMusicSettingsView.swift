@@ -400,7 +400,9 @@ struct QQMusicSettingsView: View {
             SettingsHeaderLabel(title: "在线内容", systemImage: "square.grid.2x2")
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("在线内容来自两条通道，可以分别指定用哪条。**指定的那条先试，另一条仍然兜底**——所以选哪条都不会把某个页面弄坏。")
+                Text("在线内容由两条通道提供：**网页**（直连上游接口，快约三倍）与 **Helper**（本地组件，慢一些，但部分内容更详细）。")
+                    .settingsDescriptionStyle()
+                Text("每一类内容**只需选一条主用通道**：选中的先取，**没选中的那条在它失败时自动兜底**。所以两条都能取的内容，选哪条都不会取不到，区别只是谁先试。")
                     .settingsDescriptionStyle()
 
                 ForEach(QQMusicChannelSubject.allCases) { subject in
@@ -412,7 +414,7 @@ struct QQMusicSettingsView: View {
 
                 Divider().opacity(0.4)
 
-                Text("以下内容只有一条通道能取，所以没有可选：")
+                Text("以下内容只有一条通道能取，没有可选的：")
                     .settingsDescriptionStyle()
                 ForEach(QQMusicLockedContent.allCases) { locked in
                     lockedRow(locked)
@@ -462,6 +464,7 @@ struct QQMusicSettingsView: View {
             get: { settings.qqMusicChannel(for: subject) },
             set: { settings.setQQMusicChannel($0, for: subject) }
         )
+        let selected = settings.qqMusicChannel(for: subject)
 
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 12) {
@@ -479,8 +482,23 @@ struct QQMusicSettingsView: View {
                 .pickerStyle(.menu)
                 .fixedSize()
             }
+            // The rule, spelled out per row and in terms of *this* row's current
+            // choice — the section's paragraph states it once, but the sentence a
+            // reader checks against is the one next to the control they are about
+            // to change.
+            Text("先试 \(selected.displayName)，它失败时自动改用 \(fallback(to: selected).displayName)。")
+                .settingsDescriptionStyle()
             Text(subject.channelNote).settingsDescriptionStyle()
+            // And what actually happened, so the fallback is observable rather
+            // than something the user has to take on faith.
+            if let outcome = coordinator?.channelOutcomes[subject] {
+                Text(outcome.summary).settingsDescriptionStyle()
+            }
         }
+    }
+
+    private func fallback(to channel: QQMusicFetchChannel) -> QQMusicFetchChannel {
+        channel == .web ? .helper : .web
     }
 
     /// Content only one channel serves: shown, not hidden, with the reason — the

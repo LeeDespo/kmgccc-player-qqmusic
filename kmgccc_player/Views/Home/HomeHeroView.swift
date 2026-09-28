@@ -987,7 +987,11 @@ private final class HomeHeroBackdropCache {
     }
 }
 
-private extension View {
+extension View {
+    /// The hero's own button chrome: clear glass with the app's highlight
+    /// hairline. Internal rather than private because the online 精选 card is the
+    /// app's hero drawn with an online track and builds its buttons from the same
+    /// surface — a second definition would let the two heroes drift apart.
     @ViewBuilder
     func homeHeroHeaderGlassCapsule(colorScheme: ColorScheme) -> some View {
         self.modifier(HomeHeroHeaderGlassModifier(shape: Capsule(), colorScheme: colorScheme))
