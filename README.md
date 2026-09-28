@@ -2,202 +2,167 @@
   <img src="pages/assets/icon.png" width="192" alt="kmgccc_player Icon" />
 </p>
 
-<h1 align="center">kmgccc_player</h1>
+<h1 align="center">kmgccc_player + QQ 音乐在线音源</h1>
 
 <p align="center">
-  面向 macOS 26 的本地音乐播放器。<br>
-  原生开发，注重美学与沉浸式体验。
+  <b>上游 2.3.1 + QQMusic 1.0.0</b><br>
+  给 <a href="https://github.com/kmgcc/kmgccc_player">kmgccc_player</a> 加装 QQ 音乐在线音源的一份补丁包。
 </p>
 
 > [!WARNING]
-> kmgccc_player 是个人项目，可能存在缺陷、未完成特性或行为变动。不建议在重要环境中作为唯一播放器使用。欢迎通过官网或 Issue 反馈问题。
+> 本仓库是个人改版，只对**上游 `b0de7aa6`（2.3.1）**验证过，没有 Apple 开发者签名，也没有公证。
+> 上游是个人项目（作者原话：可能存在缺陷、未完成特性或行为变动），本补丁继承了这一点。
 
-[kmgccc_player 官网](https://player.kmgccc.cn)
+## 一、这个仓库是什么
 
-作为喜欢音乐，绘画多年的枸，我想为音乐播放器添加一份随性与独特的美感。感谢你的使用和喜欢！
+**它不是播放器的另一个分支，而是一份可重放的变更集。**
 
-## 本仓库是什么
+- 播放器本体是 [kmgccc_player](https://github.com/kmgcc/kmgccc_player)，版权与实现都属于原作者。
+- 本仓库在它之上**只做加法**：给应用加一个 QQ 音乐在线音源（浏览、搜索、播放、下载入库、收藏）。
+- 所以本仓库 = **上游 2.3.1 + 一份可审计的变更集**。变更集以补丁包
+  （[`qqmusic/integration/`](qqmusic/integration/)：`modules/` 新文件 + `patches/` 对上游文件的 diff）的形式存在，
+  把它应用到一个未改动的上游源码上就得到完整功能，上游更新时可以把功能搬过去，而不必手工重做。
 
-这是 [kmgccc_player](https://github.com/kmgcc/kmgccc_player) 的一个改版（folk）：保留原应用的全部本地能力，**在上面加装 QQ 音乐在线音源**——在线浏览、搜索、试听、下载入库，以及围绕它的缓存与批量下载。
+想直接用它：[下载 Release](../../releases) 里的 DMG。想自己从源码构建、或把功能搬到别的上游版本上：
+看下面的「[打补丁](#三打补丁把本功能植入上游源码)」，补丁包同样在 Release 页附件里。
 
-玩法与原应用一致：**在线歌曲先下载、再走原有导入管线入库、最后交给原有播放引擎播放**。因此无缝播放、原生歌词、频谱、Now Playing、多选排序全部自动继承，播放引擎一行没改。切歌不卡是因为协调器在你听当前这首时已经把后面的下载好了。
+## 二、这个补丁加了什么
 
-- **浏览器式的页面**：落地页的歌单/专辑/排行榜/电台推荐，详情页是原应用那套 220pt 头部 + 曲目行；返回/前进、搜索、刷新、批量下载都在**窗口工具栏**里，和原应用同一层玻璃、同一套交互。
-- **歌曲列表照原应用**：整行单击播放，行尾是「更多」菜单（播放 / 下一首播放 / 查看详情 / 查看艺人 / 查看专辑）；选择下载时靠**整行变色**表示选中，连续选中连成一块。
-- **缓存分两类**：歌单、推荐、排行榜、浏览态封面缓存在资料库的 `QQMusic/` 目录（与应用自身的 `Cache/` 平级且分开）；歌词不单缓存——下载时取一次，随导入写进曲库。
-- **歌曲缓存只约束自动下载的部分**：只有为了播放而预取的才算缓存、可回收；你自己点过下载的属于曲库，永不回收。
+保留原应用的全部本地能力，在其之上加一个 QQ 音乐在线音源：
 
-功能细节、设计取舍与全部踩过的坑见 **`qqmusic/README.md`** 与 `AGENTS.md`。
+- **浏览**——落地页顶部是精选大卡片（取「猜你喜欢」，可换一首；卡面显示歌曲简介，文字颜色按封面明暗自动取深/浅），
+  往下是收藏歌单、收藏专辑、关注的歌手、新歌电台、排行榜、电台、猜你喜欢，可下钻到歌单 / 专辑 / 排行榜 /
+  电台 / 歌手详情页。返回、前进、搜索、刷新、批量下载都在**窗口工具栏**里，与原应用同一层玻璃、同一套交互。
+- **播放**——点击列表任意一行即从这一行开始播：顺序播放往下走到表尾，随机播放覆盖**整张**在线列表
+  （而不是只覆盖已下载的那几首）。在线歌曲**先下载、经原有导入管线入库、再交给原有播放引擎播放**，
+  因此无缝播放、原生歌词、频谱、Now Playing、播放历史全部自动继承，播放引擎一行没改。
+- **账号**——扫码或网页登录（两者等价）；「我喜欢」、收藏歌单、收藏专辑；行内收藏/取消收藏写回上游。
+- **缓存与回收**——歌单、推荐、排行榜与浏览态封面缓存在资料库的 `QQMusic/` 目录（与应用自身的 `Cache/` 平级且分开）；
+  歌曲缓存只约束「为了播放而自动下载」的那部分，可设上限并回收——你自己点过下载的属于曲库，永不回收。
+- **两条通道，各取所长**——常读的内容直连上游网页接口（快约三倍），其余走 helper 组件；
+  每类内容可指定**先用哪条**，**没选中的那条在它失败时自动兜底**，设置页逐行写明并显示最近一次实际由谁回答。
+- **helper 与应用解耦**——helper 是独立进程、可从外部目录替换；上游接口变化时换那个二进制即可，无需重新构建应用。
 
-## 目录结构
+同时**关闭了自动更新、崩溃上报与匿名统计**（默认关且不可再开）：更新源属于上游项目，装上去会覆盖本版本的功能
+改动；崩溃与匿名统计会发到上游作者的服务器，而对方无法据此做任何事。
 
-上游的文件保持原样（补丁包的 `patches/` 会明确记录我们改过哪几处），本功能自己的东西集中在一处：
+功能细节、设计取舍与全部踩过的坑见 [`qqmusic/README.md`](qqmusic/README.md)。
+
+## 三、打补丁（把本功能植入上游源码）
+
+```sh
+# 1. 拿到基线源码
+git clone --recurse-submodules https://github.com/kmgcc/kmgccc_player.git
+cd kmgccc_player
+git checkout b0de7aa6
+
+# 2. 应用补丁包（Release 附件里的 tar.gz，或本仓库的 qqmusic/integration/）
+cp -R /path/to/kmgccc_player-2.3.1+QQMusic.1.0.0-patch/integration ./qqmusic/integration
+./qqmusic/integration/apply.sh --repo . --verify
+
+# 3. 构建（helper 需要 Python 3.12 / Node 22 / CMake）
+./scripts/bootstrap.sh
+DEVELOPMENT_TEAM=<你的 team id> ./scripts/build_and_run.sh
+```
+
+工程里钉的是**上游作者**的签名 team，所以要覆盖成你自己的。补丁应用失败是**预期行为**：`patches/` 里的 diff
+只有在上下文仍然匹配时才干净应用，上游动了同一处就会失败——输出会指名是哪个文件、哪份补丁，一条失败不挡住其余的。
+步骤与移植办法见 [`qqmusic/integration/README.md`](qqmusic/integration/README.md)。
+
+不想本地编译 helper？Release 里那份 DMG 中的应用已经带了构建好的 helper，复制到
+`~/Library/Application Support/kmgccc.player/QQMusicHelper/` 即可（应用优先从那里加载）。
+
+## 四、安装 DMG 版
+
+把 `kmgccc_player.app` 拖进「应用程序」。因为没有开发者签名，从网上下载后 macOS 会拦住它，任选一种放行：
+
+- 在「应用程序」里右键点它 → 打开 → 再点「打开」；
+- 或执行一次 `xattr -dr com.apple.quarantine /Applications/kmgccc_player.app`。
+
+系统要求：macOS 26.0 或更新版本、Apple Silicon Mac。第一次用 QQ 音乐时，点侧边栏的「QQ 音乐」扫码登录；
+注意**在线下载需要「托管」资料库**——原位引用模式的资料库只能浏览，因为导入管线不接受应用自己产生的文件。
+
+## 五、本仓库的目录与工作流
+
+上游的文件保持原样（`patches/` 明确记录我们改过哪几处），本功能自己的东西集中在一处：
 
 ```
 kmgccc_player/            应用源码：上游 + 本功能的接入点改动（就地）
 kmgccc_playerTests/       测试（含本功能自己的测试）
 qqmusic/                  ← 本功能除源码之外的一切
-  integration/            补丁包：modules/（新文件）+ patches/（上游 diff）+ 脚本
-  README.md               功能说明、目录划分、维护指南
+  integration/            补丁包：modules/（新文件）+ patches/（上游 diff）+ 脚本 + 基线 BASE
+  README.md               功能说明、通道规则、缓存策略、参考项目
 upstream/                 未改动的上游源码，冻结参照（不进仓库）
 testarea/                 每次从 upstream/ 重建的测试区（不进仓库）
 docs/qqmusic/             设计、方案与实现记录（不进仓库）
 ```
 
-## 从源码构建（本仓库）
+开发这台机器上的两条命令：
 
 ```sh
-./scripts/bootstrap.sh                      # 构建外部组件（含 QQ 音乐 helper）
-./scripts/build_and_run.sh                  # 构建并运行
-```
-
-本机注意：工程里钉的是原作者的签名 team，你需要用**自己的** team id 覆盖：
-
-```sh
-DEVELOPMENT_TEAM=<你的 teamID> ./scripts/build_and_run.sh
-```
-
-helper 重建后要同步到外部目录才会被优先使用（`test-cycle.sh` 会自动做）：
-
-```sh
-cp -R .build/products/qqmusic-helper/* \
-  ~/Library/Application\ Support/kmgccc.player/QQMusicHelper/
-```
-
-## 打补丁（把本功能植入任意上游版本）
-
-补丁包是功能的**可重放形式**：把它应用到一个未改动的上游源码上，就得到完整功能。
-所以「本仓库 = 上游 + 一份可审计的变更集」，上游更新时把功能搬过去即可，不必手工重做。
-
-```sh
-cp -R qqmusic/integration /path/to/kmgccc_player/
-cd /path/to/kmgccc_player
-./qqmusic/integration/apply.sh --repo . --verify
-./scripts/bootstrap.sh --component qqmusic-helper
-./scripts/build_and_run.sh
-```
-
-改完功能之后同步补丁包，并在**干净基线**上跑完整循环（重建 → 重放 → 构建 → 测试 → 启动）：
-
-```sh
-./qqmusic/integration/sync.sh          # 从开发树重新生成 modules/ + patches/
+./qqmusic/integration/sync.sh           # 把开发树的改动重新生成进 modules/ + patches/
 ./qqmusic/integration/test-cycle.sh --sync
+# 重建 testarea/ → 重放补丁包并校验 → 构建 → 跑测试 → 启动应用
 ```
 
-补丁应用失败是**预期行为**：表示上游动了同一处，需要人工移植意图。步骤见 `qqmusic/integration/README.md`。
+**「补丁能应用」不等于「补丁能构建、能跑」**，所以提交前以 `test-cycle.sh` 为准：它从干净基线重放，
+打印 `passed: N failed: M`（执行数为 0 也算失败，因为 `xcodebuild` 在测试文件没登记进工程时照样报
+`TEST SUCCEEDED`），最后启动应用。
 
-## 参考的项目
+应用内「QQ 音乐设置 → Helper 组件」里有**本功能版本**与**本功能构建**两行：功能以补丁包交付，一台机器上可能
+同时存在多个构建，没有这两行「旧构建」与「没修好」从外面看一模一样。
 
-本功能建立在原应用之上，另外用到：
+## 六、上游原有能力（本补丁未改动）
 
-- **[qqmusic-api-python](https://github.com/L-1124/QQMusicApi)** — QQ 音乐接口的 Python 实现，helper 的目录、排行、电台、歌手、歌词与取流都走它
-- **[kmgccc_player](https://github.com/kmgcc/kmgccc_player)**（上游）—— 播放器本体；它的 README 下文列出的 AMLL、LDDC、SACAD、MediaRemote Adapter、ncmdump 等组件同样构成本项目的基础
+以下都是上游 kmgccc_player 的能力，来自它的 README，本补丁只在必要的接入点上做了最小改动：
 
-## 主要功能
+- **现代本地曲库**：多资料库独立管理与原位目录引用，不移动或不复制音频即可映射既有文件夹，
+  专辑、艺人与文件夹层级平行浏览。
+- **原生 Swift 歌词**：纯原生 Core Text 排版与 Core Animation 动效，逐字呼吸与弹簧滚动，支持 ProMotion 120Hz。
+- **外部播放协同**：读取 Apple Music 及系统全局媒体的正在播放状态，自动关联歌词与封面。
+- **多元视听皮肤**：多款 Now Playing 与全屏皮肤，随乐曲脉动的实时频谱与波形可视化。
+- **动态色彩系统**：从专辑封面提炼 OKLCH 语义色，自适应生成视窗质感与高可读性歌词配色。
+- **纯粹本地优先**：元数据解析、全文搜索索引与偏好统计皆在本地运行，无需注册账号。
 
-- **现代本地曲库**：支持多资料库独立管理与原位目录引用，无需移动或复制音频文件即可直接映射既有文件夹，并提供专辑、艺人与文件夹层级平行的双轴浏览体验。
-- **原生 Swift 歌词**：采用纯原生 Core Text 排版与 Core Animation 动效管线，紧随音频硬件时钟起伏实现细腻的逐字呼吸与弹簧滚动，能耗与发热显著降低，并完美支持 ProMotion 120Hz 高刷新率。
-- **外部播放协同**：无缝读取 Apple Music 及系统全局媒体的正在播放状态，自动关联高精度歌词与高清封面。
-- **多元视听皮肤**：内置多款精心调校的 Now Playing 与全屏皮肤，支持随乐曲脉动的多形态实时音频频谱与波形可视化。
-- **动态色彩系统**：从专辑封面中提炼具有视觉张力的 OKLCH 语义色，自适应生成舒适通透的视窗质感与高可读性歌词配色。
-- **纯粹本地优先**：全部元数据解析、全文搜索索引与偏好统计皆在 Mac 本地无声运行，无需注册账号，零网络依赖，尊重听者的隐私与数据掌控。
+## 七、参考的项目
 
-## 系统要求
+- [kmgccc_player](https://github.com/kmgcc/kmgccc_player) —— 播放器本体（上游）
+- [qqmusic-api-python](https://github.com/L-1124/QQMusicApi) —— QQ 音乐接口的 Python 实现，helper 的目录、
+  排行、电台、歌手、歌词与取流都走它
+- 上游 README 致谢的 AMLL、LDDC、SACAD、MediaRemote Adapter、ncmdump 等组件同样构成本项目的基础
 
-- macOS 26.0 或更新版本
-- Apple Silicon Mac
-
-## 从源码构建
+## 八、从源码构建与本机开发环境
 
 ```sh
-git clone --recurse-submodules https://github.com/kmgcc/kmgccc_player.git
-cd kmgccc_player
-./scripts/bootstrap.sh
-./scripts/verify.sh
+git clone --recurse-submodules <this repo>
+cd kmgccc_player_for_QQMusic
+./scripts/bootstrap.sh        # 构建外部组件（AMLL、LDDC、QQ Music Helper、MediaRemoteAdapter、SACAD）
+./scripts/verify.sh           # Debug 构建 + LRC 回归 + 单元测试 + App bundle 检查
+./scripts/build_app.sh Release   # Release 构建及 bundle 完整性校验
 open kmgccc_player.xcodeproj
 ```
 
-如果已经用普通 `git clone` 下载，先补齐 submodule：
+开发环境需要 Xcode 26.2 或更新版本（Swift 6）、Node.js 22（含 Corepack）、ARM64 Python 3.12、
+CMake 3.15 或更新版本、Git、curl 与 Xcode Command Line Tools。构建输入可选地在
+`Config/LocalOverrides.xcconfig` 配置（可从同目录 `.example` 复制）。
 
-```sh
-git submodule update --init --recursive
-```
+- **AMLL submodule 缺失或 commit 不一致**：`git submodule sync --recursive` 再 `git submodule update --init --recursive`。
+- **找不到 node 或 corepack**：装 Node.js 22，确认两者都在 PATH 中。npm 官方源不通时可用 `registry.npmmirror.com`。
+- **Python 版本或架构不符**：装 ARM64 Python 3.12，或用 `KMGCCC_ARM_PYTHON=/path/to/python3.12 ./scripts/bootstrap.sh`。
+- **Xcode 报外部组件产物缺失**：回仓库根目录跑 `./scripts/bootstrap.sh`。
+- **产物被判为 stale**：`./scripts/bootstrap.sh --force --component <name>` 重建，失败日志在 `.build/logs/`。
 
-`bootstrap.sh` 会下载并构建 AMLL、LDDC Fetch Core、QQ Music Helper、MediaRemoteAdapter 和 SACAD 五个外部运行组件。首次运行需要下载依赖并编译多个 ARM64 产物，耗时较长；之后会比对源码和工具链状态，未变化的组件直接复用缓存。
+## 九、技术文档（上游）
 
-`verify.sh` 在提交改动前运行，依次执行 bootstrap、ARM64 Debug 构建、LRC 回归测试、单元测试和 App bundle 检查。
+上游在 [`docs/README.md`](docs/README.md) 中系统梳理了架构理念、核心算法与工程实现：应用架构、
+原生歌词系统、资料库体系、色彩系统、曲库搜索与偏好随机播放、实现约束与坑。本补丁自己的设计与实现记录
+在 `docs/qqmusic/`（不进仓库）。
 
-构建并运行 Debug App：
+## 十、许可证与致谢
 
-```sh
-./scripts/build_and_run.sh
-```
+代码基于 GNU Affero General Public License v3.0 (AGPL-3.0) 发布，与上游一致；第三方组件遵循各自的开源许可证，
+详见应用内 About 页面及 `Licenses` 目录。
 
-验证 Release 构建及 App bundle 完整性：
-
-```sh
-./scripts/build_app.sh Release
-```
-
-本机可选构建输入通过 `Config/LocalOverrides.xcconfig` 配置；可从同目录的 `.example` 复制。该文件缺失时工程照常构建，`verify.sh` 与 `build_app.sh` 会显式禁用本机构建扩展，确保结果可由 clean clone 复现。
-
-开发环境需要：
-
-- Xcode 26.2 或更新版本（Swift 6）
-- Node.js 22（含 Corepack）
-- ARM64 Python 3.12
-- CMake 3.15 或更新版本
-- Git、curl 和 Xcode Command Line Tools
-
-外部组件的详细说明见 `docs/dependencies.md`。
-
-## 技术文档
-
-我们在 [`docs/README.md`](docs/README.md) 中系统梳理了应用的架构理念、核心算法与工程实现，文档面向开源贡献者与对实现细节感兴趣的开发者：
-
-- [应用架构](docs/architecture.md)：应用组合根、资料库 Session 隔离、本地与外部播放主链路及统一展示模型；
-- [原生 Swift 歌词系统](docs/native-lyrics.md)：Core Text 字体排版度量、Core Animation 遮罩动效、弹簧物理滚动与硬件时钟同步；
-- [现代本地音乐资料库体系](docs/library-system.md)：原位引用与托管双模式、多资料库隔离、标签与目录双轴浏览哲学；
-- [色彩系统](docs/color-system.md)：基于 OKLCH 与 Display P3 的封面取色、语义映射与局部可读性算法；
-- [曲库搜索](docs/search.md) 与 [偏好随机播放](docs/smart-shuffle.md)：基于 SQLite FTS5 的本地检索以及结合听觉行为的探索衰减模型；
-- [实现约束与坑](docs/PITFALLS.md)：关键业务逻辑中生效的硬性约束与避坑备忘录。
-
-## 常见问题
-
-- **AMLL submodule 缺失或 commit 不一致**：运行 `git submodule sync --recursive`，再 `git submodule update --init --recursive`。
-- **找不到 node 或 corepack**：安装 Node.js 22，确认两个命令都在 PATH 中。
-- **Python 版本或架构不符**：安装 ARM64 Python 3.12，或用 `KMGCCC_ARM_PYTHON=/path/to/python3.12 ./scripts/bootstrap.sh` 指定。
-- **找不到 CMake**：安装 CMake 3.15 或更新版本（MediaRemoteAdapter 需要）。
-- **Xcode 报外部组件产物缺失**：回到仓库根目录运行 `./scripts/bootstrap.sh`。
-- **产物被判定为 stale**：用 `./scripts/bootstrap.sh --force --component <name>` 重建对应组件。失败时查看 `.build/logs/`。
-- **Swift Package 解析失败**：确认网络可访问 GitHub 后重试。
-
-## 参与贡献
-
-缺陷和功能建议可提交到 [GitHub Issues](https://github.com/kmgcc/kmgccc_player/issues)。请先搜索已有 Issue，附上 macOS 版本、Mac 架构、复现步骤和预期结果。安全问题不要发公开 Issue，请按 `SECURITY.md` 的私密渠道报告。
-
-贡献代码前请阅读 `CONTRIBUTING.md`。
-
-## 致谢
-
-本项目在开发过程中使用并修改了以下开源项目：
-
-- **[applemusic-like-lyrics (AMLL)](https://github.com/amll-dev/applemusic-like-lyrics)** — 歌词渲染引擎，通过项目维护的 [integration fork](https://github.com/kmgcc/applemusic-like-lyrics-kmgcccplayer-integration) 集成
-- **[LDDC](https://github.com/chenmozhijin/LDDC)** — 歌词获取与匹配
-- **[apple-audio-visualization](https://github.com/taterboom/apple-audio-visualization)** — 音频频谱分析与可视化算法
-- **[ncmdump](https://github.com/taurusxin/ncmdump)** — NCM 格式解密
-- **[sacad](https://github.com/desbma/sacad)** — 专辑封面搜索与下载
-- **[QQMusicApi](https://github.com/L-1124/QQMusicApi)** — QQ 音乐元数据与封面查询
-- **[MediaRemote Adapter](https://github.com/ungive/mediaremote-adapter)** — macOS 外部播放状态读取与控制
-- **[WhatsNewKit](https://github.com/SvenTiigi/WhatsNewKit)** — 应用更新说明展示
-- **[PLCrashReporter](https://github.com/microsoft/plcrashreporter)** — 主 App 进程崩溃报告捕获
-
-## 美术素材版权声明
-
-除代码及另有说明的第三方内容外，本项目相关的美术素材（包括界面插画、UI 装饰、贴图、角色设计、图形元素及其他视觉素材）均为作者原创作品，著作权及相关权利均由作者保留。未经作者事先书面授权，不得复制、转载、分发、修改、改编、商用、二次创作、提取，或用于机器学习与生成式 AI 相关用途。
-
-保留一切权利。Copyright © kmg. All rights reserved.
-
-## 许可证
-
-代码基于 GNU Affero General Public License v3.0 (AGPL-3.0) 发布。第三方组件遵循各自的开源许可证，详见应用内 About 页面及 `Licenses` 目录。
+上游 README 的「美术素材版权声明」与「致谢」对上游内容继续有效：美术素材著作权归上游作者保留，
+AMLL、LDDC、apple-audio-visualization、ncmdump、sacad、QQMusicApi、MediaRemote Adapter、WhatsNewKit、
+PLCrashReporter 等项目的贡献属于它们各自的作者。本补丁只新增 QQ 音乐在线音源相关的代码与文案。

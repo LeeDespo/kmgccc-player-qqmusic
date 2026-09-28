@@ -288,8 +288,23 @@ nonisolated struct QQMusicHelperInfo: Codable, Equatable, Sendable {
 nonisolated enum QQMusicBuildStamp {
     private static let key = "QQMusicBuildStamp"
 
+    /// The version of the online-source patch itself.
+    ///
+    /// Deliberately separate from the app's own version: this fork is upstream
+    /// 2.3.1 plus a patch, the two are released under names that say so, and a
+    /// patch can move without upstream moving. Bump it when the patch package is
+    /// released, not on every commit — the build stamp below covers those.
+    static let patchVersion = "1.0.0"
+
     static var text: String {
         (Bundle.main.object(forInfoDictionaryKey: key) as? String) ?? "开发构建"
+    }
+
+    /// "2.3.1 + QQMusic 1.0.0", named after the release. The base version is read
+    /// from the bundle so it cannot drift from what was actually built.
+    static var featureVersion: String {
+        let base = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+        return "\(base ?? "?") + QQMusic \(patchVersion)"
     }
 }
 

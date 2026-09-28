@@ -42,23 +42,27 @@ struct QQMusicPageRouter: View {
             // nothing to do with where the user should land.
             scrollResetKey: navigation.displayKey
         ) { insets, mode in
-            // One page replaces another in place, with no transition of its own.
+            // Every page enters the way the app's own Home does.
             //
-            // The movement the user asked for is not a transition at all: the app
-            // animates its **Home page arriving**. `HomeView` draws its scroll
-            // content with `.opacity(hasAppeared ? 1 : 0)`,
-            // `.offset(y: hasAppeared ? 0 : 12)` and
-            // `.animation(.easeOut(duration: 0.4), value: hasAppeared)`, flipping
-            // the flag 80ms after appearing — so 侧边栏 → 主页 and 艺人二级页 → 主页
-            // are a fade with a 12pt rise, and nothing slides sideways.
+            // The movement is not a transition — there is none here, and the app
+            // has none. It is `HomeView` drawing its content with
+            // `.opacity(hasAppeared ? 1 : 0)`, `.offset(y: hasAppeared ? 0 : 12)`
+            // and `.animation(.easeOut(duration: 0.4), value: hasAppeared)`,
+            // flipping the flag 80ms after appearing: a fade with a 12pt rise,
+            // nowhere sliding sideways. `QQMusicPageEntrance` is that, verbatim.
             //
-            // `QQMusicHomePage` carries that same entrance (see
-            // `QQMusicLandingEntrance`), which covers both of those movements here:
-            // the sidebar entry lands on it, and so does 返回 from any second-level
-            // page. Second-level pages themselves get no entrance, which is also
-            // what the app does — `PlaylistDetailView` appears at once, and only
-            // its header colours fade in as they resolve.
+            // Applied to *every* page rather than only the landing page, which is
+            // where the user asked for it: the app's detail pages appear at once,
+            // but on this surface 我喜欢 and a playlist's 更多列表 are entered from
+            // the same rails as the landing page, and having only some arrivals
+            // animate reads as a glitch rather than as a rule.
+            //
+            // The entrance must sit *inside* the `.id`: that identity is what makes
+            // SwiftUI build the page afresh, so the modifier's own appear state
+            // starts false on each one and the animation replays. Outside it, only
+            // the first page of a session would ever animate.
             pageContent(insets: insets, mode: mode)
+                .modifier(QQMusicPageEntrance())
                 .id(navigation.displayKey)
         }
         // 查看详情 / 查看歌曲描述 from a row's 更多 menu. Presented here rather
@@ -123,7 +127,6 @@ struct QQMusicPageRouter: View {
         switch navigation.displayed {
         case .home:
             QQMusicHomePage(navigation: navigation, mode: mode)
-                .modifier(QQMusicLandingEntrance())
 
         // MARK: Account lists
         case .likedSongs:
@@ -158,7 +161,7 @@ struct QQMusicPageRouter: View {
 
 }
 
-/// The app's own entrance for its Home page, applied to the online landing page.
+/// The app's own entrance for its Home page, applied to every online page.
 ///
 /// `HomeView` draws its scroll content as
 /// `.opacity(hasAppeared ? 1 : 0)`, `.offset(y: hasAppeared ? 0 : 12)`,
@@ -169,9 +172,9 @@ struct QQMusicPageRouter: View {
 /// to copy. Nothing slides; the page settles.
 ///
 /// It re-runs on every arrival because the router identifies pages by
-/// `displayKey`: leaving and returning to the landing page builds it afresh, so
-/// `onAppear` fires again and the flag starts false.
-private struct QQMusicLandingEntrance: ViewModifier {
+/// `displayKey`, and the modifier is applied inside that identity: each page is
+/// built afresh, so `onAppear` fires and the flag starts false again.
+private struct QQMusicPageEntrance: ViewModifier {
 
     @State private var hasAppeared = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

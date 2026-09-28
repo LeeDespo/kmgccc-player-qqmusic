@@ -628,6 +628,7 @@ struct QQMusicSettingsView: View {
                 // and an app can be built from several trees on one machine, so
                 // without this line a stale build and an unfixed bug look
                 // identical from the outside.
+                labeledValue("本功能版本", QQMusicBuildStamp.featureVersion)
                 labeledValue("本功能构建", QQMusicBuildStamp.text)
 
                 Text("QQ 音乐的接口是逆向来的，随时可能变化。Helper 与应用分离，可单独更新：把新版 qqmusic-helper 及其 _internal.bundle 放入下方目录即可，无需重新构建应用。")
