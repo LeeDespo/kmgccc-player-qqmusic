@@ -86,6 +86,10 @@ is_shippable_path() {
     # to run, and without the patch following this package's README hits a
     # signing error instead of a build.
     scripts/build_and_run.sh|scripts/components/qqmusic-helper.sh) return 0 ;;
+    # HelperNext is the feature's data component (Rust); it has to travel with
+    # the package for the same reason the Python helper does. `target/` is
+    # git-ignored, so the build directory cannot leak in.
+    Tools/HelperNext/*) return 0 ;;
     # The app's sources live in file-system-synchronized folders, so they need
     # no project entries — but the TEST target is an explicit file list. Without
     # this file the package would copy the test files into a tree that never

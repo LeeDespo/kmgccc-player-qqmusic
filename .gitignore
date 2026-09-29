@@ -42,6 +42,7 @@ kmgccc_player/Assets.xcassets/
 
 # Local diagnostic tools with machine-specific paths
 Tools/ColorGoldenMaster/
+Tools/HelperNext/target/
 
 # Tool working directories
 .opencode/

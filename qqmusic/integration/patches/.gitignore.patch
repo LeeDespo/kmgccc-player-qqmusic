@@ -1,8 +1,16 @@
 diff --git a/.gitignore b/.gitignore
-index c3238624..3426ee52 100644
+index c3238624..b0abe5dd 100644
 --- a/.gitignore
 +++ b/.gitignore
-@@ -102,3 +102,21 @@ superteam/
+@@ -42,6 +42,7 @@ kmgccc_player/Assets.xcassets/
+ 
+ # Local diagnostic tools with machine-specific paths
+ Tools/ColorGoldenMaster/
++Tools/HelperNext/target/
+ 
+ # Tool working directories
+ .opencode/
+@@ -102,3 +103,21 @@ superteam/
  
  # Repo-root reference screenshots (kept locally, not published)
  /screenshots/
