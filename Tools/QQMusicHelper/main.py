@@ -49,7 +49,7 @@ MAX_IMAGE_SIZE = 800
 # Bumped when the request/response shapes below change incompatibly. The host
 # refuses to talk to a helper whose protocol major it does not understand, so a
 # newer helper build cannot silently mis-parse.
-HELPER_VERSION = "2.2.0"
+HELPER_VERSION = "2.3.0"
 PROTOCOL_VERSION = 2
 
 # Advertised by `get_helper_info` and checked by the dispatcher, so a host can
@@ -67,6 +67,7 @@ KNOWN_METHODS: tuple[str, ...] = (
     "fetch_playlist_tracks",
     "fetch_new_songs",
     "search_playlists",
+    "search_albums",
     "fetch_album_tracks",
     "set_liked",
     "fetch_radio_stations",
@@ -1538,6 +1539,53 @@ async def search_playlists(params: dict[str, Any]) -> list[dict[str, Any]]:
     return payloads
 
 
+async def search_albums(params: dict[str, Any]) -> list[dict[str, Any]]:
+    """Search albums by keyword.
+
+    The same by-type search the songs, artists and playlists go through; albums
+    are simply another `SearchType`. Fields mirror `fetch_artist_albums` so the
+    page can draw either list with the same row.
+    """
+    _require_dependency()
+    keyword = str(params.get("keyword") or "").strip()
+    if not keyword:
+        return []
+    limit = max(1, min(_first_int(params, ("limit",)) or 20, 50))
+    results = await _search_by_type(
+        keyword, SearchType.ALBUM, ("album", "albums", "item_album", "list"), limit
+    )
+    payloads: list[dict[str, Any]] = []
+    for item in results:
+        album_mid = _album_mid(item)
+        album_id = _first_int(item, ("id", "albumId", "albumID"))
+        if not album_mid and not album_id:
+            continue
+        payloads.append(
+            {
+                "source": SOURCE,
+                "id": album_id or 0,
+                "title": _strip_search_highlight(
+                    _first_text(item, ("albumName", "album_name", "name", "title"))
+                ),
+                "albumMid": album_mid,
+                # The full-size cover built from the album mid, like every other
+                # album payload here; the search's own `pic` is a 180px thumbnail
+                # and only stands in when there is no mid to build from.
+                "coverURL": _sanitize_image_url(
+                    _album_cover_url(album_mid)
+                    or _first_text(item, ("pic", "coverURL", "cover"))
+                ),
+                "artist": _strip_search_highlight(
+                    _first_text(item, ("singer_name", "singerName", "singer"))
+                ),
+                "releaseDate": _first_text(
+                    item, ("publish_date", "time_public", "publishDate")
+                ),
+            }
+        )
+    return payloads
+
+
 def _strip_search_highlight(value: str) -> str:
     """Search results wrap matched terms in <em>; drop the markup."""
     return re.sub(r"</?em>", "", value or "").strip()
@@ -2017,13 +2065,22 @@ async def fetch_artist_songs(params: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 async def fetch_artist_albums(params: dict[str, Any]) -> list[dict[str, Any]]:
-    """Albums of an artist, by singer mid."""
+    """Albums of an artist, by singer mid.
+
+    Supports `sort`: `hot` (upstream default ordering) or `latest` (newest
+    release first). Like `fetch_artist_songs`, the ordering is computed here
+    rather than asked for: the upstream ignores the ordering parameters it is
+    given, and the response carries each album's `time_public`, so sorting
+    locally is the only way to make "最新" mean anything. Albums without a date
+    sink to the end instead of being dropped.
+    """
     _require_dependency()
     singer_mid = str(params.get("singerMid") or "").strip()
     if not singer_mid:
         raise ValueError("singerMid is required")
     num = max(1, min(_first_int(params, ("limit",)) or 50, 100))
     page = max(1, _first_int(params, ("page",)) or 1)
+    sort = str(params.get("sort") or "hot").strip().lower()
     plain = _to_plain(
         await _execute_client_request(
             lambda client: client.singer.get_album_list(singer_mid, num=num, page=page)
@@ -2044,9 +2101,11 @@ async def fetch_artist_albums(params: dict[str, Any]) -> list[dict[str, Any]]:
                 "albumMid": album_mid,
                 "coverURL": _sanitize_image_url(_album_cover_url(album_mid)),
                 "artist": _first_text(item, ("singer_name", "singerName")),
-                "releaseDate": _first_text(item, ("time_public", "publishDate")),
+                "releaseDate": _first_text(item, ("time_public", "publishDate", "publish_date")),
             }
         )
+    if sort == "latest":
+        albums.sort(key=lambda a: a.get("releaseDate") or "", reverse=True)
     return albums
 
 
@@ -2165,6 +2224,14 @@ async def handle_request(request: dict[str, Any]) -> dict[str, Any]:
         duration_ms = int((time.monotonic() - started_at) * 1000)
         _log(f"response id={request_id} method={method} playlists={len(playlists)} durationMs={duration_ms}")
         return {"id": request_id, "ok": True, "playlists": playlists}
+    elif method == "search_albums":
+        albums = await search_albums(params)
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        _log(f"response id={request_id} method={method} albums={len(albums)} durationMs={duration_ms}")
+        # The id is not decoration: the app matches a response to the request it
+        # belongs to by it, so a reply without one is waited on until the
+        # 15-second timeout and the search looks like a failure.
+        return {"id": request_id, "ok": True, "albums": albums}
     elif method == "search_playlists":
         playlists = await search_playlists(params)
         duration_ms = int((time.monotonic() - started_at) * 1000)

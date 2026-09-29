@@ -140,4 +140,46 @@ final class QQMusicNavigationTests: XCTestCase {
             QQMusicPage.newSongs(.korea).loadKey
         )
     }
+
+    /// The search page's content type is a filter, not a place.
+    ///
+    /// The router draws a page through `viewIdentityKey`, and a change of
+    /// identity rebuilds the view — which replays the page entrance (a fade with
+    /// a 12pt rise). Tapping the segmented control must therefore keep the same
+    /// identity, while `loadKey` keeps carrying the type so the scroll reset and
+    /// the reload still treat two result lists as two pages.
+    func testSearchKindsShareOneViewIdentityButNotOneLoadKey() {
+        XCTAssertEqual(
+            QQMusicPage.search(.songs).viewIdentityKey,
+            QQMusicPage.search(.albums).viewIdentityKey,
+            "switching the search type is the same page and must not re-animate"
+        )
+        XCTAssertNotEqual(
+            QQMusicPage.search(.songs).loadKey,
+            QQMusicPage.search(.albums).loadKey,
+            "the scroll reset and the reload still key on the type"
+        )
+
+        // For every other page the two keys agree — the search type is the only
+        // filter that lives inside a page's identity.
+        XCTAssertEqual(
+            QQMusicPage.album(id: 7, title: "A").viewIdentityKey,
+            QQMusicPage.album(id: 7, title: "A").loadKey
+        )
+        XCTAssertNotEqual(
+            QQMusicPage.album(id: 7, title: "A").viewIdentityKey,
+            QQMusicPage.album(id: 8, title: "B").viewIdentityKey,
+            "two different albums are two different views"
+        )
+    }
+
+    /// Albums are searchable like songs, artists and playlists — every kind the
+    /// segmented control offers has to be labelled and reachable.
+    func testAlbumSearchIsOfferedByThePicker() {
+        XCTAssertTrue(QQMusicSearchKind.allCases.contains(.albums))
+        for kind in QQMusicSearchKind.allCases {
+            XCTAssertFalse(kind.title.isEmpty)
+            XCTAssertFalse(kind.placeholder.isEmpty)
+        }
+    }
 }

@@ -29,6 +29,7 @@ import Observation
 nonisolated enum QQMusicSearchKind: String, Hashable, Sendable, CaseIterable, Identifiable {
     case songs
     case artists
+    case albums
     case playlists
 
     var id: String { rawValue }
@@ -37,6 +38,7 @@ nonisolated enum QQMusicSearchKind: String, Hashable, Sendable, CaseIterable, Id
         switch self {
         case .songs: return "歌曲"
         case .artists: return "歌手"
+        case .albums: return "专辑"
         case .playlists: return "歌单"
         }
     }
@@ -45,6 +47,7 @@ nonisolated enum QQMusicSearchKind: String, Hashable, Sendable, CaseIterable, Id
         switch self {
         case .songs: return "搜索在线歌曲"
         case .artists: return "搜索歌手"
+        case .albums: return "搜索专辑"
         case .playlists: return "搜索歌单"
         }
     }
@@ -177,6 +180,21 @@ nonisolated enum QQMusicPage: Hashable, Sendable {
         case .artist(let ref): return "artist:\(ref.singerMid)"
         }
     }
+
+    /// Identity for the *view* the router draws — equal to `loadKey` except for
+    /// the search page's content type.
+    ///
+    /// Switching that type is a change of filter, not of place: the page is the
+    /// same page, and the router identifies views through this key. Keeping the
+    /// type out of it is what stops the page from being rebuilt on the switch —
+    /// and a rebuild replays the page entrance (fade + 12pt rise), which the user
+    /// asked not to see when tapping the segmented control. `displayKey` still
+    /// carries the type, because the scroll reset and the load trigger *should*
+    /// treat two different result lists as two different pages.
+    var viewIdentityKey: String {
+        if case .search = self { return "search" }
+        return loadKey
+    }
 }
 
 /// Back/forward stack for the online browse surface.
@@ -205,8 +223,11 @@ final class QQMusicNavigation {
     var canGoBack: Bool { !stack.isEmpty }
     var canGoForward: Bool { !forwardStack.isEmpty }
 
-    /// Change identity for the router's load trigger.
+    /// Change identity for the router's load trigger and its scroll reset.
     var displayKey: String { displayed.loadKey }
+
+    /// Identity of the view the router draws. See `QQMusicPage.viewIdentityKey`.
+    var viewIdentityKey: String { displayed.viewIdentityKey }
 
     /// Drill into a page. Forward history is discarded, as in any browser.
     func push(_ page: QQMusicPage) {

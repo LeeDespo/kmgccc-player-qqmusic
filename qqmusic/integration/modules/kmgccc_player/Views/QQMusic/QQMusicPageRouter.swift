@@ -61,9 +61,15 @@ struct QQMusicPageRouter: View {
             // SwiftUI build the page afresh, so the modifier's own appear state
             // starts false on each one and the animation replays. Outside it, only
             // the first page of a session would ever animate.
+            //
+            // The identity is `viewIdentityKey`, not `displayKey`: they differ for
+            // the search page's content type, where the page is *the same page*
+            // with a different filter and must not animate again (the user asked
+            // for that switch to be still). The scroll reset still keys on
+            // `displayKey`, so a new result list still starts at its top.
             pageContent(insets: insets, mode: mode)
                 .modifier(QQMusicPageEntrance())
-                .id(navigation.displayKey)
+                .id(navigation.viewIdentityKey)
         }
         // 查看详情 / 查看歌曲描述 from a row's 更多 menu. Presented here rather
         // than by the row itself: rows are recycled as they scroll, and a sheet

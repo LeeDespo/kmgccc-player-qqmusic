@@ -1055,10 +1055,18 @@ actor QQMusicHelperProcess {
         let limit: Int
     }
 
-    private struct ArtistMidisParams: Encodable, Sendable {
+    /// `sort` is `hot` (upstream order) or `latest` (newest release first,
+    /// computed by the helper — the upstream ignores ordering parameters).
+    private struct ArtistAlbumsParams: Encodable, Sendable {
         let singerMid: String
         let limit: Int
         let page: Int
+        let sort: String
+    }
+
+    private struct SearchAlbumsParams: Encodable, Sendable {
+        let keyword: String
+        let limit: Int
     }
 
     private struct ArtistSongsParams: Encodable, Sendable {
@@ -1437,6 +1445,15 @@ actor QQMusicHelperProcess {
     }
 
     /// Search playlists by keyword — how category/mood browsing works here.
+    /// Albums matching `keyword`, by title, artist or a mixture of the two.
+    func searchAlbums(keyword: String, limit: Int = 20) async throws -> [QQMusicOnlineAlbum] {
+        let response = try await sendRetrying(
+            method: "search_albums",
+            params: SearchAlbumsParams(keyword: keyword, limit: limit)
+        )
+        return response.albums ?? []
+    }
+
     func searchPlaylists(keyword: String, limit: Int = 20) async throws -> [QQMusicOnlinePlaylist] {
         let response = try await sendRetrying(
             method: "search_playlists",
@@ -1545,14 +1562,17 @@ actor QQMusicHelperProcess {
         return response.tracks ?? []
     }
 
+    /// `sort` is `hot` (upstream order) or `latest` (by release date, newest
+    /// first — computed by the helper for the same reason the songs are).
     func fetchArtistAlbums(
         singerMid: String,
         limit: Int = 50,
-        page: Int = 1
+        page: Int = 1,
+        sort: String = "hot"
     ) async throws -> [QQMusicOnlineAlbum] {
         let response = try await sendRetrying(
             method: "fetch_artist_albums",
-            params: ArtistMidisParams(singerMid: singerMid, limit: limit, page: page)
+            params: ArtistAlbumsParams(singerMid: singerMid, limit: limit, page: page, sort: sort)
         )
         return response.albums ?? []
     }

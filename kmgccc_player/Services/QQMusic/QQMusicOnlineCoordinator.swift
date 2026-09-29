@@ -71,6 +71,10 @@ final class QQMusicOnlineCoordinator {
     private(set) var searchedArtists: [QQMusicOnlineArtist] = []
     private(set) var isSearchingArtists = false
 
+    // Album search
+    private(set) var searchedAlbums: [QQMusicOnlineAlbum] = []
+    private(set) var isSearchingAlbums = false
+
     private(set) var isLoadingLikedSongs = false
     private(set) var isLoadingLikedAlbums = false
     private(set) var isLoadingUserPlaylists = false
@@ -384,6 +388,7 @@ final class QQMusicOnlineCoordinator {
     private var searchGeneration: UInt64 = 0
     private var artistSearchGeneration: UInt64 = 0
     private var playlistSearchGeneration: UInt64 = 0
+    private var albumSearchGeneration: UInt64 = 0
 
     init(
         helper: QQMusicHelperProcess = .shared,
@@ -814,6 +819,7 @@ final class QQMusicOnlineCoordinator {
         switch kind {
         case .songs: await search(trimmed, force: force)
         case .artists: await searchArtists(trimmed, force: force)
+        case .albums: await searchAlbums(trimmed, force: force)
         case .playlists: await searchPlaylists(trimmed, force: force)
         }
     }
@@ -823,6 +829,7 @@ final class QQMusicOnlineCoordinator {
         switch kind ?? onlineSearchKind {
         case .songs: clearSearch()
         case .artists: clearArtistSearch()
+        case .albums: clearAlbumSearch()
         case .playlists: clearPlaylistSearch()
         }
     }
@@ -1650,6 +1657,52 @@ final class QQMusicOnlineCoordinator {
         searchedArtists = []
     }
 
+    /// Search albums by keyword.
+    ///
+    /// Shaped after the artist search rather than the song one: the results are
+    /// whole entities, cached as one payload per query, and a superseded query
+    /// must not land on top of the one the user is looking at.
+    func searchAlbums(_ keyword: String, force: Bool = false) async {
+        let trimmed = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            searchedAlbums = []
+            return
+        }
+        if backoffRemaining() != nil {
+            scheduleRetryAfterBackoff()
+            return
+        }
+        albumSearchGeneration &+= 1
+        let generation = albumSearchGeneration
+        isSearchingAlbums = true
+        defer {
+            if generation == albumSearchGeneration { isSearchingAlbums = false }
+        }
+        do {
+            if !force,
+               let store = cacheStore,
+               let data = await store.catalog(.albumSearch, key: trimmed),
+               let cached = try? JSONDecoder().decode([QQMusicOnlineAlbum].self, from: data),
+               !cached.isEmpty {
+                guard generation == albumSearchGeneration else { return }
+                searchedAlbums = cached
+                return
+            }
+            let albums = try await helper.searchAlbums(keyword: trimmed, limit: 30)
+            if let store = cacheStore, let data = try? JSONEncoder().encode(albums) {
+                await store.storeCatalog(data, category: .albumSearch, key: trimmed)
+            }
+            guard generation == albumSearchGeneration else { return }
+            searchedAlbums = albums
+        } catch {
+            Log.warning("[QQMusicOnline] album search failed: \(noteFailure(error))", category: .import)
+        }
+    }
+
+    func clearAlbumSearch() {
+        searchedAlbums = []
+    }
+
     /// Sort order for an artist's songs. The upstream ignores ordering
     /// parameters, so `latest` is computed from album release dates.
     nonisolated enum ArtistSongSort: String, Sendable {
@@ -1677,8 +1730,20 @@ final class QQMusicOnlineCoordinator {
         return (text?.isEmpty == false) ? text : nil
     }
 
-    func artistAlbums(singerMid: String) async throws -> [QQMusicOnlineAlbum] {
-        try await helper.fetchArtistAlbums(singerMid: singerMid, limit: 100, page: 1)
+    /// Sort order for an artist's albums, hot or by release date. The same
+    /// enumeration as the songs': "热门 / 最新" means the same thing in both tabs,
+    /// and the upstream ignores ordering parameters in both, so the helper
+    /// computes `latest`.
+    func artistAlbums(
+        singerMid: String,
+        sort: ArtistSongSort = .hot
+    ) async throws -> [QQMusicOnlineAlbum] {
+        try await helper.fetchArtistAlbums(
+            singerMid: singerMid,
+            limit: 100,
+            page: 1,
+            sort: sort == .latest ? "latest" : "hot"
+        )
     }
 
     func albumTracks(albumID: Int) async throws -> [QQMusicOnlineTrack] {

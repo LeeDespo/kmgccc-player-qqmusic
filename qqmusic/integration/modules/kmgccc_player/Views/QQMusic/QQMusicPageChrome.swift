@@ -585,9 +585,13 @@ struct QQMusicDetailHeader<Extra: View>: View {
     var artworkURL: String?
     var isCircleArtwork: Bool = false
     var placeholderSystemImage: String = "music.note"
-    /// Description block (a playlist's intro, an artist's biography). Scrolls
-    /// in place, as the library header's description does.
+    /// Description block (a playlist's intro, an artist's biography). Scrolls in
+    /// place, as the library header's description does, and opens the app's
+    /// reader sheet on a click.
     var description: String?
+    /// Title for that reader sheet, worded as the library words it
+    /// (「艺人详情」 for an artist, 「歌单详情」 for a playlist, …).
+    var descriptionTitle: String = "详情"
     var onPlay: (() -> Void)?
     var canPlay: Bool = true
     /// Distance from the *window* edge to the header's content box, so it lines
@@ -599,11 +603,27 @@ struct QQMusicDetailHeader<Extra: View>: View {
     @ViewBuilder var trailingControls: () -> Extra
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.qqMusicArtworkLoader) private var artworkLoader
     @EnvironmentObject private var themeStore: ThemeStore
+
+    /// The reader sheet, as `LibraryDetailHeaderView` presents it. Opened by a
+    /// click on the description, which is what that header does too.
+    @State private var isShowingDescriptionReader = false
+    @State private var readerArtwork: NSImage?
 
     /// Copied from `LibraryDetailHeaderView.artworkSide`.
     private static var artworkSide: CGFloat { 220 }
-    private static var visibleDescriptionLines: Int { 4 }
+    /// The library header shows six lines of description and lets them scroll;
+    /// this matches it rather than truncating at four, which is what the artist
+    /// page used to do — a biography that does not fit was cut off with an
+    /// ellipsis and could not be read anywhere.
+    private static var visibleDescriptionLines: Int { 6 }
+
+    private var descriptionVisibleHeight: CGFloat {
+        let font = NSFont.preferredFont(forTextStyle: .callout)
+        let lineHeight = NSLayoutManager().defaultLineHeight(for: font)
+        return ceil(lineHeight * CGFloat(Self.visibleDescriptionLines) + 1)
+    }
 
     var body: some View {
         HStack(alignment: .bottom, spacing: 20) {
@@ -615,6 +635,36 @@ struct QQMusicDetailHeader<Extra: View>: View {
         .padding(.leading, columnLeftPad + 24)
         .padding(.trailing, columnRightPad + 24)
         .padding(.vertical, 20)
+        .sheet(isPresented: $isShowingDescriptionReader) {
+            DetailDescriptionReaderSheet(
+                title: descriptionTitle,
+                systemImage: isCircleArtwork ? "person.crop.circle" : "text.quote",
+                subtitle: subtitleLine,
+                text: description ?? "",
+                artworkImage: readerArtwork,
+                isCircleArtwork: isCircleArtwork
+            )
+            .environmentObject(themeStore)
+        }
+    }
+
+    /// The reader's subtitle: "标题 - 副标题", the same composition the library's
+    /// reader uses.
+    private var subtitleLine: String {
+        guard let subtitle, !subtitle.isEmpty else { return title }
+        return "\(title) - \(subtitle)"
+    }
+
+    /// Opening the reader also fetches the artwork for it. The cover is already
+    /// in the loader's cache (the header draws it), so this is a cache hit in
+    /// practice; it is fetched on demand rather than up front so a header whose
+    /// description is never opened never pays for it.
+    private func openDescriptionReader() {
+        isShowingDescriptionReader = true
+        guard readerArtwork == nil, let artworkURL, !artworkURL.isEmpty else { return }
+        Task {
+            readerArtwork = await artworkLoader?.image(for: artworkURL)
+        }
     }
 
     private var artworkColumn: some View {
@@ -670,11 +720,16 @@ struct QQMusicDetailHeader<Extra: View>: View {
                 Spacer().frame(height: 2)
 
                 if let description, !description.isEmpty {
-                    Text(description)
-                        .font(.callout)
-                        .foregroundStyle(themeStore.appForegroundPalette.secondaryColor)
-                        .lineLimit(Self.visibleDescriptionLines)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    AppKitFullTextScrollView(
+                        text: description,
+                        font: NSFont.preferredFont(forTextStyle: .callout),
+                        textColor: NSColor(themeStore.appForegroundPalette.secondaryColor),
+                        lineSpacing: 0,
+                        showsVerticalScroller: false,
+                        onClick: { openDescriptionReader() }
+                    )
+                    .frame(height: descriptionVisibleHeight, alignment: .top)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .frame(

@@ -34,9 +34,28 @@ struct QQMusicSearchPage: View {
     @Environment(QQMusicSelectionModel.self) private var selection
     @EnvironmentObject private var themeStore: ThemeStore
 
+    /// Gap between the type selector and the results.
+    ///
+    /// Every section adds exactly this above its first element, so the selector
+    /// and the top of the results sit at the same y whichever type is on screen.
+    /// `QQMusicDetailHeader` already keeps this much above itself (its own
+    /// `.padding(.vertical, 20)`), which is why the songs section with results
+    /// does not add it again.
+    private static let resultsTopInset: CGFloat = 20
+
     var body: some View {
-        typeSelector
-        content
+        // One root, not `typeSelector; content` side by side.
+        //
+        // As sibling children of the canvas's `LazyVStack` they were spaced by
+        // *its* `sectionSpacing`, and the songs branch expands into more children
+        // than the others (a header plus a list), so the page's own vertical
+        // rhythm came from how many children a branch happened to produce — which
+        // is what made switching the type shift the page. One child with explicit
+        // spacing cannot do that.
+        VStack(alignment: .leading, spacing: 0) {
+            typeSelector
+            content
+        }
     }
 
     // MARK: - Type selector
@@ -82,6 +101,8 @@ struct QQMusicSearchPage: View {
             songs
         case .artists:
             artists
+        case .albums:
+            albums
         case .playlists:
             playlists
         }
@@ -91,13 +112,18 @@ struct QQMusicSearchPage: View {
     private var songs: some View {
         let results = coordinator.searchResults
         if results.isEmpty {
-            if coordinator.isSearching {
-                QQMusicListStateView(kind: .loading("正在搜索…"))
-            } else {
-                QQMusicListStateView(
-                    kind: .empty(emptySearchText, systemImage: "magnifyingglass")
-                )
+            Group {
+                if coordinator.isSearching {
+                    QQMusicListStateView(kind: .loading("正在搜索…"))
+                } else {
+                    QQMusicListStateView(
+                        kind: .empty(emptySearchText, systemImage: "magnifyingglass")
+                    )
+                }
             }
+            // No header here to carry the inset, so the state starts where the
+            // header would.
+            .padding(.top, Self.resultsTopInset)
         } else {
             QQMusicDetailHeader(
                 title: "搜索结果",
@@ -132,6 +158,8 @@ struct QQMusicSearchPage: View {
                 )
             }
         } else {
+            // Rows start where the header would, so the top of the results does
+            // not move when the type changes.
             VStack(spacing: 0) {
                 LazyVStack(spacing: 0) {
                     ForEach(found) { artist in
@@ -157,6 +185,53 @@ struct QQMusicSearchPage: View {
 
                 Color.clear.frame(height: QQMusicPageCanvas<EmptyView>.listBottomInset)
             }
+            .padding(.top, Self.resultsTopInset)
+        }
+    }
+
+    /// Album results, as entity rows like 收藏专辑 — the same shape the account's
+    /// albums use, so an album looks the same wherever it is met.
+    @ViewBuilder
+    private var albums: some View {
+        let found = coordinator.searchedAlbums
+        if found.isEmpty {
+            if coordinator.isSearchingAlbums {
+                QQMusicListStateView(kind: .loading("正在搜索…"))
+            } else {
+                QQMusicListStateView(
+                    kind: .empty(emptyAlbumText, systemImage: "opticaldisc")
+                )
+            }
+        } else {
+            // Rows start where the header would, so the top of the results does
+            // not move when the type changes.
+            VStack(spacing: 0) {
+                LazyVStack(spacing: 0) {
+                    ForEach(found) { album in
+                        QQMusicEntityRow(
+                            title: album.title,
+                            subtitle: album.artist,
+                            meta: album.releaseDate,
+                            artworkURL: album.coverURL,
+                            placeholderSystemImage: "opticaldisc",
+                            onOpen: {
+                                navigation.push(.album(id: album.id, title: album.title))
+                            }
+                        ) {
+                            AnyView(
+                                Button {
+                                    navigation.push(.album(id: album.id, title: album.title))
+                                } label: {
+                                    Label("打开专辑", systemImage: "opticaldisc")
+                                }
+                            )
+                        }
+                    }
+                }
+
+                Color.clear.frame(height: QQMusicPageCanvas<EmptyView>.listBottomInset)
+            }
+            .padding(.top, Self.resultsTopInset)
         }
     }
 
@@ -172,6 +247,8 @@ struct QQMusicSearchPage: View {
                 )
             }
         } else {
+            // Rows start where the header would, so the top of the results does
+            // not move when the type changes.
             VStack(spacing: 0) {
                 LazyVStack(spacing: 0) {
                     ForEach(found) { playlist in
@@ -197,6 +274,7 @@ struct QQMusicSearchPage: View {
 
                 Color.clear.frame(height: QQMusicPageCanvas<EmptyView>.listBottomInset)
             }
+            .padding(.top, Self.resultsTopInset)
         }
     }
 
@@ -218,6 +296,10 @@ struct QQMusicSearchPage: View {
 
     private var emptyArtistText: String {
         hasKeyword ? "没有找到相关歌手" : "用工具栏的搜索框搜索歌手"
+    }
+
+    private var emptyAlbumText: String {
+        hasKeyword ? "没有找到相关专辑" : "用工具栏的搜索框搜索专辑"
     }
 
     private var emptyPlaylistText: String {

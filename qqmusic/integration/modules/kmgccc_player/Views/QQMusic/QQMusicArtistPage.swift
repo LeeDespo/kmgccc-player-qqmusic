@@ -35,16 +35,24 @@ struct QQMusicArtistPage: View {
         var title: String { self == .songs ? "歌曲" : "专辑" }
     }
 
-    private enum SongSort: String, CaseIterable, Identifiable {
+    /// 热门 / 最新, shared by both tabs: the artist's songs and their albums each
+    /// have a hotness order and a release-date order, and one control says so for
+    /// whichever list is on screen rather than two controls that look identical.
+    private enum ContentSort: String, CaseIterable, Identifiable {
         case hot
         case latest
 
         var id: String { rawValue }
         var title: String { self == .hot ? "热门" : "最新" }
+
+        /// What the helper's `sort` parameter calls it.
+        var helperSort: QQMusicOnlineCoordinator.ArtistSongSort {
+            self == .latest ? .latest : .hot
+        }
     }
 
     @State private var tab: Tab = .songs
-    @State private var songSort: SongSort = .hot
+    @State private var sort: ContentSort = .hot
     @State private var songs: [QQMusicOnlineTrack] = []
     @State private var albums: [QQMusicOnlineAlbum] = []
     @State private var isLoadingSongs = false
@@ -77,6 +85,7 @@ struct QQMusicArtistPage: View {
             isCircleArtwork: !isShowingAlbum,
             placeholderSystemImage: isShowingAlbum ? "opticaldisc" : "person.fill",
             description: isShowingAlbum ? nil : biography,
+            descriptionTitle: "艺人详情",
             // Omitted rather than drawn disabled on the albums tab: "play all
             // albums" has no meaning.
             onPlay: canPlayFromHeader ? { playFromHeader() } : nil,
@@ -139,17 +148,22 @@ struct QQMusicArtistPage: View {
                     Task { if newValue == .albums { await loadAlbums() } }
                 }
 
-                // An album has no notion of hot/latest, so this is absent on the
-                // album tab rather than present but meaningless.
-                if tab == .songs {
-                    Picker("", selection: $songSort) {
-                        ForEach(SongSort.allCases) { Text($0.title).tag($0) }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .onChange(of: songSort) { _, _ in
-                        Task { await loadSongs(force: true) }
+                // Present on both tabs: an artist's albums are ordered by
+                // hotness upstream just as their songs are, and 最新 means the
+                // same thing for both (newest release first, computed by the
+                // helper — the upstream ignores ordering parameters).
+                Picker("", selection: $sort) {
+                    ForEach(ContentSort.allCases) { Text($0.title).tag($0) }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .fixedSize(horizontal: true, vertical: false)
+                .onChange(of: sort) { _, _ in
+                    Task {
+                        switch tab {
+                        case .songs: await loadSongs(force: true)
+                        case .albums: await loadAlbums(force: true)
+                        }
                     }
                 }
 
@@ -277,8 +291,7 @@ struct QQMusicArtistPage: View {
             biography = nil
             await loadSongs(force: true)
         case .albums:
-            albums = []
-            await loadAlbums()
+            await loadAlbums(force: true)
         }
     }
 
@@ -290,7 +303,7 @@ struct QQMusicArtistPage: View {
         do {
             songs = try await coordinator.artistSongs(
                 singerMid: artist.singerMid,
-                sort: songSort == .hot ? .hot : .latest,
+                sort: sort.helperSort,
                 page: 1
             )
             songPage = 1
@@ -310,7 +323,7 @@ struct QQMusicArtistPage: View {
             let next = songPage + 1
             let more = try await coordinator.artistSongs(
                 singerMid: artist.singerMid,
-                sort: songSort == .hot ? .hot : .latest,
+                sort: sort.helperSort,
                 page: next
             )
             // Comparing the tail guards against a server that keeps returning
@@ -336,13 +349,22 @@ struct QQMusicArtistPage: View {
         biography = await coordinator.artistBiography(singerMid: artist.singerMid)
     }
 
-    private func loadAlbums() async {
-        if !albums.isEmpty { return }
+    /// Fetch the albums, in the sort on screen.
+    ///
+    /// `force` exists for the sort control: a list that is already present is
+    /// left alone, so without clearing it "最新" would show the hot order it
+    /// fetched a moment ago.
+    private func loadAlbums(force: Bool = false) async {
+        if !force, !albums.isEmpty { return }
         isLoadingAlbums = true
         errorText = nil
         defer { isLoadingAlbums = false }
         do {
-            albums = try await coordinator.artistAlbums(singerMid: artist.singerMid)
+            let fetched = try await coordinator.artistAlbums(
+                singerMid: artist.singerMid,
+                sort: sort.helperSort
+            )
+            albums = fetched
         } catch {
             errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
