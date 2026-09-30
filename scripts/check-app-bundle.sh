@@ -50,8 +50,9 @@ require_file "$RESOURCES/AMLL/style.css" "AMLL stylesheet"
 
 require_executable "$RESOURCES/Tools/lddc-server/lddc-server" "LDDC server"
 require_directory "$RESOURCES/Tools/lddc-server/_internal" "LDDC runtime directory"
-require_executable "$RESOURCES/Tools/qqmusic-helper/qqmusic-helper" "QQMusic helper"
-require_directory "$RESOURCES/Tools/qqmusic-helper/_internal.bundle" "QQMusic helper runtime directory"
+# The online source's data component: one self-contained binary, no runtime
+# directory (it replaced the Python helper, which shipped a whole interpreter).
+require_executable "$RESOURCES/Tools/qqmusic-helper-next/qqmusic-helper-next" "QQMusic data component"
 require_executable "$RESOURCES/Tools/sacad/sacad" "SACAD helper"
 
 require_file "$RESOURCES/mediaremote-adapter/bin/mediaremote-adapter.pl" "MediaRemoteAdapter launcher"

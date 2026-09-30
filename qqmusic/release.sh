@@ -97,8 +97,8 @@ fi
 
 [[ -d "$APP" ]] || fail "app was not produced: $APP"
 [[ -x "$APP/Contents/MacOS/kmgccc_player" ]] || fail "app binary missing"
-[[ -e "$APP/Contents/Resources/Tools/qqmusic-helper/qqmusic-helper" ]] \
-    || fail "the bundle has no QQ Music helper; run ./scripts/bootstrap.sh first"
+[[ -x "$APP/Contents/Resources/Tools/qqmusic-helper-next/qqmusic-helper-next" ]] \
+    || fail "the bundle has no QQ Music data component (Tools/helper-next/qqmusic-helper-next)"
 "$REPO_ROOT/scripts/check-app-bundle.sh" "$APP"
 
 step "stamp, sign, verify"

@@ -6,7 +6,7 @@
 
 - 基线：`b0de7aa6`（kmgccc_player 2.3.1）
 - 补丁版本：`1.0.0`（应用内 QQ 音乐设置 → Helper 组件 → 「本功能版本」显示为 `2.3.1 + QQMusic 1.0.0`）
-- 验证：在一份干净的 `b0de7aa6` 检出上重放 → 构建成功 → 431 项单元测试通过 → 应用能启动
+- 验证：在一份干净的 `b0de7aa6` 检出上重放 → 构建成功 → 434 项单元测试通过 → 应用能启动
 
 ## 附件
 
@@ -29,9 +29,8 @@
 - **账号与收藏**：扫码或网页登录（两条路径等价）；「我喜欢」、收藏歌单、收藏专辑；行内收藏/取消收藏写回上游。
 - **缓存与回收**：歌单、推荐、排行榜与浏览态封面缓存在资料库的 `QQMusic/` 目录（与应用自身的 `Cache/` 平级且分开）；
   歌曲缓存只约束「为了播放而自动下载」的那部分，可设上限并回收——你自己点过下载的属于曲库，永不回收。
-- **两条通道，各取所长**：常读内容直连上游网页接口（快约三倍），其余走 helper 组件；每类内容可指定先用哪条，
-  **没选中的那条在它失败时自动兜底**，设置页逐行写明并显示最近一次实际由谁回答。
-- **helper 与应用解耦**：helper 是独立进程，可从外部目录替换；上游接口变化时换那个二进制即可，无需重新构建应用。
+- **一个数据组件，与应用解耦**：在线内容的读取、登录、限流与熔断全部在 HelperNext 组件（独立进程）里，
+  应用只跟它说 JSON；上游接口变化时换那个二进制即可，无需重新构建应用。
 
 另外**关闭了自动更新、崩溃上报与匿名统计**（默认关且不可再开）：更新源属于上游项目，装上去会覆盖本版本的功能改动；
 崩溃与匿名统计会发到上游作者的服务器，而对方无法据此做任何事。
@@ -58,39 +57,35 @@
 
 系统要求：macOS 26.0 或更新版本、Apple Silicon Mac。
 
-## Helper 组件是什么（它和 qqmusic-api-python 的关系）
+## 数据组件（HelperNext）
 
-在线音源的接口调用分两层：[qqmusic-api-python](https://github.com/L-1124/QQMusicApi) 是**第三方 Python 库**；
-`Tools/QQMusicHelper` 是**本项目自己的 Python 程序**，它把那个库当作底层引擎，再往上包一层应用能用的东西。
-应用（Swift）从不直接调用这个库——两者之间是一条 stdin/stdout 的 JSON 协议。
+在线音源的接口调用只有一层：**HelperNext 组件**——一个静态链接的 Rust 二进制（约 2.4 MB，
+无解释器、无第三方 SDK）。应用（Swift）通过 stdin/stdout 一行一个 JSON 跟它说话。
 
 ```
 kmgccc_player（Swift）
-   │  stdin/stdout 一行一个 JSON
+   │  stdin/stdout：{"id","method","params"} → {"id","ok",…}
    ▼
-qqmusic-helper（本项目：Tools/QQMusicHelper/main.py，PyInstaller 打成独立二进制）
-   │  直接调用
+qqmusic-helper-next（Tools/helper-next/qqmusic-helper-next）
+   │  HTTPS（签名、cookie、平台参数、限流、熔断都在组件里）
    ▼
-qqmusic_api（第三方库：Client / Credential / 各模块 / 签名 / 数据模型）
+腾讯的接口
 ```
 
-**库负责**：请求签名、cookie 拼装、平台参数、响应到模型的解析，以及各模块方法
-（`client.song/album/singer/lyric/search/top/songlist/recommend/user/login.*`）。逐字歌词来自
-`client.lyric.get_lyric`，取流地址与 vkey 来自 `client.song.get_song_urls`。
+**它顶替了两样东西**：上一版的 Python helper（含整个解释器与 qqmusic-api-python，约 56 MB），
+以及**应用内的 HTTP 客户端** `QQMusicWebAPI`。两者都删了——同一个能力有两份实现时，
+"一条坏了另一条兜底"掩盖的是它们的行为差异，而落库与缓存判断还得同时考虑两者。
+组件的请求参数与解析路径逐条对照 qqmusic-api-python 写过（包括它的坑：扫码轮询的 `ptqrtoken`
+用 seed 0 的 `hash33`，而 `g_tk` 用 5381——用错就是 HTTP 403）。
 
-**helper 自己负责**：① 协议层（一行一个 JSON、方法白名单、`get_helper_info` 自报版本与能力）；
-② 库里没有包成公开方法的接口——用 `client.song._build_cgi` / `_build_http` 直接打上游（新歌、我喜欢、
-收藏专辑、专辑曲目、我的歌单、歌单写操作、电台等，共 10 处）；③ 归一化（把搜索/歌单/电台/榜单不同嵌套
-形状统一成一套字段，封面强制 https）；④ 业务动作（取流音质阶梯、凭据落盘、60 秒空闲自杀、限流退避）。
-它还兼着上游原本的用途：本地歌曲的元数据补全。
+**可独立替换**：应用优先加载
+`~/Library/Application Support/kmgccc.player/QQMusicHelperNext/qqmusic-helper-next`，
+bundle 内副本只作兜底，所以上游接口变化时换那个文件即可，不必重新构建应用。
+组件**自己管凭据**（同目录下 `Credential/qqmusic-credential.json`）。
+应用内「QQ 音乐设置 → Helper 组件」会显示组件版本与协议版本。
 
-**可独立替换**：helper 优先从 `~/Library/Application Support/kmgccc.player/QQMusicHelper/` 加载，
-bundle 内副本只作兜底，所以上游接口变化时换那个二进制即可，不必重新构建应用。`requirements.txt` 钉
-`qqmusic-api-python==0.7.3`，PyInstaller 把 Python 运行时和这个库一起打包，**使用者的机器不需要装 Python**。
-应用内「QQ 音乐设置 → Helper 组件」会显示 helper 版本、协议版本与库版本。
-
-应用里另有**一条完全独立的通道** `QQMusicWebAPI`（自己直连 `u.y.qq.com/cgi-bin/musicu.fcg`，不经 helper
-也不经这个库）；设置里的「在线内容 → 获取通道」决定谁先试、另一条兜底。
+`Tools/QQMusicHelper`（本项目改过的 Python helper，继承上游目录）仍留在仓库里、`bootstrap.sh` 也仍会构建它，
+但**应用的代码已不再引用**——它作为回退路径存在。
 
 ## 从源码构建（用补丁包）
 
@@ -103,7 +98,7 @@ git checkout b0de7aa6
 cp -R /path/to/kmgccc_player-2.3.1+QQMusic.1.0.0-patch/integration ./qqmusic/integration
 ./qqmusic/integration/apply.sh --repo . --verify
 
-./scripts/bootstrap.sh                        # 构建外部组件（helper 需要 Python 3.12 / Node 22 / CMake）
+./scripts/bootstrap.sh                        # 构建外部组件（AMLL 需要 Node 22，helper 需要 Python 3.12）
 DEVELOPMENT_TEAM=<你的 team id> ./scripts/build_and_run.sh
 ```
 
@@ -114,13 +109,15 @@ target build settings 里，优先级更高）。没有证书就用 `CODE_SIGNIN
 补丁应用失败是**预期行为**：`patches/` 里的 diff 只有在上下文仍然匹配时才干净应用；输出会指名是哪个文件、
 哪份补丁，一条失败不挡住其余的。细节见补丁包内 `integration/README.md`。
 
-不想本地编译 helper？这份 DMG 里的应用已经带了构建好的 helper，复制过去即可（第二行不能省，下载来的文件带
-`com.apple.quarantine`，带隔离属性的 helper 会被系统直接杀掉，而应用只会写一行日志）：
+数据组件**不需要构建**：DMG 里的应用已经带了它（`Tools/helper-next/qqmusic-helper-next`，
+预编译的 Rust 二进制）。应用默认就用 bundle 里那份；只有当你想**单独替换组件**（上游接口变化时最省事的修法）
+才需要复制到外部目录——这时第二行不能省（复制出来的文件带 `com.apple.quarantine`，带隔离属性的可执行文件
+会被系统直接杀掉，退出码 137 且没有任何输出，应用只会写一行日志）：
 
 ```sh
-cp -R /Applications/kmgccc_player.app/Contents/Resources/Tools/qqmusic-helper/* \
-      ~/Library/Application\ Support/kmgccc.player/QQMusicHelper/
-xattr -cr ~/Library/Application\ Support/kmgccc.player/QQMusicHelper
+cp /Applications/kmgccc_player.app/Contents/Resources/Tools/qqmusic-helper-next/qqmusic-helper-next \
+   ~/Library/Application\ Support/kmgccc.player/QQMusicHelperNext/
+xattr -cr ~/Library/Application\ Support/kmgccc.player/QQMusicHelperNext
 ```
 
 ## 已知限制
@@ -128,17 +125,18 @@ xattr -cr ~/Library/Application\ Support/kmgccc.player/QQMusicHelper
 - **ad-hoc 签名**（`codesign -s -`），没有开发者签名、没有公证——签名只保证 bundle 与内容一致，
   不代表受信任，所以首次打开必须放行一次。
 - 只对基线 `b0de7aa6`（2.3.1）验证过。上游更新后重放补丁大概率有冲突，需要人工移植。
-- QQ 音乐接口是逆向来的，随时可能变化。helper 可独立替换，接口变化时优先换它而不是重新构建应用。
-- 应用侧**没有做 helper 版本闸门**：`main.py` 注释里说"宿主会拒绝不兼容的协议版本"，实际只把版本号显示出来。
-  换上一个响应形状不兼容的 helper，表现会是某个页面报错（再退回另一条通道），而不是启动时明确拒绝。
+- QQ 音乐接口是逆向来的，随时可能变化。数据组件可独立替换，接口变化时优先换它而不是重新构建应用。
+- 应用侧**没有做组件版本闸门**：只把版本号显示出来。换上一个响应形状不兼容的组件，表现会是某个页面报错
+  或某个字段变空，而不是启动时明确拒绝——组件的能力清单与兼容约定写在 `Tools/helper-next/README.md` 里。
 - 这个构建：见 DMG 内 `安装说明.txt`，或应用内「QQ 音乐设置 → Helper 组件 → 本功能构建」。
 
 ## 参考的项目
 
 - [kmgccc_player](https://github.com/kmgcc/kmgccc_player) —— 播放器本体（上游）；它的 README 致谢的 AMLL、LDDC、
   SACAD、MediaRemote Adapter、ncmdump 等组件同样构成本项目的基础
-- [qqmusic-api-python](https://github.com/L-1124/QQMusicApi) —— QQ 音乐接口的 Python 实现，helper 的目录、
-  排行、电台、歌手、歌词与取流都走它
+- [qqmusic-api-python](https://github.com/L-1124/QQMusicApi) —— QQ 音乐接口的 Python 实现；数据组件的请求
+  参数与解析路径逐条对照它写过（它本身仍留在仓库的 Python helper 里）
+- [QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext) —— 数据组件的源码
 
 ## 许可证
 
