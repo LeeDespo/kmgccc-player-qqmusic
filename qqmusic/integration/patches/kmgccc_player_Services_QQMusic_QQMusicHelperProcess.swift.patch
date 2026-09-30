@@ -1,8 +1,20 @@
 diff --git a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-index 81b5c94f..e5c4e416 100644
+index 81b5c94f..3384ab43 100644
 --- a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 +++ b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-@@ -104,6 +104,348 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
+@@ -45,6 +45,11 @@ nonisolated struct QQMusicMetadataDetail: Codable, Equatable, Sendable {
+     var language: String?
+     var labelOrCompany: String?
+     var duration: Int?
++    /// Present on the artist reads (`fetch_artist_detail` also serves the online
++    /// artist page's header, which needs the portrait and the counts).
++    var songCount: Int?
++    var albumCount: Int?
++    var fanCount: Int?
+     var metadataSource: String?
+     var metadataFetchedAt: Date?
+     var metadataConfidence: Double?
+@@ -104,6 +109,355 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
      let changed: Bool
  }
  
@@ -149,6 +161,13 @@ index 81b5c94f..e5c4e416 100644
 +}
 +
 +/// Account state reported by the helper.
++/// What the component is enforcing for the request-rate ceiling.
++nonisolated struct QQMusicRateLimitConfiguration: Codable, Equatable, Sendable {
++    var enabled: Bool
++    var windowSeconds: Int
++    var maxRequests: Int
++}
++
 +nonisolated struct QQMusicLoginStatus: Codable, Equatable, Sendable {
 +    var loggedIn: Bool
 +    var musicId: Int?
@@ -351,7 +370,7 @@ index 81b5c94f..e5c4e416 100644
  nonisolated enum MetadataDetailApplicator {
      static func applyMissingFields(
          _ detail: ArtistMetadataDetail,
-@@ -625,8 +967,26 @@ actor QQMusicHelperProcess {
+@@ -625,8 +979,27 @@ actor QQMusicHelperProcess {
      private struct QQMusicHelperResponse: Decodable, Sendable {
          let id: String?
          let ok: Bool
@@ -373,12 +392,13 @@ index 81b5c94f..e5c4e416 100644
 +        let lyric: QQMusicLyricPayload?
 +        let stream: QQMusicStreamResolution?
 +        let login: QQMusicLoginStatus?
++        let rateLimit: QQMusicRateLimitConfiguration?
 +        let qrcode: QQMusicLoginQRCode?
 +        let helper: QQMusicHelperInfo?
          let error: String?
      }
  
-@@ -668,18 +1028,185 @@ actor QQMusicHelperProcess {
+@@ -668,18 +1041,202 @@ actor QQMusicHelperProcess {
          let duration: Int?
      }
  
@@ -432,6 +452,12 @@ index 81b5c94f..e5c4e416 100644
 +        let limit: Int
 +        let page: Int
 +        let sort: String
++    }
++
++    private struct RateLimitParams: Encodable, Sendable {
++        let enabled: Bool
++        let windowSeconds: Int
++        let maxRequests: Int
 +    }
 +
 +    private struct LikedSongsParams: Encodable, Sendable {
@@ -532,6 +558,17 @@ index 81b5c94f..e5c4e416 100644
 +
 +    private var circuitConfiguration = CircuitConfiguration()
 +
++    /// The request-rate ceiling, mirrored here for the same reason the breaker
++    /// is: `AppSettings` is main-actor isolated and this is an actor, so the
++    /// values are pushed in and re-sent after every (re)launch.
++    private struct RateLimitConfiguration: Sendable {
++        var isEnabled = true
++        var windowSeconds = 10
++        var maxRequests = 100
++    }
++
++    private var rateLimitConfiguration = RateLimitConfiguration()
++
 +    /// Apply the user's breaker settings. Called from the main actor.
 +    func applyCircuitConfiguration(
 +        isEnabled: Bool,
@@ -569,7 +606,58 @@ index 81b5c94f..e5c4e416 100644
      private var recentStderr = ""
      private var pendingRequests: [String: PendingRequest] = [:]
      private var idleShutdownTask: Task<Void, Never>?
-@@ -776,6 +1303,473 @@ actor QQMusicHelperProcess {
+@@ -688,10 +1245,50 @@ actor QQMusicHelperProcess {
+     private var circuitLastReason = ""
+     private var lastActivity = Date()
+     private var lastLaunchDiagnostics = ""
++    /// The binary the running (or most recently launched) process came from.
++    private var launchedBinaryPath: String?
+ 
+     private let encoder = JSONEncoder()
+     private let decoder = QQMusicHelperProcess.makeDecoder()
+ 
++    /// Which binary the component runs from — the external copy or the bundled
++    /// one. The settings page shows it so "did my replacement take effect?" has
++    /// an answer that is not a log line.
++    func runningBinaryPath() async -> String? {
++        if process?.isRunning == true, let launchedBinaryPath {
++            return launchedBinaryPath
++        }
++        return findLaunchCandidate()?.executableURL.path ?? launchedBinaryPath
++    }
++
++    /// Push the user's request-rate ceiling. Sent on startup and on every change;
++    /// the component applies it to the shared limiter, so a restart of either
++    /// side converges on the same numbers.
++    @discardableResult
++    func applyRateLimit(
++        isEnabled: Bool,
++        windowSeconds: Int,
++        maxRequests: Int
++    ) async -> QQMusicRateLimitConfiguration? {
++        rateLimitConfiguration = RateLimitConfiguration(
++            isEnabled: isEnabled,
++            windowSeconds: max(1, windowSeconds),
++            maxRequests: max(1, maxRequests)
++        )
++        guard process?.isRunning == true else { return nil }
++        let response = try? await send(
++            method: "set_rate_limit",
++            params: RateLimitParams(
++                enabled: rateLimitConfiguration.isEnabled,
++                windowSeconds: rateLimitConfiguration.windowSeconds,
++                maxRequests: rateLimitConfiguration.maxRequests
++            )
++        )
++        // The component clamps what it will accept, so the acknowledgement is
++        // what the settings page shows — not the number the user typed.
++        return response?.rateLimit
++    }
++
+     func searchArtistArtwork(name: String, limit: Int = 5) async throws -> [QQMusicArtworkCandidate] {
+         try await request(
+             method: "search_artist_artwork",
+@@ -776,6 +1373,473 @@ actor QQMusicHelperProcess {
          )
      }
  
@@ -1043,7 +1131,7 @@ index 81b5c94f..e5c4e416 100644
      func terminate() {
          stopProcess(failingPendingWith: QQMusicHelperError.cancelled)
      }
-@@ -968,9 +1962,11 @@ actor QQMusicHelperProcess {
+@@ -968,9 +2032,11 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -1057,7 +1145,7 @@ index 81b5c94f..e5c4e416 100644
              }
          }
  
-@@ -981,7 +1977,9 @@ actor QQMusicHelperProcess {
+@@ -981,7 +2047,9 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -1068,7 +1156,7 @@ index 81b5c94f..e5c4e416 100644
              Task {
                  await self?.appendStderr(text)
              }
-@@ -1006,20 +2004,41 @@ actor QQMusicHelperProcess {
+@@ -1006,20 +2074,57 @@ actor QQMusicHelperProcess {
          self.stdinHandle = stdinPipe.fileHandleForWriting
          self.stdoutPipe = stdoutPipe
          self.stderrPipe = stderrPipe
@@ -1077,6 +1165,22 @@ index 81b5c94f..e5c4e416 100644
          recentStderr = ""
          markActivity()
          Log.info("[QQMusicHelperProcess] started path=\(candidate.executableURL.path)", category: .import)
++
++        // A fresh process knows nothing about the user's settings, so the ones
++        // that live in the component are re-sent here. (The breaker is mirrored
++        // on this side and needs no push; the rate ceiling must be, or a restart
++        // would silently un-throttle the component.)
++        let rateLimit = rateLimitConfiguration
++        Task {
++            _ = try? await self.send(
++                method: "set_rate_limit",
++                params: RateLimitParams(
++                    enabled: rateLimit.isEnabled,
++                    windowSeconds: rateLimit.windowSeconds,
++                    maxRequests: rateLimit.maxRequests
++                )
++            )
++        }
      }
  
 -    private func handleStdout(_ text: String) {
@@ -1119,7 +1223,7 @@ index 81b5c94f..e5c4e416 100644
          }
      }
  
-@@ -1091,7 +2110,7 @@ actor QQMusicHelperProcess {
+@@ -1091,7 +2196,7 @@ actor QQMusicHelperProcess {
          stdinHandle = nil
          stdoutPipe = nil
          stderrPipe = nil
@@ -1128,7 +1232,7 @@ index 81b5c94f..e5c4e416 100644
      }
  
      private func markActivity() {
-@@ -1132,6 +2151,7 @@ actor QQMusicHelperProcess {
+@@ -1132,6 +2237,7 @@ actor QQMusicHelperProcess {
      }
  
      private func recordFailure(reason: String) {
@@ -1136,7 +1240,7 @@ index 81b5c94f..e5c4e416 100644
          let now = Date()
          recentFailureDates = recentFailureDates.filter {
              now.timeIntervalSince($0) <= failureWindow
-@@ -1152,6 +2172,16 @@ actor QQMusicHelperProcess {
+@@ -1152,6 +2258,16 @@ actor QQMusicHelperProcess {
      }
  
      private func checkCircuitBreaker() throws {
@@ -1153,7 +1257,7 @@ index 81b5c94f..e5c4e416 100644
          guard let until = circuitOpenUntil else { return }
          if Date() < until {
              Log.warning("[QQMusicHelperProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)
-@@ -1163,30 +2193,49 @@ actor QQMusicHelperProcess {
+@@ -1163,30 +2279,50 @@ actor QQMusicHelperProcess {
      }
  
      private func findLaunchCandidate() -> LaunchCandidate? {
@@ -1194,6 +1298,7 @@ index 81b5c94f..e5c4e416 100644
 -            Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
 -            return nil
 +            lastLaunchDiagnostics = ""
++            launchedBinaryPath = binaryURL.path
 +            // Point the helper at a writable, app-owned directory so the login
 +            // ticket survives the helper's 60s idle shutdown.
 +            try? FileManager.default.createDirectory(
@@ -1224,7 +1329,7 @@ index 81b5c94f..e5c4e416 100644
      }
  
      private func bundledBinaryURL() -> URL {
-@@ -1194,8 +2243,37 @@ actor QQMusicHelperProcess {
+@@ -1194,8 +2330,37 @@ actor QQMusicHelperProcess {
              ?? URL(fileURLWithPath: Bundle.main.resourcePath ?? "", isDirectory: true)
          return resources
              .appendingPathComponent("Tools", isDirectory: true)

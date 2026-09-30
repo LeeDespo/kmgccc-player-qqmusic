@@ -45,6 +45,11 @@ nonisolated struct QQMusicMetadataDetail: Codable, Equatable, Sendable {
     var language: String?
     var labelOrCompany: String?
     var duration: Int?
+    /// Present on the artist reads (`fetch_artist_detail` also serves the online
+    /// artist page's header, which needs the portrait and the counts).
+    var songCount: Int?
+    var albumCount: Int?
+    var fanCount: Int?
     var metadataSource: String?
     var metadataFetchedAt: Date?
     var metadataConfidence: Double?
@@ -247,6 +252,13 @@ nonisolated struct QQMusicStreamResolution: Codable, Equatable, Sendable {
 }
 
 /// Account state reported by the helper.
+/// What the component is enforcing for the request-rate ceiling.
+nonisolated struct QQMusicRateLimitConfiguration: Codable, Equatable, Sendable {
+    var enabled: Bool
+    var windowSeconds: Int
+    var maxRequests: Int
+}
+
 nonisolated struct QQMusicLoginStatus: Codable, Equatable, Sendable {
     var loggedIn: Bool
     var musicId: Int?
@@ -985,6 +997,7 @@ actor QQMusicHelperProcess {
         let lyric: QQMusicLyricPayload?
         let stream: QQMusicStreamResolution?
         let login: QQMusicLoginStatus?
+        let rateLimit: QQMusicRateLimitConfiguration?
         let qrcode: QQMusicLoginQRCode?
         let helper: QQMusicHelperInfo?
         let error: String?
@@ -1078,6 +1091,12 @@ actor QQMusicHelperProcess {
         let limit: Int
         let page: Int
         let sort: String
+    }
+
+    private struct RateLimitParams: Encodable, Sendable {
+        let enabled: Bool
+        let windowSeconds: Int
+        let maxRequests: Int
     }
 
     private struct LikedSongsParams: Encodable, Sendable {
@@ -1174,6 +1193,17 @@ actor QQMusicHelperProcess {
 
     private var circuitConfiguration = CircuitConfiguration()
 
+    /// The request-rate ceiling, mirrored here for the same reason the breaker
+    /// is: `AppSettings` is main-actor isolated and this is an actor, so the
+    /// values are pushed in and re-sent after every (re)launch.
+    private struct RateLimitConfiguration: Sendable {
+        var isEnabled = true
+        var windowSeconds = 10
+        var maxRequests = 100
+    }
+
+    private var rateLimitConfiguration = RateLimitConfiguration()
+
     /// Apply the user's breaker settings. Called from the main actor.
     func applyCircuitConfiguration(
         isEnabled: Bool,
@@ -1215,9 +1245,49 @@ actor QQMusicHelperProcess {
     private var circuitLastReason = ""
     private var lastActivity = Date()
     private var lastLaunchDiagnostics = ""
+    /// The binary the running (or most recently launched) process came from.
+    private var launchedBinaryPath: String?
 
     private let encoder = JSONEncoder()
     private let decoder = QQMusicHelperProcess.makeDecoder()
+
+    /// Which binary the component runs from — the external copy or the bundled
+    /// one. The settings page shows it so "did my replacement take effect?" has
+    /// an answer that is not a log line.
+    func runningBinaryPath() async -> String? {
+        if process?.isRunning == true, let launchedBinaryPath {
+            return launchedBinaryPath
+        }
+        return findLaunchCandidate()?.executableURL.path ?? launchedBinaryPath
+    }
+
+    /// Push the user's request-rate ceiling. Sent on startup and on every change;
+    /// the component applies it to the shared limiter, so a restart of either
+    /// side converges on the same numbers.
+    @discardableResult
+    func applyRateLimit(
+        isEnabled: Bool,
+        windowSeconds: Int,
+        maxRequests: Int
+    ) async -> QQMusicRateLimitConfiguration? {
+        rateLimitConfiguration = RateLimitConfiguration(
+            isEnabled: isEnabled,
+            windowSeconds: max(1, windowSeconds),
+            maxRequests: max(1, maxRequests)
+        )
+        guard process?.isRunning == true else { return nil }
+        let response = try? await send(
+            method: "set_rate_limit",
+            params: RateLimitParams(
+                enabled: rateLimitConfiguration.isEnabled,
+                windowSeconds: rateLimitConfiguration.windowSeconds,
+                maxRequests: rateLimitConfiguration.maxRequests
+            )
+        )
+        // The component clamps what it will accept, so the acknowledgement is
+        // what the settings page shows — not the number the user typed.
+        return response?.rateLimit
+    }
 
     func searchArtistArtwork(name: String, limit: Int = 5) async throws -> [QQMusicArtworkCandidate] {
         try await request(
@@ -2008,6 +2078,22 @@ actor QQMusicHelperProcess {
         recentStderr = ""
         markActivity()
         Log.info("[QQMusicHelperProcess] started path=\(candidate.executableURL.path)", category: .import)
+
+        // A fresh process knows nothing about the user's settings, so the ones
+        // that live in the component are re-sent here. (The breaker is mirrored
+        // on this side and needs no push; the rate ceiling must be, or a restart
+        // would silently un-throttle the component.)
+        let rateLimit = rateLimitConfiguration
+        Task {
+            _ = try? await self.send(
+                method: "set_rate_limit",
+                params: RateLimitParams(
+                    enabled: rateLimit.isEnabled,
+                    windowSeconds: rateLimit.windowSeconds,
+                    maxRequests: rateLimit.maxRequests
+                )
+            )
+        }
     }
 
     private func handleStdout(_ data: Data) {
@@ -2215,6 +2301,7 @@ actor QQMusicHelperProcess {
             }
 
             lastLaunchDiagnostics = ""
+            launchedBinaryPath = binaryURL.path
             // Point the helper at a writable, app-owned directory so the login
             // ticket survives the helper's 60s idle shutdown.
             try? FileManager.default.createDirectory(

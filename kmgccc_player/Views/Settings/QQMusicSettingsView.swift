@@ -17,7 +17,6 @@ import SwiftUI
 /// Pages of the QQ Music window.
 enum QQMusicSettingsCategory: String, CaseIterable, Identifiable {
     case account
-    case browse
     case playback
     case helper
     case cache
@@ -27,7 +26,6 @@ enum QQMusicSettingsCategory: String, CaseIterable, Identifiable {
     var title: LocalizedStringKey {
         switch self {
         case .account: return "账号"
-        case .browse: return "在线内容"
         case .playback: return "播放与下载"
         case .helper: return "Helper 组件"
         case .cache: return "缓存"
@@ -37,7 +35,6 @@ enum QQMusicSettingsCategory: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .account: return "person.crop.circle"
-        case .browse: return "square.grid.2x2"
         case .playback: return "play.circle"
         case .helper: return "shippingbox"
         case .cache: return "internaldrive"
@@ -80,6 +77,11 @@ struct QQMusicSettingsView: View {
     /// What the helper process reports it is actually using, so a setting that
     /// never reaches it is visible rather than silent.
     @State private var effectiveCircuit: QQMusicCircuitConfiguration?
+    /// The binary the component is actually running from, so "is the external
+    /// copy even being used?" is answerable without reading a log.
+    @State private var helperBinaryPath: String?
+    /// What the component reports it is enforcing, mirroring `effectiveCircuit`.
+    @State private var effectiveRateLimit: QQMusicRateLimitConfiguration?
 
     private let helper = QQMusicHelperProcess.shared
 
@@ -235,8 +237,6 @@ struct QQMusicSettingsView: View {
                 switch selection {
                 case .account:
                     accountSection
-                case .browse:
-                    browseSection
                 case .playback:
                     playbackSection
                 case .helper:
@@ -393,26 +393,6 @@ struct QQMusicSettingsView: View {
         return "已登录"
     }
 
-    // MARK: - Browse
-
-    private var browseSection: some View {
-        VStack(alignment: .leading, spacing: SettingsStyleTokens.groupSpacing) {
-            SettingsHeaderLabel(title: "在线内容", systemImage: "square.grid.2x2")
-
-            VStack(alignment: .leading, spacing: 12) {
-                Text("在线内容由 **Helper 组件**统一提供：读取、登录、限流与熔断都在组件内部，应用只负责显示。组件可以单独更新——上游接口变化时换一个二进制即可，无需重新构建应用。")
-                    .settingsDescriptionStyle()
-
-                Divider().opacity(0.4)
-
-                Text("推荐、歌单与封面会缓存在本地，短时间内重复进入不会重新请求上游，这也是避免风控的主要手段。“猜你喜欢”每次向上游取 5 首，滑到底或队列快播完时自动取下一批。")
-                    .settingsDescriptionStyle()
-            }
-            .padding(SettingsStyleTokens.groupPadding)
-            .background(sectionBackground)
-        }
-    }
-
     // MARK: - Playback
 
     private var playbackSection: some View {
@@ -453,33 +433,18 @@ struct QQMusicSettingsView: View {
 
     private var prefetchDepthRow: some View {
         let settings = AppSettings.shared
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("预下载数量")
-                    .settingsRowLabelStyle()
-                Spacer()
-                Text(settings.qqMusicPrefetchDepth == 0
-                     ? "关闭"
-                     : "\(settings.qqMusicPrefetchDepth) 首")
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            // 0 is a valid choice: download exactly what you play, nothing ahead.
-            Slider(
-                value: Binding(
-                    get: { Double(settings.qqMusicPrefetchDepth) },
-                    set: { settings.qqMusicPrefetchDepth = Int($0.rounded()) }
-                ),
-                in: 0...5,
-                step: 1
-            )
-            .tint(themeStore.accentColor)
-            Text(settings.qqMusicPrefetchDepth == 0
-                 ? "不预取：只下载你实际播放的那一首，播放下一首时需要等待下载。"
-                 : "播放当前歌曲时，后台按播放顺序提前下载接下来的 \(settings.qqMusicPrefetchDepth) 首，播完自动续上。随机播放时这个值越大越不容易在切歌时等待。")
-                .settingsDescriptionStyle()
-        }
+        return stepperRow(
+            title: "预下载数量",
+            value: Binding(
+                get: { settings.qqMusicPrefetchDepth },
+                set: { settings.qqMusicPrefetchDepth = $0 }
+            ),
+            range: 0...20,
+            unit: "首",
+            detail: settings.qqMusicPrefetchDepth == 0
+                ? "不预取：只下载你实际播放的那一首，播放下一首时需要等待下载。"
+                : "播放当前歌曲时，后台按播放顺序提前下载接下来的 \(settings.qqMusicPrefetchDepth) 首，播完自动续上。顺序与随机播放都按这个数量预取（随机播放会覆盖整张列表，不只是已下载的那几首）。"
+        )
     }
 
     private var preloadRow: some View {
@@ -537,9 +502,10 @@ struct QQMusicSettingsView: View {
             SettingsHeaderLabel(title: "Helper 组件", systemImage: "shippingbox")
 
             VStack(alignment: .leading, spacing: 10) {
+                labeledValue("组件", "HelperNext（在线音源的唯一数据来源）")
                 labeledValue("组件版本", helperInfo?.helperVersion ?? "未知")
                 labeledValue("协议版本", helperInfo.map { "v\($0.protocolVersion)" } ?? "未知")
-                labeledValue("QQMusicAPI 版本", helperInfo?.libraryVersion ?? "未知")
+                labeledValue("组件内核", helperInfo?.libraryVersion ?? "未知")
                 // Which build this is. The online source ships as a patch package
                 // and an app can be built from several trees on one machine, so
                 // without this line a stale build and an unfixed bug look
@@ -547,10 +513,15 @@ struct QQMusicSettingsView: View {
                 labeledValue("本功能版本", QQMusicBuildStamp.featureVersion)
                 labeledValue("本功能构建", QQMusicBuildStamp.text)
 
-                Text("QQ 音乐的接口是逆向来的，随时可能变化。Helper 与应用分离，可单独更新：把新版 qqmusic-helper 及其 _internal.bundle 放入下方目录即可，无需重新构建应用。")
+                Text("QQ 音乐的接口是逆向来的，随时可能变化。组件与应用分离，可单独更新：换掉下面这个文件即可，无需重新构建应用。应用优先用外部目录里的那份，bundle 内的只作兜底。")
                     .settingsDescriptionStyle()
 
                 labeledValue("组件目录", QQMusicHelperProcess.externalHelperDirectory.path, monospaced: true)
+                if let running = helperBinaryPath {
+                    labeledValue("当前运行", running, monospaced: true)
+                }
+                Text("注意：从别处复制过来的二进制会带隔离属性，**会被系统直接杀掉**（退出码 137，且没有任何输出）。复制后请执行 `xattr -cr` 那个目录。")
+                    .settingsDescriptionStyle()
 
                 Divider().opacity(0.4)
 
@@ -572,6 +543,12 @@ struct QQMusicSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
 
+                Divider().opacity(0.4)
+
+                rateLimitRows
+
+                Divider().opacity(0.4)
+
                 HStack(spacing: 8) {
                     Button("在访达中显示") { revealHelperDirectory() }
                     Button("重新检查") { Task { await refreshStatus() } }
@@ -585,6 +562,15 @@ struct QQMusicSettingsView: View {
             // (see `QQMusicOnlineCoordinator`'s header), so switches that gated
             // it were removed rather than left here doing nothing.
             circuitBreakerSection
+        }
+        .onChange(of: AppSettings.shared.qqMusicRateLimitEnabled) { _, _ in
+            Task { await pushRateLimitConfiguration() }
+        }
+        .onChange(of: AppSettings.shared.qqMusicRateLimitWindowSeconds) { _, _ in
+            Task { await pushRateLimitConfiguration() }
+        }
+        .onChange(of: AppSettings.shared.qqMusicRateLimitMaxRequests) { _, _ in
+            Task { await pushRateLimitConfiguration() }
         }
         .onChange(of: AppSettings.shared.qqMusicCircuitBreakerEnabled) { _, _ in
             Task { await pushCircuitConfiguration() }
@@ -692,6 +678,67 @@ struct QQMusicSettingsView: View {
     /// the section was built, so pressing the stepper changed the setting but
     /// the displayed number never moved.
     ///
+    /// The user's request-rate ceiling: how many requests the component may make
+    /// inside a window, across everything.
+    ///
+    /// The component's own per-class budgets stay underneath — this is an
+    /// additional total, and it *waits* rather than failing, so the worst case of
+    /// setting it low is a slower page, not an error. The numbers are pushed on
+    /// change and re-sent after every component launch.
+    @ViewBuilder
+    private var rateLimitRows: some View {
+        let settings = AppSettings.shared
+        VStack(alignment: .leading, spacing: 10) {
+            SettingsSwitchRow(
+                title: "限制请求频率",
+                isOn: Binding(
+                    get: { settings.qqMusicRateLimitEnabled },
+                    set: { settings.qqMusicRateLimitEnabled = $0 }
+                ),
+                detail: "在组件自身的按类限流之上再加一道总闸：\(settings.qqMusicRateLimitWindowSeconds) 秒内最多 \(settings.qqMusicRateLimitMaxRequests) 次请求，超出的排队等到下一个时间窗口。避免触发上游风控（风控会让搜索、列表返回空结果）。"
+            )
+
+            if settings.qqMusicRateLimitEnabled {
+                stepperRow(
+                    title: "时间窗口",
+                    value: Binding(
+                        get: { settings.qqMusicRateLimitWindowSeconds },
+                        set: { settings.qqMusicRateLimitWindowSeconds = $0 }
+                    ),
+                    range: 1...600,
+                    unit: "秒",
+                    detail: "统计一段时间内发出了多少次请求，默认 10 秒。"
+                )
+                stepperRow(
+                    title: "窗口内请求上限",
+                    value: Binding(
+                        get: { settings.qqMusicRateLimitMaxRequests },
+                        set: { settings.qqMusicRateLimitMaxRequests = $0 }
+                    ),
+                    range: 1...2000,
+                    unit: "次",
+                    detail: "默认 100 次。调小会更保守（页面可能变慢），调大更接近组件的默认节奏。"
+                )
+                if let effective = effectiveRateLimit {
+                    Text("组件当前生效：\(effective.windowSeconds) 秒内 \(effective.maxRequests) 次\(effective.enabled ? "" : "（已关闭）")")
+                        .font(.system(size: 11).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    /// Push the ceiling to the component and read back what it is enforcing, so a
+    /// setting that never arrives is visible instead of silent.
+    private func pushRateLimitConfiguration() async {
+        let settings = AppSettings.shared
+        effectiveRateLimit = await helper.applyRateLimit(
+            isEnabled: settings.qqMusicRateLimitEnabled,
+            windowSeconds: settings.qqMusicRateLimitWindowSeconds,
+            maxRequests: settings.qqMusicRateLimitMaxRequests
+        )
+    }
+
     /// Stepping alone is impractical for wide ranges — the pause duration goes
     /// to 1800 seconds in steps of 30 — so the number itself is a text field.
     private func stepperRow(
@@ -890,7 +937,9 @@ struct QQMusicSettingsView: View {
         isCheckingStatus = true
         defer { isCheckingStatus = false }
         helperInfo = try? await helper.helperInfo()
+        helperBinaryPath = await helper.runningBinaryPath()
         await pushCircuitConfiguration()
+        await pushRateLimitConfiguration()
         do {
             loginStatus = try await helper.loginStatus()
         } catch {

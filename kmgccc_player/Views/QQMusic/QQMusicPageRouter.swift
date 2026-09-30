@@ -38,9 +38,12 @@ struct QQMusicPageRouter: View {
             onScroll: { offset in
                 ambientMotion.setScrollOffset(offset)
             },
-            // A new page starts at its top: the offset of the page before it has
-            // nothing to do with where the user should land.
-            scrollResetKey: navigation.displayKey
+            // A new *page* starts at its top: the offset of the page before it has
+            // nothing to do with where the user should land. `viewIdentityKey`
+            // rather than `displayKey`, because the search page's content type is
+            // a filter and not a place — switching 歌曲/歌手/专辑/歌单 keeps the
+            // scroll position the user was reading at, as they asked.
+            scrollResetKey: navigation.viewIdentityKey
         ) { insets, mode in
             // Every page enters the way the app's own Home does.
             //

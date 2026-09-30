@@ -1143,6 +1143,9 @@ public final class AppSettings {
         static let preloadOnLaunch = "qqMusicPreloadOnLaunch"
         /// Whether the online source is what the app opens on.
         static let launchHome = "qqMusicLaunchHome"
+        static let rateLimitEnabled = "qqMusicRateLimitEnabled"
+        static let rateLimitWindowSeconds = "qqMusicRateLimitWindowSeconds"
+        static let rateLimitMaxRequests = "qqMusicRateLimitMaxRequests"
         static let circuitBreakerEnabled = "qqMusicCircuitBreakerEnabled"
         static let circuitFailureThreshold = "qqMusicCircuitFailureThreshold"
         static let circuitFailureWindowSeconds = "qqMusicCircuitFailureWindowSeconds"
@@ -1234,6 +1237,49 @@ public final class AppSettings {
         set {
             withMutation(keyPath: \.qqMusicLaunchHome) {
                 UserDefaults.standard.set(newValue, forKey: QQMusicKeys.launchHome)
+            }
+        }
+    }
+
+    /// The request-rate ceiling the component enforces.
+    ///
+    /// Off means the component's own per-class budgets and nothing more; on adds
+    /// a single "at most N requests per M seconds, across everything" on top of
+    /// them. Exceeding it waits for the next window rather than failing — see
+    /// `QQMusicHelperProcess.applyRateLimit`.
+    var qqMusicRateLimitEnabled: Bool {
+        get {
+            access(keyPath: \.qqMusicRateLimitEnabled)
+            return qqMusicBool(QQMusicKeys.rateLimitEnabled, default: true)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicRateLimitEnabled) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.rateLimitEnabled)
+            }
+        }
+    }
+
+    /// Window length in seconds. Defaults match the component's own.
+    var qqMusicRateLimitWindowSeconds: Int {
+        get {
+            access(keyPath: \.qqMusicRateLimitWindowSeconds)
+            return qqMusicInt(QQMusicKeys.rateLimitWindowSeconds, default: 10)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicRateLimitWindowSeconds) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.rateLimitWindowSeconds)
+            }
+        }
+    }
+
+    var qqMusicRateLimitMaxRequests: Int {
+        get {
+            access(keyPath: \.qqMusicRateLimitMaxRequests)
+            return qqMusicInt(QQMusicKeys.rateLimitMaxRequests, default: 100)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicRateLimitMaxRequests) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.rateLimitMaxRequests)
             }
         }
     }

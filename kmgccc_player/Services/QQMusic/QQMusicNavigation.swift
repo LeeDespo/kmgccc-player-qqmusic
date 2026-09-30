@@ -64,13 +64,22 @@ nonisolated struct QQMusicArtistRef: Hashable, Sendable {
     var coverURL: String?
     var songCount: Int?
     var albumCount: Int?
+    var fanCount: Int?
 
-    init(singerMid: String, name: String, coverURL: String? = nil, songCount: Int? = nil, albumCount: Int? = nil) {
+    init(
+        singerMid: String,
+        name: String,
+        coverURL: String? = nil,
+        songCount: Int? = nil,
+        albumCount: Int? = nil,
+        fanCount: Int? = nil
+    ) {
         self.singerMid = singerMid
         self.name = name
         self.coverURL = coverURL
         self.songCount = songCount
         self.albumCount = albumCount
+        self.fanCount = fanCount
     }
 
     init(_ artist: QQMusicOnlineArtist) {
@@ -78,6 +87,7 @@ nonisolated struct QQMusicArtistRef: Hashable, Sendable {
         self.name = artist.name
         self.coverURL = artist.coverURL
         self.songCount = artist.songCount
+        self.fanCount = artist.fanCount
         self.albumCount = artist.albumCount
     }
 }
@@ -188,9 +198,11 @@ nonisolated enum QQMusicPage: Hashable, Sendable {
     /// same page, and the router identifies views through this key. Keeping the
     /// type out of it is what stops the page from being rebuilt on the switch —
     /// and a rebuild replays the page entrance (fade + 12pt rise), which the user
-    /// asked not to see when tapping the segmented control. `displayKey` still
-    /// carries the type, because the scroll reset and the load trigger *should*
-    /// treat two different result lists as two different pages.
+    /// asked not to see when tapping the segmented control. It is also the scroll
+    /// reset's key now: the four result lists share one page and one position, so
+    /// switching between them must not jump back to the top. `displayKey` still
+    /// carries the type, because the *load* trigger should treat two different
+    /// result lists as two different pages.
     var viewIdentityKey: String {
         if case .search = self { return "search" }
         return loadKey

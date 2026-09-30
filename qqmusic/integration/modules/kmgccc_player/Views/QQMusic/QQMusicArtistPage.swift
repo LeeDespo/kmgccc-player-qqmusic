@@ -62,6 +62,11 @@ struct QQMusicArtistPage: View {
     @State private var hasMoreSongs = true
     @State private var errorText: String?
     @State private var biography: String?
+    /// The artist's own record, fetched by this page. The `artist` ref carries
+    /// whatever the row that opened the page knew, which is a full artist from
+    /// 关注的歌手 and a bare mid+name from a track row's 查看艺人 — so the header
+    /// reads this once and uses the ref only as a placeholder.
+    @State private var profile: QQMusicMetadataDetail?
     /// Set when one of the artist's albums has been opened in this page, so the
     /// header can switch to it and "back" steps out one level, as the library's
     /// album-to-artist drill-down does.
@@ -78,7 +83,7 @@ struct QQMusicArtistPage: View {
 
     private var header: some View {
         QQMusicDetailHeader(
-            title: openedAlbum?.title ?? artist.name,
+            title: openedAlbum?.title ?? artistName,
             subtitle: isShowingAlbum ? artist.name : artistSubtitle,
             metadata: openedAlbum?.releaseDate,
             artworkURL: headerArtworkURL,
@@ -102,14 +107,29 @@ struct QQMusicArtistPage: View {
 
     private var isShowingAlbum: Bool { openedAlbum != nil }
 
+    /// The name the header shows: the fetched one when the read has landed, the
+    /// ref's otherwise (a track row's 查看艺人 passes the credited name, which is
+    /// the same string).
+    private var artistName: String {
+        if let name = profile?.artistName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !name.isEmpty {
+            return name
+        }
+        return artist.name
+    }
+
     private var headerArtworkURL: String? {
-        openedAlbum?.coverURL ?? artist.coverURL
+        openedAlbum?.coverURL ?? profile?.imageURL ?? artist.coverURL
     }
 
     private var artistSubtitle: String? {
+        let songCount = profile?.songCount ?? artist.songCount
+        let albumCount = profile?.albumCount ?? artist.albumCount
+        let fanCount = profile?.fanCount ?? artist.fanCount
         var parts: [String] = []
-        if let count = artist.songCount { parts.append("\(count) 首歌曲") }
-        if let count = artist.albumCount { parts.append("\(count) 张专辑") }
+        if let count = songCount { parts.append("\(count) 首歌曲") }
+        if let count = albumCount { parts.append("\(count) 张专辑") }
+        if let count = fanCount, count > 0 { parts.append("\(count) 位粉丝") }
         return parts.isEmpty ? "在线歌手" : parts.joined(separator: " · ")
     }
 
@@ -289,6 +309,7 @@ struct QQMusicArtistPage: View {
         switch tab {
         case .songs:
             biography = nil
+            profile = nil
             await loadSongs(force: true)
         case .albums:
             await loadAlbums(force: true)
@@ -308,7 +329,7 @@ struct QQMusicArtistPage: View {
             )
             songPage = 1
             hasMoreSongs = !songs.isEmpty
-            await loadBiographyIfNeeded()
+            await loadProfileIfNeeded()
         } catch {
             errorText = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
@@ -342,11 +363,17 @@ struct QQMusicArtistPage: View {
         }
     }
 
-    /// Artist biography, shown in the header's description slot as the library
-    /// page shows one. Omitted entirely when upstream has none.
-    private func loadBiographyIfNeeded() async {
-        guard biography == nil else { return }
-        biography = await coordinator.artistBiography(singerMid: artist.singerMid)
+    /// The artist's portrait, counts and prose, in one read.
+    ///
+    /// `artistBiography` used to be a second call for the prose alone; the
+    /// profile carries it too, so this is one request instead of two and the
+    /// header stops depending on how the page was opened.
+    private func loadProfileIfNeeded() async {
+        guard profile == nil else { return }
+        let fetched = await coordinator.artistProfile(singerMid: artist.singerMid)
+        profile = fetched
+        let text = fetched?.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+        biography = (text?.isEmpty == false) ? text : nil
     }
 
     /// Fetch the albums, in the sort on screen.

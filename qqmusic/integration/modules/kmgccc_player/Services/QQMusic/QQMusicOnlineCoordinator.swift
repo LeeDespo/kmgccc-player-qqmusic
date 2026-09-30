@@ -1533,6 +1533,17 @@ final class QQMusicOnlineCoordinator {
         )
     }
 
+    /// The artist's own profile: name, portrait, counts and prose.
+    ///
+    /// One read, through `fetch_artist_detail`. The artist page used to take its
+    /// portrait and counts from whatever the *navigating* row happened to carry —
+    /// which works from 关注的歌手 (the row is a full artist) and leaves the header
+    /// blank when the page is opened from a track row, where only a mid and a name
+    /// exist. A page must not depend on which door the user came through.
+    func artistProfile(singerMid: String) async -> QQMusicMetadataDetail? {
+        try? await helper.fetchArtistDetail(name: nil, singerMid: singerMid)
+    }
+
     /// Artist biography, or nil when upstream has none.
     func artistBiography(singerMid: String) async -> String? {
         let detail = try? await helper.fetchArtistDetail(singerMid: singerMid)
