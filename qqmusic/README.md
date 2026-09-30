@@ -30,18 +30,21 @@ qqmusic/
 **先下载，后本地播放。** 播放引擎（`AVAudioPlaybackService`）基于 `AVAudioFile`，只认本地文件。
 在线歌曲一律先下载入库，再作为普通本地曲目播放。这是"零改动继承原应用一切能力"的原因。
 
-**两条通道，一条规则。** 在线数据来自两个客户端：
+**一个组件，一条规则。** 在线数据全部来自 **HelperNext 组件**（`Tools/helper-next/qqmusic-helper-next`，
+Rust，静态链接），应用通过 stdin/stdout 的 JSON 协议跟它说话：
 
-| 通道 | 是什么 | 用于 |
+| 层 | 是什么 | 负责 |
 |---|---|---|
-| `Services/QQMusic/QQMusicWebAPI.swift` | 直连 `u.y.qq.com/cgi-bin/musicu.fcg` 的 HTTP 请求 | **有网页接口的读**：我喜欢、收藏专辑、收藏歌单、歌单分页、排行榜分页、歌词、关注的歌手、歌曲简介 |
-| `Tools/QQMusicHelper/`（Python，基于 `qqmusic-api-python`） | 独立子进程，stdin/stdout JSON | **没有网页接口的一切**：专辑曲目、歌手、电台、新歌、搜索、排行榜分组、推荐流、取流，以及**唯一的写**（收藏/取消收藏）；同时是网页读的**兜底** |
+| `Tools/helper-next/qqmusic-helper-next` | 独立子进程，一行一个 JSON | **全部读取与登录**：账号列表、曲库详情、搜索、排行榜、电台、推荐流、歌词、取流，以及**唯一的写**（收藏/取消收藏）；同时管凭据、限流与熔断 |
+| `Services/QQMusic/QQMusicHelperProcess.swift` | 应用侧的进程客户端 | 启动/守护组件、按 `id` 配对请求与响应、超时与熔断镜像 |
 
-规则由 `QQMusicOnlineCoordinator.webFirst(_:web:helper:)` 一处执行：按**每类内容各自的偏好**（QQ 音乐设置
-→ 在线内容）先试选中的那条，失败就退回另一条并记一行日志——所以选哪条都不会把页面弄坏，方向反过来也一样。
-偏好按内容分组（`QQMusicChannelSubject`）：账号列表、曲目列表、歌曲描述默认走网页（两边返回的内容相同，
-网页快约四倍）；**歌词默认走 Helper**（它的歌词可含逐字时间）。只有一条通道能取的内容在设置里显示但置灰，
-并写明原因。
+**应用侧没有自己的 HTTP 客户端**——原先的 `QQMusicWebAPI`（直连 `musicu.fcg`）与「两条通道」机制
+（`QQMusicFetchChannel` / `QQMusicChannelSubject` / `webFirst`，设置里的「在线内容 → 通道」分区）
+已随这次替换删除。合成的理由：同一个能力有两份实现时，"兜底"掩盖了它们的行为差异，
+而落库与缓存判断还得同时考虑两者；合并后上游变化只换一个二进制，不重建应用。
+
+组件**自己管凭据**（`…/QQMusicHelperNext/Credential/qqmusic-credential.json`），扫码登录与网页登录两条路径
+产出的都是 `uin` + `qm_keyst` 这一对 cookie，二者等价。
 
 **Helper 那一格的内部还有一层：`qqmusic-api-python`（第三方 Python 库）↔ `Tools/QQMusicHelper/main.py`
 （本项目自己的程序）。** 库负责签名、cookie、平台参数与模块方法（`client.lyric.get_lyric` 是逐字歌词的来源，
@@ -52,11 +55,10 @@ qqmusic/
 使用者的机器不需要装 Python。应用侧**只显示、不校验** helper 的版本号（设置 → Helper 组件）。
 详见根 `README.md` 的「Helper 组件」一节。
 
-有一个例外要记住：**整表读取时网页返回空列表按"没作答"处理，改问另一条；而歌曲简介返回空就是答案**——
-大多数歌本来就没有简介，把空当成"没答"会让每首歌都白跑两条通道。
-|
-没有网页接口的路径不必假装有——`fetchListPage` 里排行榜只走网页，就明确写了原因（helper 那条路由不接受
-page/offset，只能答第一批，拿它当"下一页"会死循环）。
+有一条规则要记住：**整表读取时空列表按"没作答"处理，而歌曲简介返回空就是答案**——
+大多数歌本来就没有简介，把空当成"没答"会让每首歌都白跑一趟。这条规矩现在落在组件里：
+账号列表接口在 `data` 为空或 `code != 0` 时报错（不返回 `[]`），musigu 那条路对风控码 `2001`
+（它会带着"成功但空"的结果集回来）同样报错，避免把"被限流"显示成"没有内容"。
 
 **缓存策略：先显示缓存，取到完整的在线数据，不符才整体替换。** 会变但变得不多的列表
 （我喜欢、收藏歌单、收藏专辑、歌单/专辑/排行榜的曲目）都走同一套：
@@ -82,12 +84,11 @@ helper 凭据放在 helper 目录的 `Credential/`。
 DEVELOPMENT_TEAM=<你的teamID> ./scripts/build_and_run.sh   # 本机需要覆盖签名 team
 ```
 
-helper 重建后要同步到外部目录才会被应用优先使用（`test-cycle.sh` 会自动做）：
-
-```sh
-cp -R .build/products/qqmusic-helper/* \
-  ~/Library/Application\ Support/kmgccc.player/QQMusicHelper/
-```
+应用的在线数据来自 **HelperNext 组件**，它是**构建产物**（`Tools/helper-next/qqmusic-helper-next`），
+源码在另一个仓库（见该目录的 README）。它随应用打包，也会被复制到外部目录
+`…/QQMusicHelperNext/`（外部那份优先，便于单独替换而不重建应用）。
+`bootstrap.sh` 仍会构建 Python helper（上游的组件，保留以便回退）：应用的**代码里已不再引用它**，
+但那段历史与替换过程记录在 `Tools/helper-next/README.md` 与根 `AGENTS.md`。
 
 ## 四、怎么打补丁 / 维护
 

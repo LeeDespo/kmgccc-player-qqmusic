@@ -4,10 +4,9 @@
 //
 //  Bridges the online QQ Music catalog into the local library.
 //
-//  The catalogue side is network work, served by two channels: `QQMusicWebAPI`
-//  for the reads that have a web route (faster), and `QQMusicHelperProcess` for
-//  everything else plus every fallback — see `webFirst` below, which is the one
-//  place the choice is made. The library side is main-actor state owned by the
+//  The catalogue side is network work, and all of it is served by one channel:
+//  `QQMusicHelperProcess`, the data component that owns the credential, the rate
+//  limit and the circuit breaker. The library side is main-actor state owned by the
 //  import pipeline. This coordinator is where the two meet: it downloads a track
 //  to staging, imports it, and — for a playback session — keeps the player queue
 //  fed so playback never has to stop and wait.
@@ -113,13 +112,6 @@ final class QQMusicOnlineCoordinator {
 
     private let helper: QQMusicHelperProcess
     private let downloader: QQMusicDownloadService
-    /// Direct HTTP access to the web endpoints, for the read paths that are
-    /// worth avoiding a helper round trip for.
-    private let webAPI: QQMusicWebAPI
-    /// Which reads the web path has previously served. Used only to decide
-    /// whether a fallback is worth a warning — it never gates the fallback
-    /// itself, which is always taken on failure.
-    private var webReadsSucceeded: Set<String> = []
 
     /// On-disk cache for catalogue payloads and artwork. Nil until a library
     /// session supplies paths, which also disables caching rather than failing.
@@ -217,12 +209,10 @@ final class QQMusicOnlineCoordinator {
     /// The catalogue's own prose about `track`, or nil when it has none.
     ///
     /// An **empty answer is an answer**. Most songs carry no 简介 at all (checked
-    /// live: four of six sampled tracks had none), so treating empty as "this
-    /// channel did not answer" would make every one of them cost both channels.
-    /// That is the opposite of the whole-list rule in `webFirstList`, where an
-    /// empty list means the route's shape moved — the difference is that a song
-    /// with no prose is normal, while an account with no playlists it does have
-    /// is not. Failures still fall back; that is `webFirst`'s job.
+    /// live: four of six sampled tracks had none), so an empty read is cached as
+    /// "this song has none" rather than retried. That is the opposite of the rule
+    /// for whole-list reads, where an empty list is a failure to answer: a song
+    /// with no prose is normal, while an account whose playlists vanished is not.
     func songDescription(for track: QQMusicOnlineTrack) async -> String? {
         guard !track.songMid.isEmpty else { return nil }
         if let cached = songDescriptions[track.songMid] {
@@ -392,127 +382,26 @@ final class QQMusicOnlineCoordinator {
 
     init(
         helper: QQMusicHelperProcess = .shared,
-        downloader: QQMusicDownloadService = QQMusicDownloadService(),
-        webAPI: QQMusicWebAPI = .shared
+        downloader: QQMusicDownloadService = QQMusicDownloadService()
     ) {
         self.helper = helper
         self.downloader = downloader
-        self.webAPI = webAPI
     }
 
-    /// Run a read through the direct HTTP client, falling back to the helper.
-    ///
-    /// The web client answers in roughly a quarter of the time the helper takes,
-    /// because the helper pays for a process and a fresh client per call. These
-    /// are all read paths that the browse pages hit constantly.
-    ///
-    /// The helper stays the fallback and is still the only thing that can log in.
-    /// Any web-path failure — credential file unreadable, upstream shape changed,
-    /// transport error, session expired — degrades to the old behaviour instead
-    /// of surfacing an error the user cannot act on.
-    ///
-    /// A failure is logged only once the web path has previously worked, so a
-    /// user who is simply signed out does not get a warning on every call.
-    private func webFirst<T>(
-        _ label: String,
-        subject: QQMusicChannelSubject,
-        web: () async throws -> T,
-        helper: () async throws -> T
-    ) async throws -> T {
-        // Which channel is tried first is the user's choice per subject; the other
-        // one is always the fallback, whichever way round the choice is. That is
-        // the whole contract: preferring a channel must not be able to break a
-        // page that the other channel can serve.
-        //
-        // Each outcome is recorded so the settings page can show which channel
-        // actually answered — the fallback is otherwise invisible, and "did
-        // choosing Helper break the lyrics?" is not something a user should have
-        // to read a log to answer.
-        let preferred = AppSettings.shared.qqMusicChannel(for: subject)
-        switch preferred {
-        case .web:
-            let answered = try await webThen(label, web: web, helper: helper)
-            recordChannelOutcome(
-                .init(channel: answered.channel, didFallBack: answered.channel != .web),
-                for: subject
-            )
-            return answered.value
-        case .helper:
-            do {
-                let result = try await helper()
-                recordChannelOutcome(.init(channel: .helper, didFallBack: false), for: subject)
-                return result
-            } catch {
-                Log.warning(
-                    "[QQMusicOnline] helper \(label) failed, falling back to the web path: \(error)",
-                    category: .import
-                )
-                let result = try await web()
-                recordChannelOutcome(.init(channel: .web, didFallBack: true), for: subject)
-                return result
-            }
-        }
-    }
 
-    /// Record which channel answered a subject's last request.
-    private func recordChannelOutcome(
-        _ outcome: QQMusicChannelOutcome,
-        for subject: QQMusicChannelSubject
-    ) {
-        guard channelOutcomes[subject] != outcome else { return }
-        channelOutcomes[subject] = outcome
-    }
 
-    /// The last outcome per subject, so the settings page can show which channel
-    /// actually answered. Empty until a read of that subject has completed.
-    private(set) var channelOutcomes: [QQMusicChannelSubject: QQMusicChannelOutcome] = [:]
 
-    private func webThen<T>(
-        _ label: String,
-        web: () async throws -> T,
-        helper: () async throws -> T
-    ) async throws -> (value: T, channel: QQMusicFetchChannel) {
-        do {
-            let result = try await web()
-            webReadsSucceeded.insert(label)
-            return (result, .web)
-        } catch {
-            if webReadsSucceeded.contains(label) {
-                Log.warning(
-                    "[QQMusicOnline] web \(label) failed, falling back to helper: \(error)",
-                    category: .import
-                )
-            }
-            webReadsSucceeded.remove(label)
-            return (try await helper(), .helper)
-        }
-    }
 
     private func fetchLikedSongs(page: Int, limit: Int) async throws -> QQMusicLikedSongs {
-        try await webFirst(
-            "liked-songs",
-            subject: .accountLists,
-            web: { try await self.webAPI.fetchLikedSongs(page: page, limit: limit) },
-            helper: { try await self.helper.fetchLikedSongs(page: page, limit: limit) }
-        )
+        try await helper.fetchLikedSongs(page: page, limit: limit)
     }
 
     private func fetchLikedAlbums(limit: Int = 30) async throws -> [QQMusicOnlineAlbum] {
-        try await webFirstList(
-            "liked-albums",
-            subject: .accountLists,
-            web: { try await self.webAPI.fetchLikedAlbums(limit: limit) },
-            helper: { try await self.helper.fetchLikedAlbums(limit: limit) }
-        )
+        try await helper.fetchLikedAlbums(limit: limit)
     }
 
     private func fetchFollowedArtists(limit: Int = 30) async throws -> [QQMusicOnlineArtist] {
-        try await webFirstList(
-            "followed-artists",
-            subject: .followedArtists,
-            web: { try await self.webAPI.fetchFollowedArtists(limit: limit) },
-            helper: { try await self.helper.fetchFollowedArtists(limit: limit) }
-        )
+        try await helper.fetchFollowedArtists(limit: limit)
     }
 
     /// Load 关注的歌手, in the shape every account list here uses: paint the cache,
@@ -553,103 +442,40 @@ final class QQMusicOnlineCoordinator {
     }
 
     private func fetchUserPlaylists() async throws -> [QQMusicOnlinePlaylist] {
-        try await webFirstList(
-            "user-playlists",
-            subject: .accountLists,
-            web: { try await self.webAPI.fetchUserPlaylists() },
-            helper: { try await self.helper.fetchUserPlaylists() }
-        )
+        try await helper.fetchUserPlaylists()
     }
 
-    /// `webFirst` for a whole-list read, where an empty list is not an answer.
-    ///
-    /// These routes report none of their failures: 收藏歌单 came back `200` with
-    /// an empty list for an account that has playlists (the web endpoint's shape
-    /// had moved on), and believing it replaced the list on screen with nothing —
-    /// the rows appeared from cache and then vanished. An empty *whole-list*
-    /// result is therefore treated as "this channel did not answer" and the
-    /// helper, which asks a different endpoint, gets the question instead.
-    ///
-    /// Not used for paged reads: there, an empty page is a real answer. It is the
-    /// last page.
-    private func webFirstList<T>(
-        _ label: String,
-        subject: QQMusicChannelSubject,
-        web: () async throws -> [T],
-        helper: () async throws -> [T]
-    ) async throws -> [T] {
-        try await webFirst(
-            label,
-            subject: subject,
-            web: {
-                let items = try await web()
-                guard !items.isEmpty else {
-                    throw QQMusicWebAPIError.emptyList(label: label)
-                }
-                return items
-            },
-            helper: helper
-        )
-    }
 
     private func fetchLyric(
         songMid: String,
         songId: Int?
     ) async throws -> QQMusicLyricPayload {
-        try await webFirst(
-            "lyric",
-            subject: .lyrics,
-            web: { try await self.webAPI.fetchLyric(songMid: songMid) },
-            helper: { try await self.helper.fetchLyric(songMid: songMid, songId: songId) }
-        )
+        try await helper.fetchLyric(songMid: songMid, songId: songId)
     }
 
-    /// The song's 简介, web-first with a helper fallback like everything else.
-    ///
-    /// The helper route is the full metadata read the import enrichment already
-    /// uses (`fetch_song_detail`, the same upstream module), so it returns the
-    /// same prose — it just pays for a process and a client to get it.
+    /// The song's 简介, through the same metadata read the import enrichment
+    /// uses (`fetch_song_detail`), so the prose is identical.
     private func fetchSongDescription(songMid: String) async throws -> String {
-        try await webFirst(
-            "song-description",
-            subject: .songIntro,
-            web: { try await self.webAPI.fetchSongDescription(songMid: songMid) },
-            helper: {
-                let detail = try await self.helper.fetchSongDetail(songMid: songMid)
-                return detail.description ?? ""
-            }
-        )
+        let detail = try await helper.fetchSongDetail(songMid: songMid)
+        return detail.description ?? ""
     }
 
     /// One page of a playlist's tracks, web-first with a helper fallback.
     ///
-    /// The helper can serve a *page* (its route takes `page`), so unlike the
-    /// ranking path below there is something to fall back to. The helper does
-    /// not report the list's total, so a page served this way reports the
-    /// count it actually received — which understates the total and simply
-    /// stops paging rather than breaking the list.
+    /// One page of a playlist's tracks.
+    ///
+    /// The helper pages by number, not by offset, so the page is derived from
+    /// the offset. It reports the list's own size (`dirinfo.songnum`), which is
+    /// what lets the caller walk the rest of the pages; when it does not, the
+    /// count received is the count there is, and paging simply stops there.
     private func fetchPlaylistPage(
         songlistId: Int,
         offset: Int,
         limit: Int
     ) async throws -> (tracks: [QQMusicOnlineTrack], total: Int) {
-        try await webFirst(
-            "playlist-page",
-            subject: .trackLists,
-            web: { try await self.webAPI.fetchPlaylistTracks(songlistId: songlistId, offset: offset, limit: limit) },
-            helper: {
-                // The helper pages by number, not by offset. Deriving the page
-                // from the offset keeps the two paths consistent at the page
-                // size both use.
-                let page = max(1, offset / max(1, limit) + 1)
-                let tracks = try await self.helper.fetchPlaylistTracks(
-                    songlistId: songlistId,
-                    limit: limit,
-                    page: page
-                )
-                return (tracks, offset + tracks.count)
-            }
-        )
+        let page = max(1, offset / max(1, limit) + 1)
+        let page_ = try await helper.fetchPlaylistTracksPage(songlistId: songlistId, limit: limit, page: page)
+        return (page_.tracks, page_.total ?? (offset + page_.tracks.count))
     }
 
     // MARK: - Page lifecycle
@@ -1202,10 +1028,9 @@ final class QQMusicOnlineCoordinator {
 
     // MARK: - The account's own lists
     //
-    // 我喜欢 / 收藏歌单 / 收藏专辑, plus the writes that change them. The reads are
-    // web-first (see `webFirst`); the like/unlike write goes through the helper,
-    // which speaks the playlist-membership endpoint. `toggleLike` is the only
-    // write in the whole surface.
+    // 我喜欢 / 收藏歌单 / 收藏专辑, plus the writes that change them. The
+    // like/unlike write speaks the playlist-membership endpoint; `toggleLike` is
+    // the only write in the whole surface.
 
     /// Load 我喜欢.
     ///
@@ -1269,27 +1094,12 @@ final class QQMusicOnlineCoordinator {
 
     /// The whole 我喜欢 folder, web-first with a helper fallback.
     ///
-    /// The web channel answers the entire folder in one batched round trip and
-    /// the helper has no equivalent call, so the helper path *is* the loop below
-    /// — that asymmetry is why this reads as a try/catch around a walk rather
-    /// than as two symmetric branches.
+    /// The whole folder, page by page.
+    ///
+    /// `total` counts rows rather than playable tracks, so the loop cannot stop
+    /// on `count == total` alone: it stops when a page adds nothing, which is
+    /// the same signal the paging loader uses.
     private func fetchCompleteLikedSongs() async throws -> QQMusicLikedSongs {
-        do {
-            let complete = try await webAPI.fetchAllLikedSongs()
-            // Same rule as `webFirstList`: an empty whole-list answer from the
-            // web is not trusted over the helper, because the folder can be
-            // emptied by the user and a moved endpoint looks identical.
-            guard !complete.tracks.isEmpty else {
-                throw QQMusicWebAPIError.emptyList(label: "liked-songs-all")
-            }
-            return complete
-        } catch {
-            Log.warning(
-                "[QQMusicOnline] batched liked call failed, paging instead: \(error)",
-                category: .import
-            )
-        }
-
         var tracks: [QQMusicOnlineTrack] = []
         var seen: Set<String> = []
         var total = 0
@@ -2089,18 +1899,19 @@ final class QQMusicOnlineCoordinator {
     /// its number rather than a preference.
     private static let listPageSize = 100
 
-    /// One page of the open list, web-first with the helper as the fallback.
+    /// One page of the open list.
     ///
-    /// A ranking has no helper fallback: the helper's route takes no
-    /// page/offset, so it can only ever answer with the first batch — returning
-    /// that as "the next page" would loop.
+    /// A ranking takes an offset and reports its own size, so it pages exactly
+    /// like the others; an earlier helper could only ever answer the first
+    /// batch, which is why this used to be a special case.
     private func fetchListPage(_ list: OpenList, offset: Int, limit: Int) async throws -> (tracks: [QQMusicOnlineTrack], total: Int) {
         switch list {
         case .playlist(let id):
             return try await fetchPlaylistPage(songlistId: id, offset: offset, limit: limit)
 
         case .toplist(let id):
-            return try await webAPI.fetchToplistTracks(topId: id, offset: offset, limit: limit)
+            let page = try await helper.fetchToplistTracksPage(topId: id, offset: offset, limit: limit)
+            return (page.tracks, page.total ?? (offset + page.tracks.count))
 
         case .album(let id):
             // One helper call returns the whole album; albums long enough to need
@@ -2800,7 +2611,6 @@ final class QQMusicOnlineCoordinator {
                 track,
                 stagingDirectory: paths.importStagingRootURL
                     .appendingPathComponent("qqmusic", isDirectory: true),
-                lyricChannel: AppSettings.shared.qqMusicChannel(for: .lyrics)
             ) { [weak self] phase in
                 Task { @MainActor [weak self] in
                     self?.downloadPhases[track.songMid] = phase

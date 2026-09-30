@@ -21,7 +21,7 @@ final class QQMusicArtworkLoadingTests: XCTestCase {
     /// The loader must not depend on the URL scheme it is handed: an `http://`
     /// cover has to be upgraded, because URLSession refuses it otherwise.
     func testNormalizedArtworkURLUpgradesHTTP() throws {
-        let upgraded = QQMusicWebAPI.normalizedArtworkURLForTesting(
+        let upgraded = QQMusicArtworkLoader.normalizedURL(
             "http://y.gtimg.cn/music/photo_new/T002R300x300M000004Iu0Z21UKvFd.jpg?n=1"
         )
         XCTAssertEqual(
@@ -32,15 +32,15 @@ final class QQMusicArtworkLoadingTests: XCTestCase {
 
     func testNormalizedArtworkURLHandlesAllShapes() throws {
         XCTAssertEqual(
-            QQMusicWebAPI.normalizedArtworkURLForTesting("//qpic.y.qq.com/x.jpg"),
+            QQMusicArtworkLoader.normalizedURL("//qpic.y.qq.com/x.jpg"),
             "https://qpic.y.qq.com/x.jpg"
         )
         XCTAssertEqual(
-            QQMusicWebAPI.normalizedArtworkURLForTesting("https://y.gtimg.cn/a.jpg"),
+            QQMusicArtworkLoader.normalizedURL("https://y.gtimg.cn/a.jpg"),
             "https://y.gtimg.cn/a.jpg"
         )
-        XCTAssertNil(QQMusicWebAPI.normalizedArtworkURLForTesting(""))
-        XCTAssertNil(QQMusicWebAPI.normalizedArtworkURLForTesting(nil))
+        XCTAssertNil(QQMusicArtworkLoader.normalizedURL(""))
+        XCTAssertNil(QQMusicArtworkLoader.normalizedURL(nil))
     }
 
     /// A stored cover must be served from disk without touching the network.

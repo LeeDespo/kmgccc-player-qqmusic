@@ -1143,8 +1143,6 @@ public final class AppSettings {
         static let preloadOnLaunch = "qqMusicPreloadOnLaunch"
         /// Whether the online source is what the app opens on.
         static let launchHome = "qqMusicLaunchHome"
-        /// Per-subject fetch channel, keyed by `QQMusicChannelSubject.rawValue`.
-        static func channel(_ subject: String) -> String { "qqMusicChannel.\(subject)" }
         static let circuitBreakerEnabled = "qqMusicCircuitBreakerEnabled"
         static let circuitFailureThreshold = "qqMusicCircuitFailureThreshold"
         static let circuitFailureWindowSeconds = "qqMusicCircuitFailureWindowSeconds"
@@ -1239,30 +1237,6 @@ public final class AppSettings {
             }
         }
     }
-
-    /// Which channel a kind of online content is fetched through.
-    ///
-    /// Observation-safe through the settings object rather than through a
-    /// `@Published` map: the value is read at fetch time, so nothing renders from
-    /// it directly — but the settings window does, and it re-reads on change via
-    /// its own `@State` mirror (the same idiom the rest of that page uses).
-    func qqMusicChannel(for subject: QQMusicChannelSubject) -> QQMusicFetchChannel {
-        access(keyPath: \.qqMusicChannelRevision)
-        _ = qqMusicChannelRevision
-        let raw = UserDefaults.standard.string(forKey: QQMusicKeys.channel(subject.rawValue))
-        return raw.flatMap(QQMusicFetchChannel.init(rawValue:)) ?? subject.defaultChannel
-    }
-
-    func setQQMusicChannel(_ channel: QQMusicFetchChannel, for subject: QQMusicChannelSubject) {
-        withMutation(keyPath: \.qqMusicChannelRevision) {
-            UserDefaults.standard.set(channel.rawValue, forKey: QQMusicKeys.channel(subject.rawValue))
-            qqMusicChannelRevision += 1
-        }
-    }
-
-    /// Bumped whenever a channel choice changes, so observers that read
-    /// `qqMusicChannel(for:)` re-evaluate (see that method).
-    private(set) var qqMusicChannelRevision = 0
 
     var qqMusicPreloadOnLaunch: Bool {
         get {

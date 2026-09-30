@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-index 81b5c94f..686fc17b 100644
+index 81b5c94f..e5c4e416 100644
 --- a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 +++ b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 @@ -104,6 +104,348 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
@@ -351,8 +351,14 @@ index 81b5c94f..686fc17b 100644
  nonisolated enum MetadataDetailApplicator {
      static func applyMissingFields(
          _ detail: ArtistMetadataDetail,
-@@ -627,6 +969,20 @@ actor QQMusicHelperProcess {
+@@ -625,8 +967,26 @@ actor QQMusicHelperProcess {
+     private struct QQMusicHelperResponse: Decodable, Sendable {
+         let id: String?
          let ok: Bool
++        /// A list's own size, when the endpoint reports one (`dirinfo.songnum`
++        /// for a playlist, `totalNum` for a ranking). Absent means "not
++        /// reported", which is not the same as zero.
++        let total: Int?
          let candidates: [QQMusicArtworkCandidate]?
          let detail: QQMusicMetadataDetail?
 +        let tracks: [QQMusicOnlineTrack]?
@@ -372,7 +378,7 @@ index 81b5c94f..686fc17b 100644
          let error: String?
      }
  
-@@ -668,18 +1024,179 @@ actor QQMusicHelperProcess {
+@@ -668,18 +1028,185 @@ actor QQMusicHelperProcess {
          let duration: Int?
      }
  
@@ -430,6 +436,12 @@ index 81b5c94f..686fc17b 100644
 +
 +    private struct LikedSongsParams: Encodable, Sendable {
 +        let page: Int
++        let limit: Int
++    }
++
++    private struct ToplistTracksParams: Encodable, Sendable {
++        let topId: Int
++        let offset: Int
 +        let limit: Int
 +    }
 +
@@ -557,7 +569,7 @@ index 81b5c94f..686fc17b 100644
      private var recentStderr = ""
      private var pendingRequests: [String: PendingRequest] = [:]
      private var idleShutdownTask: Task<Void, Never>?
-@@ -776,6 +1293,447 @@ actor QQMusicHelperProcess {
+@@ -776,6 +1303,473 @@ actor QQMusicHelperProcess {
          )
      }
  
@@ -690,6 +702,18 @@ index 81b5c94f..686fc17b 100644
 +        limit: Int = 50,
 +        page: Int = 1
 +    ) async throws -> [QQMusicOnlineTrack] {
++        try await fetchPlaylistTracksPage(songlistId: songlistId, topId: topId, limit: limit, page: page).tracks
++    }
++
++    /// One page of a playlist, with the list's own size when the helper reports
++    /// it. Paging needs that number: without it a caller can only see as far as
++    /// the rows it already has.
++    func fetchPlaylistTracksPage(
++        songlistId: Int? = nil,
++        topId: Int? = nil,
++        limit: Int = 50,
++        page: Int = 1
++    ) async throws -> (tracks: [QQMusicOnlineTrack], total: Int?) {
 +        let response = try await sendRetrying(
 +            method: "fetch_playlist_tracks",
 +            params: PlaylistTracksParams(
@@ -699,7 +723,21 @@ index 81b5c94f..686fc17b 100644
 +                page: page
 +            )
 +        )
-+        return response.tracks ?? []
++        return (response.tracks ?? [], response.total)
++    }
++
++    /// One page of a ranking. `offset` is the upstream's own unit here, and the
++    /// total is how many the ranking holds.
++    func fetchToplistTracksPage(
++        topId: Int,
++        offset: Int,
++        limit: Int = 100
++    ) async throws -> (tracks: [QQMusicOnlineTrack], total: Int?) {
++        let response = try await sendRetrying(
++            method: "fetch_toplist_tracks",
++            params: ToplistTracksParams(topId: topId, offset: offset, limit: limit)
++        )
++        return (response.tracks ?? [], response.total)
 +    }
 +
 +    /// New-song radio ("推荐新歌"), filterable by region. One call returns far
@@ -1005,7 +1043,7 @@ index 81b5c94f..686fc17b 100644
      func terminate() {
          stopProcess(failingPendingWith: QQMusicHelperError.cancelled)
      }
-@@ -968,9 +1926,11 @@ actor QQMusicHelperProcess {
+@@ -968,9 +1962,11 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -1019,7 +1057,7 @@ index 81b5c94f..686fc17b 100644
              }
          }
  
-@@ -981,7 +1941,9 @@ actor QQMusicHelperProcess {
+@@ -981,7 +1977,9 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -1030,7 +1068,7 @@ index 81b5c94f..686fc17b 100644
              Task {
                  await self?.appendStderr(text)
              }
-@@ -1006,20 +1968,41 @@ actor QQMusicHelperProcess {
+@@ -1006,20 +2004,41 @@ actor QQMusicHelperProcess {
          self.stdinHandle = stdinPipe.fileHandleForWriting
          self.stdoutPipe = stdoutPipe
          self.stderrPipe = stderrPipe
@@ -1081,7 +1119,7 @@ index 81b5c94f..686fc17b 100644
          }
      }
  
-@@ -1091,7 +2074,7 @@ actor QQMusicHelperProcess {
+@@ -1091,7 +2110,7 @@ actor QQMusicHelperProcess {
          stdinHandle = nil
          stdoutPipe = nil
          stderrPipe = nil
@@ -1090,7 +1128,7 @@ index 81b5c94f..686fc17b 100644
      }
  
      private func markActivity() {
-@@ -1132,6 +2115,7 @@ actor QQMusicHelperProcess {
+@@ -1132,6 +2151,7 @@ actor QQMusicHelperProcess {
      }
  
      private func recordFailure(reason: String) {
@@ -1098,7 +1136,7 @@ index 81b5c94f..686fc17b 100644
          let now = Date()
          recentFailureDates = recentFailureDates.filter {
              now.timeIntervalSince($0) <= failureWindow
-@@ -1152,6 +2136,16 @@ actor QQMusicHelperProcess {
+@@ -1152,6 +2172,16 @@ actor QQMusicHelperProcess {
      }
  
      private func checkCircuitBreaker() throws {
@@ -1115,7 +1153,7 @@ index 81b5c94f..686fc17b 100644
          guard let until = circuitOpenUntil else { return }
          if Date() < until {
              Log.warning("[QQMusicHelperProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)
-@@ -1163,30 +2157,49 @@ actor QQMusicHelperProcess {
+@@ -1163,30 +2193,49 @@ actor QQMusicHelperProcess {
      }
  
      private func findLaunchCandidate() -> LaunchCandidate? {
@@ -1186,7 +1224,7 @@ index 81b5c94f..686fc17b 100644
      }
  
      private func bundledBinaryURL() -> URL {
-@@ -1194,8 +2207,37 @@ actor QQMusicHelperProcess {
+@@ -1194,8 +2243,37 @@ actor QQMusicHelperProcess {
              ?? URL(fileURLWithPath: Bundle.main.resourcePath ?? "", isDirectory: true)
          return resources
              .appendingPathComponent("Tools", isDirectory: true)

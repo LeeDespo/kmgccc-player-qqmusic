@@ -400,25 +400,8 @@ struct QQMusicSettingsView: View {
             SettingsHeaderLabel(title: "在线内容", systemImage: "square.grid.2x2")
 
             VStack(alignment: .leading, spacing: 12) {
-                Text("在线内容由两条通道提供：**网页**（直连上游接口，快约三倍）与 **Helper**（本地组件，慢一些，但部分内容更详细）。")
+                Text("在线内容由 **Helper 组件**统一提供：读取、登录、限流与熔断都在组件内部，应用只负责显示。组件可以单独更新——上游接口变化时换一个二进制即可，无需重新构建应用。")
                     .settingsDescriptionStyle()
-                Text("每一类内容**只需选一条主用通道**：选中的先取，**没选中的那条在它失败时自动兜底**。所以两条都能取的内容，选哪条都不会取不到，区别只是谁先试。")
-                    .settingsDescriptionStyle()
-
-                ForEach(QQMusicChannelSubject.allCases) { subject in
-                    channelRow(subject)
-                    if subject != QQMusicChannelSubject.allCases.last {
-                        Divider().opacity(0.4)
-                    }
-                }
-
-                Divider().opacity(0.4)
-
-                Text("以下内容只有一条通道能取，没有可选的：")
-                    .settingsDescriptionStyle()
-                ForEach(QQMusicLockedContent.allCases) { locked in
-                    lockedRow(locked)
-                }
 
                 Divider().opacity(0.4)
 
@@ -455,73 +438,6 @@ struct QQMusicSettingsView: View {
         }
     }
 
-    /// One content kind's channel, as a menu picker — the same control the
-    /// download-quality row above it uses.
-    @ViewBuilder
-    private func channelRow(_ subject: QQMusicChannelSubject) -> some View {
-        let settings = AppSettings.shared
-        let selection = Binding(
-            get: { settings.qqMusicChannel(for: subject) },
-            set: { settings.setQQMusicChannel($0, for: subject) }
-        )
-        let selected = settings.qqMusicChannel(for: subject)
-
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(subject.displayName).settingsRowLabelStyle()
-                    Text(subject.scope).settingsDescriptionStyle()
-                }
-                Spacer(minLength: 16)
-                Picker("", selection: selection) {
-                    ForEach(QQMusicFetchChannel.allCases) { channel in
-                        Text(channel.displayName).tag(channel)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
-            }
-            // The rule, spelled out per row and in terms of *this* row's current
-            // choice — the section's paragraph states it once, but the sentence a
-            // reader checks against is the one next to the control they are about
-            // to change.
-            Text("先试 \(selected.displayName)，它失败时自动改用 \(fallback(to: selected).displayName)。")
-                .settingsDescriptionStyle()
-            Text(subject.channelNote).settingsDescriptionStyle()
-            // And what actually happened, so the fallback is observable rather
-            // than something the user has to take on faith.
-            if let outcome = coordinator?.channelOutcomes[subject] {
-                Text(outcome.summary).settingsDescriptionStyle()
-            }
-        }
-    }
-
-    private func fallback(to channel: QQMusicFetchChannel) -> QQMusicFetchChannel {
-        channel == .web ? .helper : .web
-    }
-
-    /// Content only one channel serves: shown, not hidden, with the reason — the
-    /// app's own convention for a locked control (`lockedSharingRow` in the data
-    /// settings keeps the switch visible and disabled for the same reason).
-    @ViewBuilder
-    private func lockedRow(_ locked: QQMusicLockedContent) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
-                Text(locked.displayName).settingsRowLabelStyle()
-                Spacer(minLength: 16)
-                Picker("", selection: .constant(QQMusicFetchChannel.helper)) {
-                    Text(QQMusicFetchChannel.helper.displayName).tag(QQMusicFetchChannel.helper)
-                }
-                .labelsHidden()
-                .pickerStyle(.menu)
-                .fixedSize()
-                .disabled(true)
-            }
-            Text(locked.reason).settingsDescriptionStyle()
-        }
-        .opacity(0.55)
-    }
 
     private var launchHomeRow: some View {
         let settings = AppSettings.shared

@@ -41,68 +41,49 @@
 - **账号**——扫码或网页登录（两者等价）；「我喜欢」、收藏歌单、收藏专辑；行内收藏/取消收藏写回上游。
 - **缓存与回收**——歌单、推荐、排行榜与浏览态封面缓存在资料库的 `QQMusic/` 目录（与应用自身的 `Cache/` 平级且分开）；
   歌曲缓存只约束「为了播放而自动下载」的那部分，可设上限并回收——你自己点过下载的属于曲库，永不回收。
-- **两条通道，各取所长**——常读的内容直连上游网页接口（快约三倍），其余走 helper 组件；
-  每类内容可指定**先用哪条**，**没选中的那条在它失败时自动兜底**，设置页逐行写明并显示最近一次实际由谁回答。
-- **helper 与应用解耦**——helper 是独立进程、可从外部目录替换；上游接口变化时换那个二进制即可，无需重新构建应用。
+- **一个数据组件，与应用解耦**——在线内容的读取、登录、限流与熔断都在独立进程里
+  （HelperNext 组件），应用只跟它说 JSON；上游接口变化时换那个二进制即可，无需重新构建应用。
 
 同时**关闭了自动更新、崩溃上报与匿名统计**（默认关且不可再开）：更新源属于上游项目，装上去会覆盖本版本的功能
 改动；崩溃与匿名统计会发到上游作者的服务器，而对方无法据此做任何事。
 
 功能细节、设计取舍与全部踩过的坑见 [`qqmusic/README.md`](qqmusic/README.md)。
 
-## 三、Helper 组件（它和 qqmusic-api-python 是什么关系）
+## 三、数据组件（HelperNext）
 
-在线音源的接口调用分两层：**`qqmusic-api-python` 是第三方 Python 库**（PyPI 名 `qqmusic-api-python`，
-导入名 `qqmusic_api`），**`Tools/QQMusicHelper` 是本项目自己的 Python 程序**，它把那个库当作访问
-QQ 音乐接口的底层引擎，再往上包一层应用能用的东西。应用（Swift）从不直接调用这个库。
+在线音源的接口调用只有一层：**HelperNext 组件**——一个静态链接的 Rust 二进制
+（约 2.4 MB，无解释器、无第三方 SDK），应用通过 stdin/stdout 一行一个 JSON 跟它说话。
 
 ```
 kmgccc_player（Swift）
-   │  stdin/stdout 一行一个 JSON
+   │  stdin/stdout 一行一个 JSON   {"id","method","params"} → {"id","ok",…}
    ▼
-qqmusic-helper（本项目：Tools/QQMusicHelper/main.py，PyInstaller 打成独立二进制）
-   │  直接调用
-   ▼
-qqmusic_api（第三方库：Client / Credential / 各模块 / 签名 / 数据模型）
-   │  HTTPS
+qqmusic-helper-next（Tools/helper-next/qqmusic-helper-next，构建产物）
+   │  HTTPS（组件内部：签名、cookie、限流、熔断）
    ▼
 腾讯的接口
 ```
 
-应用里还有**另一条完全独立的通道** `QQMusicWebAPI`：自己直连
-`u.y.qq.com/cgi-bin/musicu.fcg`，既不经 helper 也不经这个库。同一份数据因此可能有两套实现，
-设置里的「在线内容 → 获取通道」决定谁先试、另一条兜底。
+**它顶替了两样东西**：上一版的 Python helper（内含整个解释器与 `qqmusic-api-python`，约 56 MB）
+和**应用内的 HTTP 客户端** `QQMusicWebAPI`。以后者为例：同一个能力有两份实现时，
+"一条坏了另一条兜底"掩盖的是它们的行为差异，而落库与缓存判断还得同时考虑两者——
+合并之后，上游变化只换这一个二进制。组件里的请求参数与解析路径是从 `qqmusic-api-python`
+逐条比对来的（包括它的坑：`ptqrtoken` 用 seed 0 的 `hash33`，而 `g_tk` 用 5381）。
 
-**库提供什么**：`client.song/album/singer/lyric/search/top/songlist/recommend/user/login.*`。
-请求签名、cookie 拼装、平台参数、响应到模型的解析都由库负责。几处关键的：`client.lyric.get_lyric`
-（逐字歌词的来源，也是「歌词默认走 Helper」的理由）、`client.song.get_song_urls`（取流地址与
-vkey/ekey）、`client.user.get_follow_singers`（关注的歌手）、`client.login.get_qrcode` /
-`check_qrcode`（扫码登录）。
+**组件自己管凭据**：`…/QQMusicHelperNext/Credential/qqmusic-credential.json`。
+扫码登录与网页登录两条路径产出的都是 `uin` + `qm_keyst` 这一对 cookie，二者等价
+（`qm_keyst` 同时就是 VIP 取流所需的播放票据）。
 
-**helper 自己写了什么**（也就是本项目对 `main.py` 的主体）：
+**应用优先加载外部那份**（`~/Library/Application Support/kmgccc.player/QQMusicHelperNext/`），
+bundle 内的只是兜底——所以使用者的修法是"替换那个文件"，而不是重装应用。
+**源码不在本仓库**：在 [QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext)，
+本仓库只放构建产物与它的 README（含兼容性约定）。
 
-1. **协议层**——一行一个 JSON 请求/响应、`KNOWN_METHODS` 白名单、`get_helper_info` 自报
-   `helperVersion` / `protocolVersion` / `libraryVersion` 与支持的方法；stdout 只走协议、诊断走 stderr。
-2. **库里没有的接口**——用库的私有构造器 `client.song._build_cgi` / `_build_http` 直接打上游（共 10 处）：
-   新歌、我喜欢、收藏专辑、专辑基础信息、专辑曲目、我的歌单、歌单写操作、电台与电台曲目、
-   songId↔mid 换算。库没把这些包成公开方法，所以这一层由本项目补上。
-3. **归一化**——`_track_payload` 把搜索/歌单/电台/榜单四种不同嵌套形状统一成一套字段（并补上库模型里
-   没有的 `albumId`、`singers`）；`_sanitize_image_url` 把封面强制成 https（应用没有 ATS 例外，
-   http 封面会静默空白）。
-4. **业务动作**——取流时的音质阶梯（flac/320/128/aac 逐档探测并判读结果码）、凭据落盘与读取、
-   60 秒空闲自杀、限流退避。
-
-**为什么要有这一层**：播放器是 Swift，而可用的接口实现是 Python。做成独立进程让两边各自演进：
-helper 优先从 `~/Library/Application Support/kmgccc.player/QQMusicHelper/` 加载，bundle 内的副本只作兜底，
-所以**上游接口变化时换那个二进制即可，不必重新构建应用**。它同时兼着上游原本的用途——本地歌曲的
-元数据补全（封面/歌词/简介匹配）。
-
-**版本与替换**：`Tools/QQMusicHelper/requirements.txt` 钉 `qqmusic-api-python==0.7.3`；PyInstaller 把
-Python 运行时与这个库一起打进 `_internal.bundle/qqmusic_api/`，所以**使用者的机器不需要装 Python**。
-运行期靠 `get_helper_info` 自报版本，应用内「QQ 音乐设置 → Helper 组件」会把三者都列出来。
-一个如实的补充：`main.py` 的注释写着"宿主会拒绝它不认识的协议版本的 helper"，但**应用侧目前只显示这些
-版本号、没有做版本闸门**——换上一个响应形状不兼容的 helper，表现会是某个页面报错（再退回另一条通道），
-而不是启动时明确拒绝。
+**保留下来的 Python helper**：`Tools/QQMusicHelper/`（上游的目录，我们改过 `main.py`）仍在仓库里，
+`bootstrap.sh` 也仍会构建它，但**应用的代码已不再引用**——它作为回退路径存在，
+换回去的办法是重新构建并让应用指向旧目录。这段历史记录在 `Tools/helper-next/README.md`。
+一个如实的补充：应用侧**只显示**组件自报的版本号（设置 → Helper 组件），**没有版本闸门**——
+换上一个响应形状不兼容的组件，表现会是某个页面报错或字段变空，而不是启动时明确拒绝。
 
 ## 四、打补丁（把本功能植入上游源码）
 
@@ -177,7 +158,7 @@ kmgccc_player/            应用源码：上游 + 本功能的接入点改动（
 kmgccc_playerTests/       测试（含本功能自己的测试）
 qqmusic/                  ← 本功能除源码之外的一切
   integration/            补丁包：modules/（新文件）+ patches/（上游 diff）+ 脚本 + 基线 BASE
-  README.md               功能说明、通道规则、缓存策略、参考项目
+  README.md               功能说明、数据来源、缓存策略、参考项目
 upstream/                 未改动的上游源码，冻结参照（不进仓库）
 testarea/                 每次从 upstream/ 重建的测试区（不进仓库）
 docs/qqmusic/             设计、方案与实现记录（不进仓库）

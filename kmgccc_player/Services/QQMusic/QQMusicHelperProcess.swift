@@ -967,6 +967,10 @@ actor QQMusicHelperProcess {
     private struct QQMusicHelperResponse: Decodable, Sendable {
         let id: String?
         let ok: Bool
+        /// A list's own size, when the endpoint reports one (`dirinfo.songnum`
+        /// for a playlist, `totalNum` for a ranking). Absent means "not
+        /// reported", which is not the same as zero.
+        let total: Int?
         let candidates: [QQMusicArtworkCandidate]?
         let detail: QQMusicMetadataDetail?
         let tracks: [QQMusicOnlineTrack]?
@@ -1078,6 +1082,12 @@ actor QQMusicHelperProcess {
 
     private struct LikedSongsParams: Encodable, Sendable {
         let page: Int
+        let limit: Int
+    }
+
+    private struct ToplistTracksParams: Encodable, Sendable {
+        let topId: Int
+        let offset: Int
         let limit: Int
     }
 
@@ -1422,6 +1432,18 @@ actor QQMusicHelperProcess {
         limit: Int = 50,
         page: Int = 1
     ) async throws -> [QQMusicOnlineTrack] {
+        try await fetchPlaylistTracksPage(songlistId: songlistId, topId: topId, limit: limit, page: page).tracks
+    }
+
+    /// One page of a playlist, with the list's own size when the helper reports
+    /// it. Paging needs that number: without it a caller can only see as far as
+    /// the rows it already has.
+    func fetchPlaylistTracksPage(
+        songlistId: Int? = nil,
+        topId: Int? = nil,
+        limit: Int = 50,
+        page: Int = 1
+    ) async throws -> (tracks: [QQMusicOnlineTrack], total: Int?) {
         let response = try await sendRetrying(
             method: "fetch_playlist_tracks",
             params: PlaylistTracksParams(
@@ -1431,7 +1453,21 @@ actor QQMusicHelperProcess {
                 page: page
             )
         )
-        return response.tracks ?? []
+        return (response.tracks ?? [], response.total)
+    }
+
+    /// One page of a ranking. `offset` is the upstream's own unit here, and the
+    /// total is how many the ranking holds.
+    func fetchToplistTracksPage(
+        topId: Int,
+        offset: Int,
+        limit: Int = 100
+    ) async throws -> (tracks: [QQMusicOnlineTrack], total: Int?) {
+        let response = try await sendRetrying(
+            method: "fetch_toplist_tracks",
+            params: ToplistTracksParams(topId: topId, offset: offset, limit: limit)
+        )
+        return (response.tracks ?? [], response.total)
     }
 
     /// New-song radio ("推荐新歌"), filterable by region. One call returns far

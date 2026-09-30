@@ -187,36 +187,59 @@ final class QQMusicBrowseEnvironmentTests: XCTestCase {
     ///
     /// The web decoder joined singers with " / " and kept only the first mid
     /// while the helper joined with ", " and reported them all — so the same duet
-    /// read differently depending on which list it appeared in, and 查看艺人 in a
-    /// web-served list (我喜欢, a playlist's tracks) opened the first singer while
-    /// the page was titled with both names. It also never carried the album's
-    /// numeric id, so 查看专辑 was missing from exactly those lists.
-    func testWebDecodedTrackCarriesEverySingerAndTheAlbumId() throws {
-        let raw: [String: Any] = [
-            "mid": "song-1",
-            "name": "合唱",
-            "interval": 215,
-            "album": ["id": 4321, "mid": "album-mid", "name": "专辑名"],
-            "singer": [
-                ["mid": "mid-a", "name": "甲"],
-                ["mid": "mid-b", "name": "乙"],
-            ],
-            "pay": ["pay_play": 0],
-        ]
-
-        let track = try XCTUnwrap(QQMusicWebAPI.decodeTrack(raw))
-        XCTAssertEqual(track.artist, "甲, 乙", "one separator, the same as the helper's")
+    /// What the helper's track row must carry, and what a row does with it.
+    ///
+    /// The helper is the only source of these rows, so this pins the wire shape
+    /// it answers with: every credited singer (a duet's 查看艺人 used to pick one
+    /// silently) and the album's *numeric* id (查看专辑 needs it; the mid only
+    /// gets a cover).
+    func testHelperTrackRowCarriesEverySingerAndTheAlbumId() throws {
+        let reply = """
+        {
+          "id": "1", "ok": true,
+          "tracks": [{
+            "songMid": "song-1",
+            "songId": 4321,
+            "title": "合唱",
+            "artist": "甲, 乙",
+            "album": "专辑名",
+            "albumMid": "album-mid",
+            "albumId": 4321,
+            "duration": 215,
+            "payPlay": 0,
+            "imageURL": "https://y.gtimg.cn/a.jpg",
+            "singerMid": "mid-a",
+            "singers": [
+              {"mid": "mid-a", "name": "甲"},
+              {"mid": "mid-b", "name": "乙"}
+            ]
+          }]
+        }
+        """
+        let envelope = try JSONDecoder().decode(HelperTrackEnvelope.self, from: Data(reply.utf8))
+        let track = try XCTUnwrap(envelope.tracks?.first)
+        XCTAssertEqual(track.artist, "甲, 乙")
         XCTAssertEqual(track.openableArtists.map(\.mid), ["mid-a", "mid-b"])
         XCTAssertEqual(track.openableArtists.map(\.name), ["甲", "乙"])
         XCTAssertEqual(track.albumId, 4321, "查看专辑 needs the numeric id")
         XCTAssertTrue(track.hasAlbumPage)
 
-        // No album id in the payload: the item is absent rather than dead.
-        let withoutAlbum = try XCTUnwrap(QQMusicWebAPI.decodeTrack([
-            "mid": "song-2", "name": "歌", "singer": [["mid": "mid-a", "name": "甲"]],
-        ]))
+        // No album id on the row: the item is absent rather than dead.
+        let withoutAlbum = try JSONDecoder().decode(
+            QQMusicOnlineTrack.self,
+            from: Data("""
+            {"songMid": "song-2", "title": "歌", "artist": "甲",
+             "singers": [{"mid": "mid-a", "name": "甲"}]}
+            """.utf8)
+        )
         XCTAssertFalse(withoutAlbum.hasAlbumPage)
         XCTAssertEqual(withoutAlbum.openableArtists.map(\.mid), ["mid-a"])
+    }
+
+    /// The envelope the helper replies with, as far as these tests need it.
+    private struct HelperTrackEnvelope: Decodable {
+        let ok: Bool
+        let tracks: [QQMusicOnlineTrack]?
     }
 
     /// 查看详情 says what the catalogue and the library actually know.
@@ -487,39 +510,30 @@ final class QQMusicBrowseEnvironmentTests: XCTestCase {
 
     /// The song's 简介, as `查看歌曲描述` and the featured card read it.
     ///
-    /// Two things this pins. The prose is nested two levels down
-    /// (`info.intro.content[].value`), so it is easy to look for it in the wrong
-    /// place and silently get nothing. And **no 简介 must decode to an empty
-    /// string, not to a failure** — most songs have none, and treating empty as
-    /// "this channel did not answer" would send every one of them to the second
-    /// channel.
-    func testSongDescriptionReadsTheIntroGroupAndTreatsItsAbsenceAsEmpty() throws {
-        XCTAssertEqual(
-            QQMusicWebAPI.decodeSongDescription([
-                "info": [
-                    "intro": [
-                        "title": "简介",
-                        "content": [
-                            ["value": "第一段"],
-                            ["value": "  "],
-                            ["value": "第二段"],
-                        ],
-                    ],
-                    "company": ["content": [["value": "某唱片"]]],
-                ],
-            ]),
-            "第一段\n第二段",
-            "one paragraph per content item, blanks dropped"
-        )
+    /// The prose of a song is the helper's `detail.description`, and **an absent
+    /// description is an empty string, not a failure**: most songs have none, and
+    /// treating that as "the read failed" would send every one of them round the
+    /// fallback path again.
+    func testSongDescriptionComesFromTheDetailPayload() throws {
+        let withProse = """
+        {"id": "1", "ok": true, "detail": {"songMid": "song-1",
+         "description": "第一段\\n第二段", "source": "qqmusic"}}
+        """
+        let envelope = try JSONDecoder().decode(HelperDetailEnvelope.self, from: Data(withProse.utf8))
+        XCTAssertEqual(envelope.detail?.description, "第一段\n第二段")
 
-        // A song the catalogue has no prose for: `intro` is simply not there.
-        XCTAssertEqual(
-            QQMusicWebAPI.decodeSongDescription([
-                "info": ["company": ["content": [["value": "某唱片"]]]],
-            ]),
-            ""
-        )
-        XCTAssertEqual(QQMusicWebAPI.decodeSongDescription([:]), "")
+        // A song the catalogue has no prose for: the field is simply absent.
+        let withoutProse = """
+        {"id": "2", "ok": true, "detail": {"songMid": "song-2", "source": "qqmusic"}}
+        """
+        let empty = try JSONDecoder().decode(HelperDetailEnvelope.self, from: Data(withoutProse.utf8))
+        XCTAssertNil(empty.detail?.description)
+    }
+
+    /// The envelope a textual read replies with, as far as these tests need it.
+    private struct HelperDetailEnvelope: Decodable {
+        let ok: Bool
+        let detail: QQMusicMetadataDetail?
     }
 
     private func makeActions() -> AppKitMainToolbarItemFactory.Actions {

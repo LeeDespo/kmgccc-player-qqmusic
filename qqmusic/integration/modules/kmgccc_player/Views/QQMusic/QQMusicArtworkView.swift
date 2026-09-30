@@ -97,6 +97,7 @@ final class QQMusicArtworkLoader {
     }
 
     func image(for remoteURL: String) async -> NSImage? {
+        guard let remoteURL = Self.normalizedURL(remoteURL) else { return nil }
         if let cachedImage = Self.imageCache.object(forKey: remoteURL as NSString) {
             return cachedImage
         }
@@ -107,7 +108,26 @@ final class QQMusicArtworkLoader {
         return image
     }
 
+    /// Force a cover URL onto HTTPS.
+    ///
+    /// The upstream hands back `http://y.gtimg.cn/...` for some covers and the app
+    /// has no ATS exception, so URLSession refuses an http cover outright and the
+    /// row stays blank. The helper normalises the URLs it *builds*, but this is the
+    /// last place before the network and is where the guarantee belongs: a cover
+    /// URL that arrives by any other route must still load.
+    static func normalizedURL(_ remoteURL: String?) -> String? {
+        guard let remoteURL, !remoteURL.isEmpty else { return nil }
+        if remoteURL.hasPrefix("//") {
+            return "https:" + remoteURL
+        }
+        if remoteURL.hasPrefix("http://") {
+            return "https://" + remoteURL.dropFirst("http://".count)
+        }
+        return remoteURL
+    }
+
     func artwork(for remoteURL: String) async -> Data? {
+        guard let remoteURL = Self.normalizedURL(remoteURL) else { return nil }
         if let cached = await cache?.artwork(for: remoteURL) {
             return cached
         }
