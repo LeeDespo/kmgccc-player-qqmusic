@@ -9,9 +9,17 @@ nonisolated struct QQMusicUserDownloadProgress: Equatable, Sendable {
         var title: String
         /// Non-nil once this item is done ("已下载" / "已存在" / "失败").
         var outcome: String?
+        /// The artist, so the list reads as 歌名 - 歌手 rather than as file names.
+        var artist: String?
+        /// The engine's handle once the track is queued, so this row can show the
+        /// engine's live progress.
+        var gid: String?
+        /// The file the import will see, shown under the title.
+        var fileName: String?
 
         var id: String { songMid }
         var isFinished: Bool { outcome != nil }
+        var displayTitle: String { artist?.isEmpty == false ? "\(title) - \(artist!)" : title }
     }
 
     var items: [Item]

@@ -88,6 +88,9 @@ struct QQMusicTrackRow: View {
     private var isImported: Bool { coordinator.isImported(track.songMid) }
     private var isPlaying: Bool { coordinator.isPlaying(track.songMid) }
     private var isLiked: Bool { coordinator.isLiked(songMid: track.songMid) }
+    /// Queue for download right now — the tag that keeps "downloading" apart from
+    /// "downloaded" while a selection is being made.
+    private var isDownloadingQueued: Bool { coordinator.userDownloadSongMids.contains(track.songMid) }
     private var isLikePending: Bool { coordinator.isLikePending(songMid: track.songMid) }
 
     var body: some View {
@@ -96,14 +99,30 @@ struct QQMusicTrackRow: View {
 
             HStack(alignment: .center, spacing: Constants.Layout.TrackRow.textColumnSpacing) {
                 VStack(alignment: .leading, spacing: Constants.Layout.TrackRow.textVerticalSpacing) {
-                    Text(track.title)
-                        .font(.system(
-                            size: Constants.Layout.TrackRow.titleFontSize,
-                            weight: isPlaying ? .semibold : .regular
-                        ))
-                        .foregroundStyle(isPlaying ? themeStore.accentColor : primaryColor)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    HStack(spacing: 6) {
+                        Text(track.title)
+                            .font(.system(
+                                size: Constants.Layout.TrackRow.titleFontSize,
+                                weight: isPlaying ? .semibold : .regular
+                            ))
+                            .foregroundStyle(isPlaying ? themeStore.accentColor : primaryColor)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+
+                        if isDownloadingQueued {
+                            // Queued or downloading: not in the library yet, so the
+                            // row must not be mistaken for one that is.
+                            Text("下载中")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(
+                                    Capsule().fill(Color.primary.opacity(colorScheme == .dark ? 0.12 : 0.08))
+                                )
+                                .fixedSize()
+                        }
+                    }
 
                     if let album = track.album, !album.isEmpty {
                         Text(album)

@@ -86,8 +86,13 @@ struct QQMusicDownloadControl: View {
             : "这个页面没有可下载的列表"
     }
 
+    /// Rows that cannot be selected: already in the library, or already queued for
+    /// download. "Downloading" is not "downloaded" — but picking one again would
+    /// queue the same file twice.
     private var ownedSongMids: Set<String> {
-        Set(tracks.map(\.songMid).filter { coordinator.isUserDownloaded($0) })
+        Set(tracks.map(\.songMid).filter {
+            coordinator.isUserDownloaded($0) || coordinator.userDownloadSongMids.contains($0)
+        })
     }
 
     var body: some View {
@@ -274,10 +279,11 @@ struct QQMusicDownloadControl: View {
                 + "\(result.converted) promoted, \(result.failed) failed",
             category: .import
         )
-        if result.failed == 0 {
-            withAnimation(shapeAnimation) {
-                selection.cancel()
-            }
+        // The batch is queued; the mode has done its job. Leaving it open was the
+        // old behaviour, and it read as "the download did not start" — the user
+        // asked for the mode to close on its own.
+        withAnimation(shapeAnimation) {
+            selection.cancel()
         }
     }
 }

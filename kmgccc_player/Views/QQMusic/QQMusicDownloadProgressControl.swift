@@ -35,18 +35,23 @@ struct QQMusicDownloadProgressControl: View {
 
     @State private var isShowingList = false
 
-    /// Tasks that are worth showing: anything not finished. A completed task stays
-    /// in the engine's list until it is removed, and a box that counted those
-    /// would never go away.
-    private var tasks: [QQMusicAria2Task] {
-        coordinator.aria2Tasks
+    /// What the box shows: **the user's queue**, every track of the selection,
+    /// paired with the engine's live state where the engine has one.
+    ///
+    /// Not the engine's task table — that only holds what is in flight, so a
+    /// hundred-song selection looked like a two-item list. The queue is the app's
+    /// own record from the moment each track was handed over.
+    private var items: [QQMusicUserDownloadProgress.Item] {
+        coordinator.userDownloadProgress?.items ?? []
     }
 
-    private var liveTasks: [QQMusicAria2Task] {
-        tasks.filter { !$0.isFinished && !$0.isFailed }
+    /// The engine's view of a queued track, by gid.
+    private func task(for item: QQMusicUserDownloadProgress.Item) -> QQMusicAria2Task? {
+        guard let gid = item.gid else { return nil }
+        return coordinator.aria2Tasks.first { $0.gid == gid }
     }
 
-    private var isVisible: Bool { !tasks.isEmpty }
+    private var isVisible: Bool { !items.isEmpty }
 
     var body: some View {
         Group {
@@ -81,7 +86,7 @@ struct QQMusicDownloadProgressControl: View {
             isShowingList.toggle()
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: liveTasks.contains(where: \.isPaused) ? "pause.circle" : "arrow.down.circle")
+                Image(systemName: hasPaused ? "pause.circle" : "arrow.down.circle")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Color.primary)
                 ProgressView(value: overallFraction)
@@ -115,17 +120,24 @@ struct QQMusicDownloadProgressControl: View {
         }
     }
 
-    /// Finished over all: "3/12".
+    /// Finished over the whole selection: "3/100".
     private var countText: String {
-        let done = tasks.filter { $0.isFinished }.count
-        return "\(done)/\(tasks.count)"
+        let done = items.filter(\.isFinished).count
+        return "\(done)/\(items.count)"
     }
 
     private var overallFraction: Double {
-        guard !tasks.isEmpty else { return 0 }
-        let done = Double(tasks.filter { $0.isFinished }.count)
-        let partial = liveTasks.reduce(0.0) { $0 + $1.fraction }
-        return min(1, (done + partial) / Double(tasks.count))
+        guard !items.isEmpty else { return 0 }
+        let done = Double(items.filter(\.isFinished).count)
+        let partial = items.reduce(0.0) { total, item in
+            guard !item.isFinished else { return total }
+            return total + (task(for: item)?.fraction ?? 0)
+        }
+        return min(1, (done + partial) / Double(items.count))
+    }
+
+    private var hasPaused: Bool {
+        items.contains { task(for: $0)?.isPaused == true }
     }
 
     // MARK: - The list
@@ -147,15 +159,15 @@ struct QQMusicDownloadProgressControl: View {
                 Button("全部取消") { Task { await coordinator.cancelAria2Tasks() } }
                 Spacer(minLength: 0)
             }
-            .disabled(liveTasks.isEmpty)
+            .disabled(items.allSatisfy(\.isFinished))
             .controlSize(.small)
 
             Divider().opacity(0.4)
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 8) {
-                    ForEach(tasks) { task in
-                        taskRow(task)
+                    ForEach(items) { item in
+                        itemRow(item)
                     }
                 }
                 .padding(.vertical, 1)
@@ -166,54 +178,75 @@ struct QQMusicDownloadProgressControl: View {
         .frame(width: 380)
     }
 
-    private func taskRow(_ task: QQMusicAria2Task) -> some View {
-        HStack(spacing: 8) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(task.name?.isEmpty == false ? task.name! : task.gid)
+    private func itemRow(_ item: QQMusicUserDownloadProgress.Item) -> some View {
+        let engineTask = task(for: item)
+        return HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                // The song, the way every other list in the app names it…
+                Text(item.displayTitle)
                     .font(.system(size: 12))
                     .lineLimit(1)
                     .truncationMode(.middle)
+                // …and the file it becomes, which is what a person looking for
+                // the download on disk needs.
                 HStack(spacing: 6) {
-                    Text(statusText(task))
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                    if task.isActive || task.isPaused, task.total ?? 0 > 0 {
-                        ProgressView(value: task.fraction)
+                    if let fileName = item.fileName {
+                        Text(fileName)
+                            .font(.system(size: 10).monospaced())
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    } else {
+                        Text(statusText(item, engineTask))
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    if let engineTask, !item.isFinished, engineTask.isActive, engineTask.total ?? 0 > 0 {
+                        ProgressView(value: engineTask.fraction)
                             .progressViewStyle(.linear)
-                            .frame(width: 80)
+                            .frame(width: 70)
                             .tint(themeStore.accentColor)
                     }
                 }
             }
             Spacer(minLength: 8)
-            if task.isFinished {
-                Image(systemName: "checkmark.circle.fill")
+            if let outcome = item.outcome {
+                Text(outcome)
                     .font(.system(size: 11))
-                    .foregroundStyle(.secondary)
-            } else if task.isFailed {
+                    .foregroundStyle(outcome == "失败" || outcome == "导入失败" ? Color.red : Color.secondary)
+            } else if let engineTask, engineTask.isFailed {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 11))
                     .foregroundStyle(.red)
-                    .help(task.error ?? "")
+                    .help(engineTask.error ?? "")
             } else {
-                if task.isPaused {
-                    Button { Task { await coordinator.resumeAria2Tasks(gid: task.gid) } } label: {
+                if engineTask?.isPaused == true {
+                    Button { Task { await coordinator.resumeAria2Tasks(gid: item.gid) } } label: {
                         Image(systemName: "play.circle")
                     }
                     .help("继续")
                 } else {
-                    Button { Task { await coordinator.pauseAria2Tasks(gid: task.gid) } } label: {
+                    Button { Task { await coordinator.pauseAria2Tasks(gid: item.gid) } } label: {
                         Image(systemName: "pause.circle")
                     }
                     .help("暂停")
+                    .disabled(item.gid == nil)
                 }
-                Button { Task { await coordinator.cancelAria2Tasks(gid: task.gid) } } label: {
+                Button { Task { await coordinator.cancelUserDownloadItem(songMid: item.songMid) } } label: {
                     Image(systemName: "xmark.circle")
                 }
                 .help("取消并删除临时文件")
             }
         }
         .buttonStyle(.plain)
+    }
+
+    private func statusText(
+        _ item: QQMusicUserDownloadProgress.Item,
+        _ task: QQMusicAria2Task?
+    ) -> String {
+        guard let task else { return item.gid == nil ? "等待中" : "排队中" }
+        return statusText(task)
     }
 
     private func statusText(_ task: QQMusicAria2Task) -> String {

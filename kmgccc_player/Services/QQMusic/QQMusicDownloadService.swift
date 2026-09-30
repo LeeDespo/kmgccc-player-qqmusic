@@ -66,6 +66,18 @@ nonisolated enum QQMusicDownloadPhase: Equatable, Sendable {
 }
 
 /// Everything a downloaded track needs to be imported.
+/// A track handed to the engine, and where its file will land.
+nonisolated struct QQMusicQueuedDownload: Sendable {
+    let songMid: String
+    /// The engine's handle, or nil when it was fetched without an engine.
+    let gid: String?
+    let audioURL: URL
+    /// The name shown in the download list, and the name the import sees.
+    let fileName: String
+    /// True when there was no engine and the bytes are already on disk.
+    let finishedLocally: Bool
+}
+
 nonisolated struct QQMusicStagedDownload: Sendable {
     let audioURL: URL
     let track: QQMusicOnlineTrack
@@ -167,6 +179,162 @@ actor QQMusicDownloadService {
     ) {
         phases[songMid] = phase
         handler?(phase)
+    }
+
+    // MARK: - Queueing (the batch path)
+
+    /// Resolve a track and hand it to the engine, without waiting for it.
+    ///
+    /// The batch queues its whole selection this way, so the engine holds the
+    /// *queue* and its own `max-concurrent-downloads` decides how many run at
+    /// once — which is what the settings page promises. Waiting inside the loop
+    /// (what this used to do) meant one download at a time no matter what the
+    /// engine was configured for, and a download list that only ever showed the
+    /// one task in flight.
+    func queue(_ track: QQMusicOnlineTrack, stagingDirectory: URL) async throws -> QQMusicQueuedDownload {
+        let songMid = track.songMid
+        try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+        record(.resolving, for: songMid, handler: nil)
+
+        let resolution: QQMusicStreamResolution
+        do {
+            resolution = try await helper.resolveSongURL(
+                songMid: songMid,
+                mediaMid: track.mediaMid,
+                quality: preferredQuality?.ladderEntry
+            )
+        } catch {
+            record(.failed(error.localizedDescription), for: songMid, handler: nil)
+            throw QQMusicDownloadError.downloadFailed(error.localizedDescription)
+        }
+        guard resolution.playable, let urlString = resolution.url, let url = URL(string: urlString) else {
+            let reason = resolution.restriction ?? "url_unavailable"
+            Log.warning(
+                "[QQMusic] \(songMid) not playable (\(reason)); qualities tried: "
+                    + "\(resolution.tried?.joined(separator: ", ") ?? "none")",
+                category: .import
+            )
+            record(.failed(reason), for: songMid, handler: nil)
+            throw QQMusicDownloadError.notPlayable(reason: reason)
+        }
+
+        let ext = resolution.extensionName ?? "mp3"
+        // A name the import can recognise, and the same one the list shows.
+        let fileName = "\(songMid)-\(UUID().uuidString.prefix(8)).\(ext)"
+        let audioURL = stagingDirectory.appendingPathComponent(fileName)
+        guard await helper.aria2Status(ensure: true)?.running == true else {
+            // No engine: fall back to fetching it here and now, so a queue still
+            // works without one.
+            try await downloadStreaming(
+                from: url,
+                to: audioURL,
+                songMid: songMid,
+                handler: nil
+            )
+            record(.downloading(fraction: 1), for: songMid, handler: nil)
+            return QQMusicQueuedDownload(
+                songMid: songMid,
+                gid: nil,
+                audioURL: audioURL,
+                fileName: fileName,
+                finishedLocally: true
+            )
+        }
+        let queued = try await helper.aria2Add(url: url.absoluteString, out: fileName)
+        guard let gid = queued.gid else {
+            throw QQMusicDownloadError.downloadFailed("下载引擎没有返回任务 id")
+        }
+        record(.downloading(fraction: 0), for: songMid, handler: nil)
+        return QQMusicQueuedDownload(
+            songMid: songMid,
+            gid: gid,
+            audioURL: audioURL,
+            fileName: fileName,
+            finishedLocally: false
+        )
+    }
+
+    /// Wait for a queued track, then import it like any other download.
+    func finishQueued(
+        _ queued: QQMusicQueuedDownload,
+        track: QQMusicOnlineTrack,
+        stagingDirectory: URL
+    ) async throws -> QQMusicStagedDownload {
+        let songMid = track.songMid
+        if !queued.finishedLocally {
+            try await waitForEngine(queued: queued, songMid: songMid)
+        }
+        // Cover and lyrics are best-effort, exactly as on the sequential path.
+        record(.fetchingExtras, for: songMid, handler: nil)
+        async let artwork = fetchArtwork(for: track)
+        async let lyrics = fetchLyrics(for: track)
+        let (artworkData, lyricPayload) = await (artwork, lyrics)
+        record(.done, for: songMid, handler: nil)
+        return QQMusicStagedDownload(
+            audioURL: queued.audioURL,
+            track: track,
+            artworkData: artworkData,
+            lyricText: lyricPayload?.lyric,
+            translatedLyricText: lyricPayload?.translation
+        )
+    }
+
+    /// Wait for one engine task to finish and move its file into staging.
+    private func waitForEngine(queued: QQMusicQueuedDownload, songMid: String) async throws {
+        guard let gid = queued.gid else { return }
+        let deadline = Date().addingTimeInterval(600)
+        var consecutiveTellFailures = 0
+        var lastReported = 0.0
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            let state: QQMusicAria2Download
+            do {
+                state = try await helper.aria2Tell(gid: gid)
+                consecutiveTellFailures = 0
+            } catch {
+                if cancelledGids.contains(gid) {
+                    record(.failed("已取消"), for: songMid, handler: nil)
+                    throw QQMusicDownloadError.cancelled
+                }
+                consecutiveTellFailures += 1
+                if consecutiveTellFailures >= 3 {
+                    record(.failed("下载引擎丢失了任务"), for: songMid, handler: nil)
+                    throw QQMusicDownloadError.downloadFailed("下载引擎丢失了任务")
+                }
+                continue
+            }
+            if state.isFinished {
+                guard let path = state.path else {
+                    throw QQMusicDownloadError.downloadFailed("引擎没有给出文件路径")
+                }
+                let fileManager = FileManager.default
+                if fileManager.fileExists(atPath: queued.audioURL.path) {
+                    try? fileManager.removeItem(at: queued.audioURL)
+                }
+                try fileManager.moveItem(at: URL(fileURLWithPath: path), to: queued.audioURL)
+                return
+            }
+            if state.isFailed {
+                record(.failed(state.error ?? "下载失败"), for: songMid, handler: nil)
+                throw QQMusicDownloadError.downloadFailed(state.error ?? "下载失败")
+            }
+            let total = Double(state.total ?? 0)
+            guard total > 0 else { continue }
+            let fraction = Double(state.completed ?? 0) / total
+            if fraction - lastReported >= 0.01 {
+                lastReported = fraction
+                record(.downloading(fraction: min(fraction, 1)), for: songMid, handler: nil)
+            }
+        }
+        throw QQMusicDownloadError.downloadFailed("下载超时")
+    }
+
+    /// Stop a queued task in the engine, without touching the app's own state.
+    func cancelQueued(gids: [String]) async {
+        markCancelled(gids)
+        for gid in gids {
+            _ = await helper.aria2Cancel(gid: gid)
+        }
     }
 
     private func performDownload(
