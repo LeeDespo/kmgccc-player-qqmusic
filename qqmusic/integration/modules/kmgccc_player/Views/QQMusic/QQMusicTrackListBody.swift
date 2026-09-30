@@ -82,19 +82,16 @@ struct QQMusicTrackListBody: View {
 
     private var isSelecting: Bool { allowsSelection && selection.isSelecting }
 
-    /// Rows in display order.
+    /// Rows in display order — always the order the source gave.
     ///
-    /// In selection mode the tracks the user already downloaded move to the
-    /// **top**: they cannot be selected, so an inert block at the top is out of
-    /// the way, while leaving them interleaved would put dead entries in the
-    /// middle of the list being worked through. Every other mode shows the list
-    /// exactly as the source gave it.
-    private var displayedTracks: [QQMusicOnlineTrack] {
-        guard isSelecting else { return tracks }
-        let owned = Set(tracks.map(\.songMid).filter { coordinator.isUserDownloaded($0) })
-        return tracks.filter { owned.contains($0.songMid) }
-            + tracks.filter { !owned.contains($0.songMid) }
-    }
+    /// Download mode used to hoist the tracks the user already had to the top, on
+    /// the theory that a block of unselectable rows reads better than dead entries
+    /// scattered through the list. The user asked for the list not to move:
+    /// entering download mode and finding the rows shuffled makes it impossible to
+    /// find the song you are looking at. Already-downloaded rows are still
+    /// excluded from 全选 / 反选 (they cannot be downloaded twice), which is the
+    /// part that mattered.
+    private var displayedTracks: [QQMusicOnlineTrack] { tracks }
 }
 
 // MARK: - Shared list chrome

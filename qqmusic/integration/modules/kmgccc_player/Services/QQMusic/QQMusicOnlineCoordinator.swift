@@ -101,6 +101,45 @@ final class QQMusicOnlineCoordinator {
 
     /// Per-track download state, keyed by song mid, so rows can show progress.
     private(set) var downloadPhases: [String: QQMusicDownloadPhase] = [:]
+
+    /// The downloads the *user* asked for, while they are running.
+    ///
+    /// Prefetch is deliberately absent: it is background work nobody requested,
+    /// and a progress box that appears whenever you play a song would be noise.
+    /// Nil when there is nothing user-initiated in flight.
+    private(set) var userDownloadProgress: QQMusicUserDownloadProgress?
+
+    /// Clears the box a moment after the batch finishes, so the last "n/m" is
+    /// actually readable instead of vanishing with the final byte.
+    private var userDownloadDismissTask: Task<Void, Never>?
+
+    /// Put the user's batch on screen.
+    private func beginUserDownload(_ tracks: [QQMusicOnlineTrack]) {
+        userDownloadDismissTask?.cancel()
+        userDownloadProgress = QQMusicUserDownloadProgress(
+            items: tracks.map {
+                .init(songMid: $0.songMid, title: $0.title.isEmpty ? $0.songMid : $0.title)
+            }
+        )
+    }
+
+    /// Record one item's outcome, then let the box linger briefly.
+    private func finishUserDownloadItem(_ songMid: String, outcome: String) {
+        guard var progress = userDownloadProgress,
+              let index = progress.items.firstIndex(where: { $0.songMid == songMid })
+        else { return }
+        progress.items[index].outcome = outcome
+        userDownloadProgress = progress
+    }
+
+    private func endUserDownload() {
+        userDownloadDismissTask?.cancel()
+        userDownloadDismissTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled else { return }
+            self?.userDownloadProgress = nil
+        }
+    }
     /// Song mids already in the library as a QQ Music download.
     private(set) var importedSongMids: Set<String> = []
 
@@ -2580,6 +2619,8 @@ final class QQMusicOnlineCoordinator {
         var downloaded = 0
         var converted = 0
         var failed = 0
+        beginUserDownload(tracks.filter { !$0.songMid.isEmpty })
+        defer { endUserDownload() }
         for track in tracks where !track.songMid.isEmpty {
             guard !Task.isCancelled else { break }
             // An already-downloaded track is *converted*, not fetched again:
@@ -2588,9 +2629,16 @@ final class QQMusicOnlineCoordinator {
             // instead of claiming a download that did not occur.
             let alreadyLocal = existingTrack(for: track.songMid) != nil
             if await materialize(track, origin: .userRequested) != nil {
-                if alreadyLocal { converted += 1 } else { downloaded += 1 }
+                if alreadyLocal {
+                    converted += 1
+                    finishUserDownloadItem(track.songMid, outcome: "已存在")
+                } else {
+                    downloaded += 1
+                    finishUserDownloadItem(track.songMid, outcome: "已下载")
+                }
             } else {
                 failed += 1
+                finishUserDownloadItem(track.songMid, outcome: "失败")
             }
         }
         return (downloaded, converted, failed)
@@ -2603,6 +2651,8 @@ final class QQMusicOnlineCoordinator {
     /// actor — callers must not pass it across a task boundary.
     @discardableResult
     func downloadAndImport(_ track: QQMusicOnlineTrack) async -> [Track] {
+        beginUserDownload([track])
+        defer { endUserDownload() }
         guard let importService, let paths else {
             Log.warning("[QQMusicOnline] import needs a library session", category: .import)
             return []

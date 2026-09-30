@@ -45,6 +45,9 @@ struct QQMusicDownloadControl: View {
     @EnvironmentObject private var themeStore: ThemeStore
     @Environment(\.colorScheme) private var colorScheme
 
+    /// Whether the download list popover is open.
+    @State private var isShowingDownloadList = false
+
     /// Switching shape mid-animation on a spring; the same response the app uses
     /// for its toolbar pills.
     private var shapeAnimation: Animation {
@@ -103,6 +106,11 @@ struct QQMusicDownloadControl: View {
                     .transition(
                         .scale(scale: 0.92, anchor: .leading).combined(with: .opacity)
                     )
+            } else if let progress = coordinator.userDownloadProgress {
+                userDownloadContent(progress)
+                    .transition(
+                        .scale(scale: 0.92, anchor: .leading).combined(with: .opacity)
+                    )
             } else {
                 idleContent
                     .transition(
@@ -114,6 +122,7 @@ struct QQMusicDownloadControl: View {
         .animation(shapeAnimation, value: selection.isSelecting)
         .animation(shapeAnimation, value: selection.selectedSongMids.count)
         .animation(shapeAnimation, value: selection.isDownloading)
+        .animation(shapeAnimation, value: coordinator.userDownloadProgress)
         // Availability is not a transition. The control keeps its shape on every
         // page and only its opacity and behaviour change; without this, whatever
         // animation happens to be in flight when the page changes carries the
@@ -168,6 +177,98 @@ struct QQMusicDownloadControl: View {
         .opacity(isAvailable ? 1 : 0.4)
         .help(isAvailable ? "选择下载" : unavailableReason)
         .accessibilityLabel(Text("选择下载"))
+    }
+
+    // MARK: - Downloading
+
+    /// The user's running batch, as a toolbar-sized progress box.
+    ///
+    /// Deliberately the same furniture as the selecting state — the neutral
+    /// capsule, the toolbar's own height, no second layer of glass — so it reads
+    /// as this control in another mode rather than as a new control that appeared
+    /// beside it. Clicking opens the list; the box itself does nothing else.
+    @ViewBuilder
+    private func userDownloadContent(_ progress: QQMusicUserDownloadProgress) -> some View {
+        Button {
+            isShowingDownloadList.toggle()
+        } label: {
+            HStack(spacing: 8) {
+                ProgressView(value: progress.fraction)
+                    .progressViewStyle(.linear)
+                    .frame(width: 46)
+                    .tint(themeStore.accentColor)
+                Text(progress.countText)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .contentTransition(.numericText())
+            }
+            .padding(.horizontal, 10)
+            .frame(height: GlassStyleTokens.headerControlHeight)
+            .background(selectionPill)
+            .clipShape(Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help("正在下载 \(progress.countText)，点击查看列表")
+        .accessibilityLabel(Text("下载进度 \(progress.countText)"))
+        .popover(isPresented: $isShowingDownloadList, arrowEdge: .bottom) {
+            downloadList(progress)
+        }
+    }
+
+    /// The batch, track by track, with what happened to each.
+    private func downloadList(_ progress: QQMusicUserDownloadProgress) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Text("下载列表")
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer(minLength: 12)
+                Text(progress.countText)
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            if progress.failed > 0 {
+                Text("\(progress.failed) 首失败")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
+            Divider().opacity(0.4)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(progress.items) { item in
+                        HStack(spacing: 8) {
+                            Image(systemName: symbol(for: item))
+                                .font(.system(size: 10))
+                                .foregroundStyle(item.outcome == "失败" ? Color.red : Color.secondary)
+                                .frame(width: 12)
+                            Text(item.title)
+                                .font(.system(size: 12))
+                                .lineLimit(1)
+                            Spacer(minLength: 8)
+                            if let outcome = item.outcome {
+                                Text(outcome)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                ProgressView().controlSize(.small)
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+            .frame(maxHeight: 260)
+        }
+        .padding(14)
+        .frame(width: 320)
+    }
+
+    private func symbol(for item: QQMusicUserDownloadProgress.Item) -> String {
+        switch item.outcome {
+        case "失败": return "exclamationmark.circle.fill"
+        case "已下载", "已存在": return "checkmark.circle.fill"
+        default: return "arrow.down.circle"
+        }
     }
 
     // MARK: - Selecting

@@ -1,3 +1,34 @@
+/// The user's own downloads, while they run — what the toolbar's progress box shows.
+///
+/// Prefetch is excluded by construction: it is background work nobody asked for,
+/// and a progress box that appeared whenever playback started would be noise.
+nonisolated struct QQMusicUserDownloadProgress: Equatable, Sendable {
+
+    nonisolated struct Item: Equatable, Sendable, Identifiable {
+        var songMid: String
+        var title: String
+        /// Non-nil once this item is done ("已下载" / "已存在" / "失败").
+        var outcome: String?
+
+        var id: String { songMid }
+        var isFinished: Bool { outcome != nil }
+    }
+
+    var items: [Item]
+
+    var total: Int { items.count }
+    var completed: Int { items.filter(\.isFinished).count }
+    var failed: Int { items.filter { $0.outcome == "失败" }.count }
+
+    /// 0…1, for the progress bar.
+    var fraction: Double {
+        total == 0 ? 0 : Double(completed) / Double(total)
+    }
+
+    /// "3/12"
+    var countText: String { "\(completed)/\(total)" }
+}
+
 //
 //  QQMusicSelectionModel.swift
 //  kmgccc_player

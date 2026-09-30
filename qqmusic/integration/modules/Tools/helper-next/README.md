@@ -29,6 +29,35 @@ cp target/release/qqmusic-helper-next \
 组件**自己管凭据**：`<目录>/Credential/qqmusic-credential.json`，目录由应用通过
 `QQMUSIC_HELPER_NEXT_DIR` 告诉它。二维码登录（`start_login` / `poll_login`）产出的凭据也写在这里。
 
+
+## 设置项怎么送给组件（协议里的两个配置方法）
+
+组件的限流与熔断由应用推送，**每次组件重启后都会重推**（组件是独立进程，退出即忘）。
+两者都是"设置推送"而不是上游读取：组件用自己的状态回答，登录与否都能用。
+
+```json
+// 请求频率总闸。windowSeconds/maxRequests 会被 clamp 到 [1,3600] / [1,100000]。
+{"id":"1","method":"set_rate_limit","params":{
+  "enabled":true,"windowSeconds":10,"maxRequests":100}}
+{"id":"1","ok":true,"rateLimit":{"enabled":true,"windowSeconds":10,"maxRequests":100}}
+
+// 熔断器。failureThreshold/failureWindowSeconds/openSeconds 会被 clamp 到 [1,100]/[1,3600]/[1,3600]。
+// enabled=false 只是"不因失败开路"，失败本身照常报给调用方。
+{"id":"2","method":"set_breaker","params":{
+  "enabled":true,"failureThreshold":3,"failureWindowSeconds":120,"openSeconds":300}}
+{"id":"2","ok":true,"breaker":{"enabled":true,"failureThreshold":3,
+  "failureWindowSeconds":120,"openSeconds":300}}
+```
+
+**语义要点**（踩过的坑都在这）：
+
+- **超限是等待，不是丢弃**。限流与熔断都只 delay：每一次调用都是用户等着的读取，
+  失败比延迟更糟。上游自己的限流会返回"成功但空"的结果集，那正是要避免的。
+- **改配置会清空状态**：`set_breaker` 会把已经开路的熔断器关回闭合、并清掉失败计数——
+  否则"改了数字却没变化"看起来像设置没送达。
+- **`get_status` 会回显两者**（`status.rateLimit.config` 与 `status.breakerConfig`），
+  所以应用能显示"组件当前生效"的值，而不是显示用户输入的数字。
+
 ## 兼容性不是"差不多就行"
 
 应用按固定的键名解码每个响应，缺键不会报错——**只会让那个字段静默为空**。

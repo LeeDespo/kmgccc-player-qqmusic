@@ -292,8 +292,11 @@ struct QQMusicSettingsView: View {
                         labeledValue("会员", "已开通")
                     }
                     if loginStatus.hasPlaybackKey == false {
+                        // Status, not explanation: this only appears when something
+                        // is wrong, and it names the fix.
                         Text("未取到播放票据，VIP 歌曲可能无法获取播放地址。建议重新登录。")
-                            .settingsDescriptionStyle()
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
                     }
                     HStack {
                         Button("退出登录") {
@@ -305,22 +308,23 @@ struct QQMusicSettingsView: View {
                     qrLoginPanel
                 } else {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("未登录时，QQ 音乐接口在少量请求后会触发风控，浏览歌单和推荐会不稳定。登录后即可正常使用。")
-                            .settingsDescriptionStyle()
-
-                        HStack(spacing: 8) {
+                        HStack(spacing: 6) {
                             Button("网页登录") {
                                 presentWebLogin()
                             }
                             .buttonStyle(.borderedProminent)
+                            SettingsInfoButton(
+                                text: "打开 QQ 音乐官方登录页，登录完成后自动获取凭证。推荐这种方式：登录页可以处理它自己要求的验证。"
+                            )
                             Spacer()
                         }
-                        Text("打开 QQ 音乐官方登录页，登录完成后自动获取凭证。推荐这种方式：登录页可以处理它自己要求的验证。")
-                            .settingsDescriptionStyle()
 
                         Divider().opacity(0.4)
 
                         HStack(spacing: 8) {
+                            SettingsInfoButton(
+                                text: "未登录时，QQ 音乐接口在少量请求后会触发风控，浏览歌单和推荐会不稳定；登录后即恢复正常。扫码用手机 QQ 或微信，网页登录用官方登录页，两者等价。"
+                            )
                             ForEach(QQMusicLoginType.allCases, id: \.self) { type in
                                 Button("扫码（\(type.displayName)）") {
                                     Task { await startLogin(type) }
@@ -358,8 +362,10 @@ struct QQMusicSettingsView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("请用手机 QQ 或微信扫描二维码")
                     .settingsRowLabelStyle()
+                // Live scan state ("已扫描，请在手机上确认"), not small print.
                 Text(qrHint)
-                    .settingsDescriptionStyle()
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
                 Button("取消") { cancelLogin() }
             }
             Spacer()
@@ -397,12 +403,14 @@ struct QQMusicSettingsView: View {
 
     private var playbackSection: some View {
         VStack(alignment: .leading, spacing: SettingsStyleTokens.groupSpacing) {
-            SettingsHeaderLabel(title: "播放与下载", systemImage: "play.circle")
+            HStack(spacing: 6) {
+                SettingsHeaderLabel(title: "播放与下载", systemImage: "play.circle")
+                SettingsInfoButton(
+                    text: "在线歌曲会先下载到本地曲库再播放，因此和本地歌曲完全一致：无缝播放、原生歌词、频谱都继承自原应用。"
+                )
+            }
 
             VStack(alignment: .leading, spacing: 14) {
-                Text("在线歌曲会先下载到本地曲库再播放，因此和本地歌曲完全一致（无缝播放、原生歌词、频谱）。")
-                    .settingsDescriptionStyle()
-
                 prefetchDepthRow
                 Divider().opacity(0.4)
                 qualityRow
@@ -421,14 +429,14 @@ struct QQMusicSettingsView: View {
 
     private var launchHomeRow: some View {
         let settings = AppSettings.shared
-        return SettingsSwitchRow(
-            title: "启动时进入 QQ 音乐",
-            isOn: Binding(
+        return infoSwitchRow(
+                title: "启动时进入 QQ 音乐",
+                isOn: Binding(
                 get: { settings.qqMusicLaunchHome },
                 set: { settings.qqMusicLaunchHome = $0 }
             ),
-            detail: "打开应用直接进入 QQ 音乐专属页面，而不是本地资料库。切换发生在首帧渲染之前，所以不会先闪一下本地主页。"
-        )
+                hint: "打开应用直接进入 QQ 音乐专属页面，而不是本地资料库。切换发生在首帧渲染之前，所以不会先闪一下本地主页。"
+            )
     }
 
     private var prefetchDepthRow: some View {
@@ -450,13 +458,13 @@ struct QQMusicSettingsView: View {
     private var preloadRow: some View {
         let settings = AppSettings.shared
         return VStack(alignment: .leading, spacing: 6) {
-            SettingsSwitchRow(
+            infoSwitchRow(
                 title: "启动时预加载在线内容",
                 isOn: Binding(
                     get: { settings.qqMusicPreloadOnLaunch },
                     set: { settings.qqMusicPreloadOnLaunch = $0 }
                 ),
-                detail: "应用启动后后台获取猜你喜欢、新歌电台与电台列表，打开 QQ 音乐页时内容已就绪。会提前消耗一些流量与上游请求。"
+                hint: "应用启动后后台获取猜你喜欢、新歌电台与电台列表，打开 QQ 音乐页时内容已就绪。会提前消耗一些流量与上游请求。"
             )
         }
     }
@@ -464,22 +472,26 @@ struct QQMusicSettingsView: View {
     private var likeButtonRow: some View {
         let settings = AppSettings.shared
         return VStack(alignment: .leading, spacing: 6) {
-            SettingsSwitchRow(
+            infoSwitchRow(
                 title: "在播放栏显示收藏按钮",
                 isOn: Binding(
                     get: { settings.qqMusicShowLikeButton },
                     set: { settings.qqMusicShowLikeButton = $0 }
                 ),
-                detail: "为从 QQ 音乐下载的歌曲显示心形按钮，可直接收藏到账号的「我喜欢」。本地歌曲没有对应的在线条目，不显示该按钮。"
+                hint: "为从 QQ 音乐下载的歌曲显示心形按钮，可直接收藏到账号的「我喜欢」。本地歌曲没有对应的在线条目，不显示该按钮。"
             )
         }
     }
 
     private var qualityRow: some View {
         let settings = AppSettings.shared
-        return VStack(alignment: .leading, spacing: 6) {
-            Text("下载品质")
-                .settingsRowLabelStyle()
+        return HStack(spacing: 12) {
+            HStack(spacing: 6) {
+                Text("下载品质")
+                    .settingsRowLabelStyle()
+                SettingsInfoButton(text: settings.qqMusicPreferredQuality.detail)
+            }
+            Spacer(minLength: 16)
             Picker("", selection: Binding(
                 get: { settings.qqMusicPreferredQuality },
                 set: { settings.qqMusicPreferredQuality = $0 }
@@ -490,8 +502,7 @@ struct QQMusicSettingsView: View {
             }
             .labelsHidden()
             .pickerStyle(.menu)
-            Text(settings.qqMusicPreferredQuality.detail)
-                .settingsDescriptionStyle()
+            .fixedSize()
         }
     }
 
@@ -505,7 +516,6 @@ struct QQMusicSettingsView: View {
                 labeledValue("组件", "HelperNext（在线音源的唯一数据来源）")
                 labeledValue("组件版本", helperInfo?.helperVersion ?? "未知")
                 labeledValue("协议版本", helperInfo.map { "v\($0.protocolVersion)" } ?? "未知")
-                labeledValue("组件内核", helperInfo?.libraryVersion ?? "未知")
                 // Which build this is. The online source ships as a patch package
                 // and an app can be built from several trees on one machine, so
                 // without this line a stale build and an unfixed bug look
@@ -513,15 +523,18 @@ struct QQMusicSettingsView: View {
                 labeledValue("本功能版本", QQMusicBuildStamp.featureVersion)
                 labeledValue("本功能构建", QQMusicBuildStamp.text)
 
-                Text("QQ 音乐的接口是逆向来的，随时可能变化。组件与应用分离，可单独更新：换掉下面这个文件即可，无需重新构建应用。应用优先用外部目录里的那份，bundle 内的只作兜底。")
-                    .settingsDescriptionStyle()
-
-                labeledValue("组件目录", QQMusicHelperProcess.externalHelperDirectory.path, monospaced: true)
+                HStack(spacing: 6) {
+                    Text("组件目录")
+                        .settingsRowLabelStyle()
+                    SettingsInfoButton(
+                        text: "QQ 音乐的接口是逆向来的，随时可能变化。组件与应用分离，可单独更新：换掉这个路径下的文件即可，无需重新构建应用。应用优先用外部目录里的那份，bundle 内的只作兜底。\n\n注意：从别处复制过来的二进制会带隔离属性，会被系统直接杀掉（退出码 137，且没有任何输出）。复制后请执行 xattr -cr 那个目录。"
+                    )
+                    Spacer(minLength: 0)
+                }
+                labeledValue("", QQMusicHelperProcess.externalHelperDirectory.path, monospaced: true)
                 if let running = helperBinaryPath {
                     labeledValue("当前运行", running, monospaced: true)
                 }
-                Text("注意：从别处复制过来的二进制会带隔离属性，**会被系统直接杀掉**（退出码 137，且没有任何输出）。复制后请执行 `xattr -cr` 那个目录。")
-                    .settingsDescriptionStyle()
 
                 Divider().opacity(0.4)
 
@@ -612,14 +625,14 @@ struct QQMusicSettingsView: View {
                     }
                 }
 
-                SettingsSwitchRow(
-                    title: "启用自动熔断",
-                    isOn: Binding(
+                infoSwitchRow(
+                title: "启用自动熔断",
+                isOn: Binding(
                         get: { AppSettings.shared.qqMusicCircuitBreakerEnabled },
                         set: { AppSettings.shared.qqMusicCircuitBreakerEnabled = $0 }
                     ),
-                    detail: "连续请求失败达到阈值时暂停一段时间，避免持续冲击上游。关闭后每个请求都会尝试。"
-                )
+                hint: "连续请求失败达到阈值时暂停一段时间，避免持续冲击上游。这个数字会送到组件，组件按它熔断。"
+            )
 
                 if let effective = effectiveCircuit {
                     Text("组件当前生效：\(effectiveSummary(effective))")
@@ -689,13 +702,13 @@ struct QQMusicSettingsView: View {
     private var rateLimitRows: some View {
         let settings = AppSettings.shared
         VStack(alignment: .leading, spacing: 10) {
-            SettingsSwitchRow(
+            infoSwitchRow(
                 title: "限制请求频率",
                 isOn: Binding(
                     get: { settings.qqMusicRateLimitEnabled },
                     set: { settings.qqMusicRateLimitEnabled = $0 }
                 ),
-                detail: "在组件自身的按类限流之上再加一道总闸：\(settings.qqMusicRateLimitWindowSeconds) 秒内最多 \(settings.qqMusicRateLimitMaxRequests) 次请求，超出的排队等到下一个时间窗口。避免触发上游风控（风控会让搜索、列表返回空结果）。"
+                hint: "在组件自身的按类限流之上再加一道总闸：\(settings.qqMusicRateLimitWindowSeconds) 秒内最多 \(settings.qqMusicRateLimitMaxRequests) 次请求，超出的排队等到下一个时间窗口。避免触发上游风控——风控会让搜索和列表返回空结果，看起来像「没有内容」。"
             )
 
             if settings.qqMusicRateLimitEnabled {
@@ -749,17 +762,16 @@ struct QQMusicSettingsView: View {
         step: Int = 1,
         detail: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 12) {
+        HStack(spacing: 12) {
+            HStack(spacing: 6) {
                 Text(title)
                     .settingsRowLabelStyle()
-                Spacer(minLength: 12)
-                NumericSettingField(value: value, range: range, unit: unit)
-                Stepper("", value: value, in: range, step: step)
-                    .labelsHidden()
+                SettingsInfoButton(text: detail)
             }
-            Text(detail)
-                .settingsDescriptionStyle()
+            Spacer(minLength: 12)
+            NumericSettingField(value: value, range: range, unit: unit)
+            Stepper("", value: value, in: range, step: step)
+                .labelsHidden()
         }
     }
 
@@ -788,12 +800,14 @@ struct QQMusicSettingsView: View {
 
     private var cacheSection: some View {
         VStack(alignment: .leading, spacing: SettingsStyleTokens.groupSpacing) {
-            SettingsHeaderLabel(title: "缓存", systemImage: "internaldrive")
+            HStack(spacing: 6) {
+                SettingsHeaderLabel(title: "缓存", systemImage: "internaldrive")
+                SettingsInfoButton(
+                    text: "在线内容的歌单、推荐、排行榜和封面会缓存在本地，避免重复请求上游——重复请求正是触发风控的主要原因。缓存独立存放在下面这个目录，与应用自身的缓存分开管理。"
+                )
+            }
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("在线内容的歌单、推荐、排行榜和封面会缓存在本地，避免重复请求上游（也是触发风控的主要原因）。缓存独立存放在下面这个目录，与应用自身的缓存分开管理。")
-                    .settingsDescriptionStyle()
-
                 labeledValue("缓存目录", cacheDirectoryPath ?? "资料库未就绪", monospaced: true)
 
                 HStack(spacing: 8) {
@@ -865,19 +879,18 @@ struct QQMusicSettingsView: View {
                     .foregroundStyle(themeStore.accentColor)
                 Text(title)
                     .font(.headline)
+                SettingsInfoButton(text: subtitle)
+                Spacer(minLength: 0)
             }
 
             VStack(alignment: .leading, spacing: 12) {
-                Text(subtitle)
-                    .settingsDescriptionStyle()
-
                 labeledValue("当前占用", usage)
 
-                SettingsSwitchRow(
-                    title: "限制大小",
-                    isOn: enabled,
-                    detail: "关闭时不限制大小，也不回收。"
-                )
+                infoSwitchRow(
+                title: "限制大小",
+                isOn: enabled,
+                hint: "关闭时不限制大小，也不回收。"
+            )
 
                 if enabled.wrappedValue {
                     Divider().opacity(0.4)
@@ -890,14 +903,16 @@ struct QQMusicSettingsView: View {
                     }
 
                     HStack(spacing: 12) {
-                        Text("回收至上限的")
-                            .settingsRowLabelStyle()
+                        HStack(spacing: 6) {
+                            Text("回收至上限的")
+                                .settingsRowLabelStyle()
+                            SettingsInfoButton(
+                                text: "超过上限时回收，直到降到上限的这个百分比为止。留出余量是为了不必每下载一首就回收一次：90% 表示几乎贴着上限，0% 表示清空可回收的部分。"
+                            )
+                        }
                         Spacer(minLength: 12)
                         NumericSettingField(value: reclaimPercent, range: 0...90, unit: "%")
                     }
-
-                    Text("超过上限时回收，直到降到上限的这个百分比为止。留出余量是为了不必每下载一首就回收一次。90% 表示几乎贴着上限，0% 表示清空可回收的部分。")
-                        .settingsDescriptionStyle()
                 }
             }
             .padding(SettingsStyleTokens.groupPadding)
@@ -1156,6 +1171,61 @@ struct QQMusicSettingsView: View {
         let url = URL(fileURLWithPath: path, isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
+    /// A switch row with its explanation behind the info button.
+    ///
+    /// The shared `SettingsSwitchRow` prints `detail` as small print under the
+    /// row, and this page no longer shows small print. The switch itself keeps
+    /// the app's own look — same label style, same accent-tinted switch.
+    private func infoSwitchRow(
+        title: String,
+        isOn: Binding<Bool>,
+        hint: String
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .settingsRowLabelStyle()
+            SettingsInfoButton(text: hint)
+            Spacer(minLength: 16)
+            Toggle("", isOn: isOn)
+                .toggleStyle(.switch)
+                .labelsHidden()
+                .tint(themeStore.accentColor)
+        }
+    }
+}
+
+/// The one way this page explains a setting now.
+///
+/// Every row used to print a line of small print underneath; the user asked for
+/// those gone — the page reads as a list of settings again — with a button where
+/// the explanation is genuinely needed. Hovering shows it too (`.help`), so the
+/// hint is available without a click as well.
+struct SettingsInfoButton: View {
+
+    let text: String
+
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            Image(systemName: "info.circle")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help(text)
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            Text(text)
+                .font(.system(size: 12))
+                .lineSpacing(2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: 340, alignment: .leading)
+                .padding(14)
+        }
     }
 }
 

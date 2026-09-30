@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-index 81b5c94f..3384ab43 100644
+index 81b5c94f..7fe76987 100644
 --- a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 +++ b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 @@ -45,6 +45,11 @@ nonisolated struct QQMusicMetadataDetail: Codable, Equatable, Sendable {
@@ -14,7 +14,7 @@ index 81b5c94f..3384ab43 100644
      var metadataSource: String?
      var metadataFetchedAt: Date?
      var metadataConfidence: Double?
-@@ -104,6 +109,355 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
+@@ -104,6 +109,363 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
      let changed: Bool
  }
  
@@ -166,6 +166,14 @@ index 81b5c94f..3384ab43 100644
 +    var enabled: Bool
 +    var windowSeconds: Int
 +    var maxRequests: Int
++}
++
++/// What the component is enforcing for its circuit breaker.
++nonisolated struct QQMusicBreakerConfiguration: Codable, Equatable, Sendable {
++    var enabled: Bool
++    var failureThreshold: Int
++    var failureWindowSeconds: Int
++    var openSeconds: Int
 +}
 +
 +nonisolated struct QQMusicLoginStatus: Codable, Equatable, Sendable {
@@ -370,7 +378,7 @@ index 81b5c94f..3384ab43 100644
  nonisolated enum MetadataDetailApplicator {
      static func applyMissingFields(
          _ detail: ArtistMetadataDetail,
-@@ -625,8 +979,27 @@ actor QQMusicHelperProcess {
+@@ -625,8 +987,28 @@ actor QQMusicHelperProcess {
      private struct QQMusicHelperResponse: Decodable, Sendable {
          let id: String?
          let ok: Bool
@@ -393,12 +401,13 @@ index 81b5c94f..3384ab43 100644
 +        let stream: QQMusicStreamResolution?
 +        let login: QQMusicLoginStatus?
 +        let rateLimit: QQMusicRateLimitConfiguration?
++        let breaker: QQMusicBreakerConfiguration?
 +        let qrcode: QQMusicLoginQRCode?
 +        let helper: QQMusicHelperInfo?
          let error: String?
      }
  
-@@ -668,18 +1041,202 @@ actor QQMusicHelperProcess {
+@@ -668,18 +1050,235 @@ actor QQMusicHelperProcess {
          let duration: Int?
      }
  
@@ -452,6 +461,13 @@ index 81b5c94f..3384ab43 100644
 +        let limit: Int
 +        let page: Int
 +        let sort: String
++    }
++
++    private struct BreakerParams: Encodable, Sendable {
++        let enabled: Bool
++        let failureThreshold: Int
++        let failureWindowSeconds: Int
++        let openSeconds: Int
 +    }
 +
 +    private struct RateLimitParams: Encodable, Sendable {
@@ -589,6 +605,32 @@ index 81b5c94f..3384ab43 100644
 +            recentFailureDates.removeAll()
 +            circuitLastReason = ""
 +        }
++
++        // The component keeps its own breaker, and these are the numbers it
++        // enforces — the mirror above only covers the calls this process makes
++        // before the component is spoken to.
++        Task { await self.pushBreaker(configuration: circuitConfiguration) }
++    }
++
++    /// Send the breaker numbers to the component.
++    @discardableResult
++    private func pushBreaker(configuration: CircuitConfiguration) async -> QQMusicBreakerConfiguration? {
++        guard process?.isRunning == true else { return nil }
++        let response = try? await send(
++            method: "set_breaker",
++            params: BreakerParams(
++                enabled: configuration.isEnabled,
++                failureThreshold: configuration.threshold,
++                failureWindowSeconds: Int(configuration.failureWindow.rounded()),
++                openSeconds: Int(configuration.openDuration.rounded())
++            )
++        )
++        return response?.breaker
++    }
++
++    /// What the component reports it is enforcing, for the settings page.
++    func breakerConfiguration() async -> QQMusicBreakerConfiguration? {
++        await pushBreaker(configuration: circuitConfiguration)
 +    }
 +
 +    private var failureWindow: TimeInterval { circuitConfiguration.failureWindow }
@@ -606,7 +648,7 @@ index 81b5c94f..3384ab43 100644
      private var recentStderr = ""
      private var pendingRequests: [String: PendingRequest] = [:]
      private var idleShutdownTask: Task<Void, Never>?
-@@ -688,10 +1245,50 @@ actor QQMusicHelperProcess {
+@@ -688,10 +1287,50 @@ actor QQMusicHelperProcess {
      private var circuitLastReason = ""
      private var lastActivity = Date()
      private var lastLaunchDiagnostics = ""
@@ -657,7 +699,7 @@ index 81b5c94f..3384ab43 100644
      func searchArtistArtwork(name: String, limit: Int = 5) async throws -> [QQMusicArtworkCandidate] {
          try await request(
              method: "search_artist_artwork",
-@@ -776,6 +1373,473 @@ actor QQMusicHelperProcess {
+@@ -776,6 +1415,473 @@ actor QQMusicHelperProcess {
          )
      }
  
@@ -1131,7 +1173,7 @@ index 81b5c94f..3384ab43 100644
      func terminate() {
          stopProcess(failingPendingWith: QQMusicHelperError.cancelled)
      }
-@@ -968,9 +2032,11 @@ actor QQMusicHelperProcess {
+@@ -968,9 +2074,11 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -1145,7 +1187,7 @@ index 81b5c94f..3384ab43 100644
              }
          }
  
-@@ -981,7 +2047,9 @@ actor QQMusicHelperProcess {
+@@ -981,7 +2089,9 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -1156,7 +1198,7 @@ index 81b5c94f..3384ab43 100644
              Task {
                  await self?.appendStderr(text)
              }
-@@ -1006,20 +2074,57 @@ actor QQMusicHelperProcess {
+@@ -1006,20 +2116,67 @@ actor QQMusicHelperProcess {
          self.stdinHandle = stdinPipe.fileHandleForWriting
          self.stdoutPipe = stdoutPipe
          self.stderrPipe = stderrPipe
@@ -1171,6 +1213,7 @@ index 81b5c94f..3384ab43 100644
 +        // on this side and needs no push; the rate ceiling must be, or a restart
 +        // would silently un-throttle the component.)
 +        let rateLimit = rateLimitConfiguration
++        let breaker = circuitConfiguration
 +        Task {
 +            _ = try? await self.send(
 +                method: "set_rate_limit",
@@ -1178,6 +1221,15 @@ index 81b5c94f..3384ab43 100644
 +                    enabled: rateLimit.isEnabled,
 +                    windowSeconds: rateLimit.windowSeconds,
 +                    maxRequests: rateLimit.maxRequests
++                )
++            )
++            _ = try? await self.send(
++                method: "set_breaker",
++                params: BreakerParams(
++                    enabled: breaker.isEnabled,
++                    failureThreshold: breaker.threshold,
++                    failureWindowSeconds: Int(breaker.failureWindow.rounded()),
++                    openSeconds: Int(breaker.openDuration.rounded())
 +                )
 +            )
 +        }
@@ -1223,7 +1275,7 @@ index 81b5c94f..3384ab43 100644
          }
      }
  
-@@ -1091,7 +2196,7 @@ actor QQMusicHelperProcess {
+@@ -1091,7 +2248,7 @@ actor QQMusicHelperProcess {
          stdinHandle = nil
          stdoutPipe = nil
          stderrPipe = nil
@@ -1232,7 +1284,7 @@ index 81b5c94f..3384ab43 100644
      }
  
      private func markActivity() {
-@@ -1132,6 +2237,7 @@ actor QQMusicHelperProcess {
+@@ -1132,6 +2289,7 @@ actor QQMusicHelperProcess {
      }
  
      private func recordFailure(reason: String) {
@@ -1240,7 +1292,7 @@ index 81b5c94f..3384ab43 100644
          let now = Date()
          recentFailureDates = recentFailureDates.filter {
              now.timeIntervalSince($0) <= failureWindow
-@@ -1152,6 +2258,16 @@ actor QQMusicHelperProcess {
+@@ -1152,6 +2310,16 @@ actor QQMusicHelperProcess {
      }
  
      private func checkCircuitBreaker() throws {
@@ -1257,7 +1309,7 @@ index 81b5c94f..3384ab43 100644
          guard let until = circuitOpenUntil else { return }
          if Date() < until {
              Log.warning("[QQMusicHelperProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)
-@@ -1163,30 +2279,50 @@ actor QQMusicHelperProcess {
+@@ -1163,30 +2331,50 @@ actor QQMusicHelperProcess {
      }
  
      private func findLaunchCandidate() -> LaunchCandidate? {
@@ -1329,7 +1381,7 @@ index 81b5c94f..3384ab43 100644
      }
  
      private func bundledBinaryURL() -> URL {
-@@ -1194,8 +2330,37 @@ actor QQMusicHelperProcess {
+@@ -1194,8 +2382,37 @@ actor QQMusicHelperProcess {
              ?? URL(fileURLWithPath: Bundle.main.resourcePath ?? "", isDirectory: true)
          return resources
              .appendingPathComponent("Tools", isDirectory: true)

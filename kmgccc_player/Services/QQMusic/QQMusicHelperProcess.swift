@@ -259,6 +259,14 @@ nonisolated struct QQMusicRateLimitConfiguration: Codable, Equatable, Sendable {
     var maxRequests: Int
 }
 
+/// What the component is enforcing for its circuit breaker.
+nonisolated struct QQMusicBreakerConfiguration: Codable, Equatable, Sendable {
+    var enabled: Bool
+    var failureThreshold: Int
+    var failureWindowSeconds: Int
+    var openSeconds: Int
+}
+
 nonisolated struct QQMusicLoginStatus: Codable, Equatable, Sendable {
     var loggedIn: Bool
     var musicId: Int?
@@ -998,6 +1006,7 @@ actor QQMusicHelperProcess {
         let stream: QQMusicStreamResolution?
         let login: QQMusicLoginStatus?
         let rateLimit: QQMusicRateLimitConfiguration?
+        let breaker: QQMusicBreakerConfiguration?
         let qrcode: QQMusicLoginQRCode?
         let helper: QQMusicHelperInfo?
         let error: String?
@@ -1091,6 +1100,13 @@ actor QQMusicHelperProcess {
         let limit: Int
         let page: Int
         let sort: String
+    }
+
+    private struct BreakerParams: Encodable, Sendable {
+        let enabled: Bool
+        let failureThreshold: Int
+        let failureWindowSeconds: Int
+        let openSeconds: Int
     }
 
     private struct RateLimitParams: Encodable, Sendable {
@@ -1224,6 +1240,32 @@ actor QQMusicHelperProcess {
             recentFailureDates.removeAll()
             circuitLastReason = ""
         }
+
+        // The component keeps its own breaker, and these are the numbers it
+        // enforces — the mirror above only covers the calls this process makes
+        // before the component is spoken to.
+        Task { await self.pushBreaker(configuration: circuitConfiguration) }
+    }
+
+    /// Send the breaker numbers to the component.
+    @discardableResult
+    private func pushBreaker(configuration: CircuitConfiguration) async -> QQMusicBreakerConfiguration? {
+        guard process?.isRunning == true else { return nil }
+        let response = try? await send(
+            method: "set_breaker",
+            params: BreakerParams(
+                enabled: configuration.isEnabled,
+                failureThreshold: configuration.threshold,
+                failureWindowSeconds: Int(configuration.failureWindow.rounded()),
+                openSeconds: Int(configuration.openDuration.rounded())
+            )
+        )
+        return response?.breaker
+    }
+
+    /// What the component reports it is enforcing, for the settings page.
+    func breakerConfiguration() async -> QQMusicBreakerConfiguration? {
+        await pushBreaker(configuration: circuitConfiguration)
     }
 
     private var failureWindow: TimeInterval { circuitConfiguration.failureWindow }
@@ -2084,6 +2126,7 @@ actor QQMusicHelperProcess {
         // on this side and needs no push; the rate ceiling must be, or a restart
         // would silently un-throttle the component.)
         let rateLimit = rateLimitConfiguration
+        let breaker = circuitConfiguration
         Task {
             _ = try? await self.send(
                 method: "set_rate_limit",
@@ -2091,6 +2134,15 @@ actor QQMusicHelperProcess {
                     enabled: rateLimit.isEnabled,
                     windowSeconds: rateLimit.windowSeconds,
                     maxRequests: rateLimit.maxRequests
+                )
+            )
+            _ = try? await self.send(
+                method: "set_breaker",
+                params: BreakerParams(
+                    enabled: breaker.isEnabled,
+                    failureThreshold: breaker.threshold,
+                    failureWindowSeconds: Int(breaker.failureWindow.rounded()),
+                    openSeconds: Int(breaker.openDuration.rounded())
                 )
             )
         }
