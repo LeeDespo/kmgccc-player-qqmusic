@@ -31,6 +31,9 @@ final class AppKitMainToolbarController: NSObject,
         /// right of `qqReloadControl`, so the list-wide action lives in the same
         /// row as the navigation and search controls.
         static let qqDownloadControl = NSToolbarItem.Identifier("AppKitMainToolbar.qqDownloadControl")
+        /// The progress box, its own item: the download button beside it keeps its
+        /// shape whether or not anything is downloading.
+        static let qqDownloadProgressControl = NSToolbarItem.Identifier("AppKitMainToolbar.qqDownloadProgressControl")
         static let sort = NSToolbarItem.Identifier("AppKitMainToolbar.sort")
         static let pillGroup = NSToolbarItem.Identifier("AppKitMainToolbar.pillGroup")
         static let search = NSToolbarItem.Identifier("AppKitMainToolbar.search")
@@ -213,6 +216,10 @@ final class AppKitMainToolbarController: NSObject,
             return (isLibraryMode || isHistoryMode) && hasLibrary
         case Identifier.qqReloadControl:
             return isOnlineMode && appSession.qqMusicOnlineCoordinator != nil
+        case Identifier.qqDownloadProgressControl:
+            // Shown only while the engine has tasks; the item hides itself (see
+            // the factory) rather than leaving a gap beside the download button.
+            return isOnlineMode && appSession.qqMusicOnlineCoordinator != nil
         case Identifier.qqDownloadControl:
             // Always enabled while the online surface is showing, whatever page
             // it is on.
@@ -288,6 +295,7 @@ final class AppKitMainToolbarController: NSObject,
             Identifier.homeNavPill,
             Identifier.qqReloadControl,
             Identifier.qqDownloadControl,
+            Identifier.qqDownloadProgressControl,
             Identifier.sort,
             Identifier.pillGroup,
             Identifier.homePillGroup,
@@ -1585,6 +1593,7 @@ final class AppKitMainToolbarController: NSObject,
                 Identifier.homeNavPill,
                 Identifier.qqReloadControl,
                 Identifier.qqDownloadControl,
+                Identifier.qqDownloadProgressControl,
                 .flexibleSpace,
                 Identifier.search,
                 Identifier.lyricsToggle,

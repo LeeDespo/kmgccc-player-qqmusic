@@ -113,6 +113,47 @@ final class QQMusicOnlineCoordinator {
     /// actually readable instead of vanishing with the final byte.
     private var userDownloadDismissTask: Task<Void, Never>?
 
+    /// The engine's task list, which the toolbar's progress box reads.
+    ///
+    /// Read from the engine rather than from this coordinator's own batch: the
+    /// engine is what actually holds the tasks, and it is what pause/resume/cancel
+    /// operate on. Refreshed by the box on a timer while it is on screen.
+    private(set) var aria2Tasks: [QQMusicAria2Task] = []
+    /// Set when the user cancels, so the batch loop stops instead of walking on
+    /// through the rest of the selection.
+    private var didCancelUserDownload = false
+
+    func refreshAria2Tasks() {
+        Task { [weak self] in
+            guard let self else { return }
+            let tasks = await self.helper.aria2Tasks()
+            if tasks != self.aria2Tasks {
+                self.aria2Tasks = tasks
+            }
+        }
+    }
+
+    func pauseAria2Tasks(gid: String? = nil) async {
+        aria2Tasks = await helper.aria2Pause(gid: gid)
+    }
+
+    func resumeAria2Tasks(gid: String? = nil) async {
+        aria2Tasks = await helper.aria2Unpause(gid: gid)
+    }
+
+    /// Cancel the named task, or every task. The engine deletes the partial files;
+    /// the download path is told so it stops waiting instead of falling back to
+    /// fetching the same file a second way.
+    func cancelAria2Tasks(gid: String? = nil) async {
+        let cancelled = gid.map { [$0] } ?? aria2Tasks.filter { !$0.isFinished }.map(\.gid)
+        didCancelUserDownload = true
+        aria2Tasks = await helper.aria2Cancel(gid: gid)
+        await downloader.markCancelled(cancelled)
+        if aria2Tasks.isEmpty {
+            userDownloadProgress = nil
+        }
+    }
+
     /// Put the user's batch on screen.
     private func beginUserDownload(_ tracks: [QQMusicOnlineTrack]) {
         userDownloadDismissTask?.cancel()
@@ -2319,6 +2360,14 @@ final class QQMusicOnlineCoordinator {
         _ track: QQMusicOnlineTrack,
         origin: QQMusicDownloadOrigin = .prefetch
     ) async -> Track? {
+        // A single row's download is a user request, so it gets the box too — but
+        // only when no batch is already running (a batch owns the box for its whole
+        // run, and this must not shrink it to one item).
+        let ownsBox = origin == .userRequested && userDownloadProgress == nil
+        if ownsBox {
+            beginUserDownload([track])
+        }
+        defer { if ownsBox { endUserDownload() } }
         if let existing = existingTrack(for: track.songMid) {
             importedSongMids.insert(track.songMid)
             // Already on disk: this is the automatic-to-manual transition, so
@@ -2621,8 +2670,9 @@ final class QQMusicOnlineCoordinator {
         var failed = 0
         beginUserDownload(tracks.filter { !$0.songMid.isEmpty })
         defer { endUserDownload() }
+        didCancelUserDownload = false
         for track in tracks where !track.songMid.isEmpty {
-            guard !Task.isCancelled else { break }
+            guard !Task.isCancelled, !didCancelUserDownload else { break }
             // An already-downloaded track is *converted*, not fetched again:
             // `materialize` reuses the local copy and only rewrites the label.
             // Counted separately so the report tells the user which happened
@@ -2636,6 +2686,8 @@ final class QQMusicOnlineCoordinator {
                     downloaded += 1
                     finishUserDownloadItem(track.songMid, outcome: "已下载")
                 }
+            } else if didCancelUserDownload {
+                finishUserDownloadItem(track.songMid, outcome: "已取消")
             } else {
                 failed += 1
                 finishUserDownloadItem(track.songMid, outcome: "失败")
@@ -2651,8 +2703,6 @@ final class QQMusicOnlineCoordinator {
     /// actor — callers must not pass it across a task boundary.
     @discardableResult
     func downloadAndImport(_ track: QQMusicOnlineTrack) async -> [Track] {
-        beginUserDownload([track])
-        defer { endUserDownload() }
         guard let importService, let paths else {
             Log.warning("[QQMusicOnline] import needs a library session", category: .import)
             return []

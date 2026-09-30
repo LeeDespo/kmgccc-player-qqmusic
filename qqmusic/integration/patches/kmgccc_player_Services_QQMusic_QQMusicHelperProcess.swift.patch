@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-index 81b5c94f..121394ec 100644
+index 81b5c94f..da73f035 100644
 --- a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 +++ b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 @@ -45,6 +45,11 @@ nonisolated struct QQMusicMetadataDetail: Codable, Equatable, Sendable {
@@ -14,7 +14,7 @@ index 81b5c94f..121394ec 100644
      var metadataSource: String?
      var metadataFetchedAt: Date?
      var metadataConfidence: Double?
-@@ -104,6 +109,428 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
+@@ -104,6 +109,461 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
      let changed: Bool
  }
  
@@ -227,6 +227,39 @@ index 81b5c94f..121394ec 100644
 +}
 +
 +/// One queued file: the gid it was given, or its live state.
++/// One task in the engine's list.
++nonisolated struct QQMusicAria2Task: Codable, Equatable, Sendable, Identifiable {
++    var gid: String
++    /// aria2's own vocabulary: active / waiting / paused / complete / error / removed.
++    var status: String
++    var completed: Int?
++    var total: Int?
++    var speed: Int?
++    var name: String?
++    var path: String?
++    var error: String?
++
++    var id: String { gid }
++
++    var isActive: Bool { status == "active" }
++    var isPaused: Bool { status == "paused" }
++    var isFinished: Bool { status == "complete" }
++    var isFailed: Bool { status == "error" }
++
++    var fraction: Double {
++        guard let total, total > 0, let completed else { return 0 }
++        return min(1, Double(completed) / Double(total))
++    }
++}
++
++/// The engine's task list, plus whichever gids a cancel just removed.
++nonisolated struct QQMusicAria2TaskList: Codable, Equatable, Sendable {
++    var downloads: [QQMusicAria2Task]
++    var removed: [String]?
++
++    static let none = QQMusicAria2TaskList(downloads: [], removed: nil)
++}
++
 +nonisolated struct QQMusicAria2Download: Codable, Equatable, Sendable {
 +    var gid: String?
 +    var status: String?
@@ -443,7 +476,7 @@ index 81b5c94f..121394ec 100644
  nonisolated enum MetadataDetailApplicator {
      static func applyMissingFields(
          _ detail: ArtistMetadataDetail,
-@@ -625,8 +1052,30 @@ actor QQMusicHelperProcess {
+@@ -625,8 +1085,32 @@ actor QQMusicHelperProcess {
      private struct QQMusicHelperResponse: Decodable, Sendable {
          let id: String?
          let ok: Bool
@@ -469,12 +502,14 @@ index 81b5c94f..121394ec 100644
 +        let breaker: QQMusicBreakerConfiguration?
 +        let aria2: QQMusicAria2Status?
 +        let download: QQMusicAria2Download?
++        let downloads: [QQMusicAria2Task]?
++        let removed: [String]?
 +        let qrcode: QQMusicLoginQRCode?
 +        let helper: QQMusicHelperInfo?
          let error: String?
      }
  
-@@ -668,18 +1117,256 @@ actor QQMusicHelperProcess {
+@@ -668,18 +1152,260 @@ actor QQMusicHelperProcess {
          let duration: Int?
      }
  
@@ -549,6 +584,10 @@ index 81b5c94f..121394ec 100644
 +
 +    private struct Aria2TellParams: Encodable, Sendable {
 +        let gid: String
++    }
++
++    private struct Aria2GidParams: Encodable, Sendable {
++        let gid: String?
 +    }
 +
 +    private struct BreakerParams: Encodable, Sendable {
@@ -736,7 +775,7 @@ index 81b5c94f..121394ec 100644
      private var recentStderr = ""
      private var pendingRequests: [String: PendingRequest] = [:]
      private var idleShutdownTask: Task<Void, Never>?
-@@ -688,10 +1375,99 @@ actor QQMusicHelperProcess {
+@@ -688,10 +1414,135 @@ actor QQMusicHelperProcess {
      private var circuitLastReason = ""
      private var lastActivity = Date()
      private var lastLaunchDiagnostics = ""
@@ -833,10 +872,46 @@ index 81b5c94f..121394ec 100644
 +        return download
 +    }
 +
++    /// Every task the engine holds.
++    func aria2Tasks() async -> [QQMusicAria2Task] {
++        let response = try? await send(method: "aria2_list", params: EmptyParams())
++        return (response?.downloads ?? []).sorted { left, right in
++            // Running first, then waiting/paused, and finished last: the list is
++            // read while something is happening, so what is happening is on top.
++            func rank(_ status: String) -> Int {
++                switch status {
++                case "active": return 0
++                case "waiting", "paused": return 1
++                default: return 2
++                }
++            }
++            return rank(left.status) < rank(right.status)
++        }
++    }
++
++    @discardableResult
++    func aria2Pause(gid: String? = nil) async -> [QQMusicAria2Task] {
++        let response = try? await send(method: "aria2_pause", params: Aria2GidParams(gid: gid))
++        return response?.downloads ?? []
++    }
++
++    @discardableResult
++    func aria2Unpause(gid: String? = nil) async -> [QQMusicAria2Task] {
++        let response = try? await send(method: "aria2_unpause", params: Aria2GidParams(gid: gid))
++        return response?.downloads ?? []
++    }
++
++    /// Cancel, deleting the partial files. Returns what the engine has left.
++    @discardableResult
++    func aria2Cancel(gid: String? = nil) async -> [QQMusicAria2Task] {
++        let response = try? await send(method: "aria2_cancel", params: Aria2GidParams(gid: gid))
++        return response?.downloads ?? []
++    }
++
      func searchArtistArtwork(name: String, limit: Int = 5) async throws -> [QQMusicArtworkCandidate] {
          try await request(
              method: "search_artist_artwork",
-@@ -776,6 +1552,473 @@ actor QQMusicHelperProcess {
+@@ -776,6 +1627,473 @@ actor QQMusicHelperProcess {
          )
      }
  
@@ -1310,7 +1385,7 @@ index 81b5c94f..121394ec 100644
      func terminate() {
          stopProcess(failingPendingWith: QQMusicHelperError.cancelled)
      }
-@@ -968,9 +2211,11 @@ actor QQMusicHelperProcess {
+@@ -968,9 +2286,11 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -1324,7 +1399,7 @@ index 81b5c94f..121394ec 100644
              }
          }
  
-@@ -981,7 +2226,9 @@ actor QQMusicHelperProcess {
+@@ -981,7 +2301,9 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -1335,7 +1410,7 @@ index 81b5c94f..121394ec 100644
              Task {
                  await self?.appendStderr(text)
              }
-@@ -1006,20 +2253,67 @@ actor QQMusicHelperProcess {
+@@ -1006,20 +2328,67 @@ actor QQMusicHelperProcess {
          self.stdinHandle = stdinPipe.fileHandleForWriting
          self.stdoutPipe = stdoutPipe
          self.stderrPipe = stderrPipe
@@ -1412,7 +1487,7 @@ index 81b5c94f..121394ec 100644
          }
      }
  
-@@ -1091,7 +2385,7 @@ actor QQMusicHelperProcess {
+@@ -1091,7 +2460,7 @@ actor QQMusicHelperProcess {
          stdinHandle = nil
          stdoutPipe = nil
          stderrPipe = nil
@@ -1421,7 +1496,7 @@ index 81b5c94f..121394ec 100644
      }
  
      private func markActivity() {
-@@ -1132,6 +2426,7 @@ actor QQMusicHelperProcess {
+@@ -1132,6 +2501,7 @@ actor QQMusicHelperProcess {
      }
  
      private func recordFailure(reason: String) {
@@ -1429,7 +1504,7 @@ index 81b5c94f..121394ec 100644
          let now = Date()
          recentFailureDates = recentFailureDates.filter {
              now.timeIntervalSince($0) <= failureWindow
-@@ -1152,6 +2447,16 @@ actor QQMusicHelperProcess {
+@@ -1152,6 +2522,16 @@ actor QQMusicHelperProcess {
      }
  
      private func checkCircuitBreaker() throws {
@@ -1446,7 +1521,7 @@ index 81b5c94f..121394ec 100644
          guard let until = circuitOpenUntil else { return }
          if Date() < until {
              Log.warning("[QQMusicHelperProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)
-@@ -1163,30 +2468,50 @@ actor QQMusicHelperProcess {
+@@ -1163,30 +2543,50 @@ actor QQMusicHelperProcess {
      }
  
      private func findLaunchCandidate() -> LaunchCandidate? {
@@ -1518,7 +1593,7 @@ index 81b5c94f..121394ec 100644
      }
  
      private func bundledBinaryURL() -> URL {
-@@ -1194,8 +2519,37 @@ actor QQMusicHelperProcess {
+@@ -1194,8 +2594,37 @@ actor QQMusicHelperProcess {
              ?? URL(fileURLWithPath: Bundle.main.resourcePath ?? "", isDirectory: true)
          return resources
              .appendingPathComponent("Tools", isDirectory: true)

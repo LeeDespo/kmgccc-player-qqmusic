@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/AppKit/AppKitMainToolbarItemFactory.swift b/kmgccc_player/AppKit/AppKitMainToolbarItemFactory.swift
-index 0c7d8155..c2cf0386 100644
+index 0c7d8155..e7bf14c9 100644
 --- a/kmgccc_player/AppKit/AppKitMainToolbarItemFactory.swift
 +++ b/kmgccc_player/AppKit/AppKitMainToolbarItemFactory.swift
 @@ -6,6 +6,7 @@
@@ -28,7 +28,7 @@ index 0c7d8155..c2cf0386 100644
      }
  
      func makeItem(
-@@ -65,6 +70,12 @@ struct AppKitMainToolbarItemFactory {
+@@ -65,6 +70,15 @@ struct AppKitMainToolbarItemFactory {
                  generation: context.generation
              )
  
@@ -38,10 +38,13 @@ index 0c7d8155..c2cf0386 100644
 +        case AppKitMainToolbarController.Identifier.qqDownloadControl:
 +            return makeQQDownloadControlItem(identifier: identifier, context: context)
 +
++        case AppKitMainToolbarController.Identifier.qqDownloadProgressControl:
++            return makeQQDownloadProgressItem(identifier: identifier, context: context)
++
          case AppKitMainToolbarController.Identifier.lyricsToggle:
              return makeLyricsToggleItem(
                  identifier: identifier,
-@@ -263,6 +274,67 @@ struct AppKitMainToolbarItemFactory {
+@@ -263,6 +277,103 @@ struct AppKitMainToolbarItemFactory {
          return group
      }
  
@@ -99,6 +102,42 @@ index 0c7d8155..c2cf0386 100644
 +                    navigation: coordinator.navigation,
 +                    selection: coordinator.selection
 +                )
++        )
++        host.sizingOptions = [.intrinsicContentSize]
++        host.translatesAutoresizingMaskIntoConstraints = false
++        item.view = host
++        return item
++    }
++
++    /// The download progress box, hidden until the engine has something to show.
++    ///
++    /// `NSToolbarItem.isHidden` rather than a zero-sized view: a collapsed view
++    /// still leaves the toolbar's inter-item spacing behind, which reads as a gap
++    /// beside the download button. The view drives it — it is the one that knows
++    /// when the task list went empty — and the callback runs on the main actor
++    /// because the hosting view's updates are main-actor work.
++    private func makeQQDownloadProgressItem(
++        identifier: NSToolbarItem.Identifier,
++        context: Context
++    ) -> NSToolbarItem? {
++        guard let coordinator = context.qqMusicCoordinator else { return nil }
++
++        let item = NSToolbarItem(itemIdentifier: identifier)
++        item.label = "下载进度"
++        item.paletteLabel = item.label
++        item.toolTip = "下载任务"
++        item.visibilityPriority = .high
++        item.isHidden = true
++
++        let host = NSHostingView(
++            rootView: QQMusicDownloadProgressControl { visible in
++                item.isHidden = !visible
++            }
++            .qqMusicBrowseEnvironment(
++                coordinator: coordinator,
++                navigation: coordinator.navigation,
++                selection: coordinator.selection
++            )
 +        )
 +        host.sizingOptions = [.intrinsicContentSize]
 +        host.translatesAutoresizingMaskIntoConstraints = false

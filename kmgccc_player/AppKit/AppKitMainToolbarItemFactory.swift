@@ -76,6 +76,9 @@ struct AppKitMainToolbarItemFactory {
         case AppKitMainToolbarController.Identifier.qqDownloadControl:
             return makeQQDownloadControlItem(identifier: identifier, context: context)
 
+        case AppKitMainToolbarController.Identifier.qqDownloadProgressControl:
+            return makeQQDownloadProgressItem(identifier: identifier, context: context)
+
         case AppKitMainToolbarController.Identifier.lyricsToggle:
             return makeLyricsToggleItem(
                 identifier: identifier,
@@ -328,6 +331,42 @@ struct AppKitMainToolbarItemFactory {
                     navigation: coordinator.navigation,
                     selection: coordinator.selection
                 )
+        )
+        host.sizingOptions = [.intrinsicContentSize]
+        host.translatesAutoresizingMaskIntoConstraints = false
+        item.view = host
+        return item
+    }
+
+    /// The download progress box, hidden until the engine has something to show.
+    ///
+    /// `NSToolbarItem.isHidden` rather than a zero-sized view: a collapsed view
+    /// still leaves the toolbar's inter-item spacing behind, which reads as a gap
+    /// beside the download button. The view drives it — it is the one that knows
+    /// when the task list went empty — and the callback runs on the main actor
+    /// because the hosting view's updates are main-actor work.
+    private func makeQQDownloadProgressItem(
+        identifier: NSToolbarItem.Identifier,
+        context: Context
+    ) -> NSToolbarItem? {
+        guard let coordinator = context.qqMusicCoordinator else { return nil }
+
+        let item = NSToolbarItem(itemIdentifier: identifier)
+        item.label = "下载进度"
+        item.paletteLabel = item.label
+        item.toolTip = "下载任务"
+        item.visibilityPriority = .high
+        item.isHidden = true
+
+        let host = NSHostingView(
+            rootView: QQMusicDownloadProgressControl { visible in
+                item.isHidden = !visible
+            }
+            .qqMusicBrowseEnvironment(
+                coordinator: coordinator,
+                navigation: coordinator.navigation,
+                selection: coordinator.selection
+            )
         )
         host.sizingOptions = [.intrinsicContentSize]
         host.translatesAutoresizingMaskIntoConstraints = false

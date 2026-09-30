@@ -1407,12 +1407,14 @@ private struct NumericSettingField: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             TextField("", text: $text)
                 .textFieldStyle(.plain)
-                .multilineTextAlignment(.trailing)
+                .multilineTextAlignment(.center)
                 .font(.system(size: 12).monospacedDigit())
-                .frame(width: 52)
+                // Wide enough for the widest value these settings take (a
+                // five-digit rate limit), so the number never clips mid-edit.
+                .frame(width: 64)
                 .focused($isFocused)
                 .onSubmit(commit)
                 .onChange(of: isFocused) { _, focused in
@@ -1420,20 +1422,23 @@ private struct NumericSettingField: View {
                     // number and moved on.
                     if !focused { commit() }
                 }
-            Text(unit)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(Color.primary.opacity(isFocused ? 0.10 : 0.06))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(Color.primary.opacity(isFocused ? 0.25 : 0.10), lineWidth: 0.5)
-        )
+                    .strokeBorder(Color.primary.opacity(isFocused ? 0.25 : 0.10), lineWidth: 0.5)
+            )
+            // The unit is a label beside the box, not part of the control: the box
+            // is for the number the user types.
+            Text(unit)
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 28, alignment: .leading)
+        }
         .onAppear { text = String(value) }
         .onChange(of: value) { _, newValue in
             // Don't fight the user while they are editing.
@@ -1470,31 +1475,32 @@ private struct DecimalSettingField: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 6) {
             TextField("", text: $text)
                 .textFieldStyle(.plain)
-                .multilineTextAlignment(.trailing)
+                .multilineTextAlignment(.center)
                 .font(.system(size: 12).monospacedDigit())
-                .frame(width: 58)
+                .frame(width: 64)
                 .focused($isFocused)
                 .onSubmit(commit)
                 .onChange(of: isFocused) { _, focused in
                     if !focused { commit() }
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .fill(Color.primary.opacity(isFocused ? 0.10 : 0.06))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(Color.primary.opacity(isFocused ? 0.25 : 0.10), lineWidth: 0.5)
+                )
             Text(unit)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
+                .frame(minWidth: 28, alignment: .leading)
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.primary.opacity(isFocused ? 0.10 : 0.06))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .strokeBorder(Color.primary.opacity(isFocused ? 0.25 : 0.10), lineWidth: 0.5)
-        )
         .onAppear { text = formatted(value) }
         .onChange(of: value) { _, newValue in
             // Don't fight the user while they are typing.

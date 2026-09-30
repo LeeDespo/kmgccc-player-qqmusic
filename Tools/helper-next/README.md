@@ -91,6 +91,20 @@ aria2 的活跃分支，2.7.5）——它就在组件旁边：`<组件目录>/ar
 {"id":"4","method":"aria2_add","params":{"url":"https://isure.stream.qqmusic.qq.com/...","out":"0039MnYb0qxYhV-ab12cd34.flac"}}
 {"id":"4","ok":true,"download":{"gid":"d1cdc604873d9e10"}}
 
+// 任务列表（工具栏的下载框读它：引擎才是任务的真相，含重启后残留的、别处排队的）
+{"id":"6","method":"aria2_list","params":{}}
+{"id":"6","ok":true,"downloads":[{"gid":"d1cdc604873d9e10","status":"active",
+  "completed":8290304,"total":19844411,"speed":4032580,"name":"0039MnYb0qxYhV-ab12cd34.flac",
+  "path":".../Downloads/0039MnYb0qxYhV-ab12cd34.flac","error":""}]}
+
+// 暂停 / 继续 / 取消。带 gid 只作用一个，不带就是全部。
+// 注意 aria2 的命名：单个是 aria2.forcePause(gid) / aria2.unpause(gid)，
+// 全部是 aria2.forcePauseAll() / aria2.unpauseAll()——用单数方法传空参数是错误，不是"全部"。
+{"id":"7","method":"aria2_pause","params":{"gid":"d1cdc604873d9e10"}}   // 或 {"gid":null}
+{"id":"8","method":"aria2_unpause","params":{}}
+{"id":"9","method":"aria2_cancel","params":{"gid":null}}
+{"id":"9","ok":true,"removed":["d1cdc604873d9e10"],"downloads":[]}
+
 // 轮询进度（status 为 complete / error / removed 时结束）
 {"id":"5","method":"aria2_tell","params":{"gid":"d1cdc604873d9e10"}}
 {"id":"5","ok":true,"download":{"status":"active","completed":8290304,"total":19844411,
@@ -103,6 +117,9 @@ aria2 的活跃分支，2.7.5）——它就在组件旁边：`<组件目录>/ar
   `--rpc-secret` 每次启动重新生成。
 - 引擎**按需启动**：打开设置页不会拉起进程，只有真的要下载时才启动。
 - 参数会被 clamp（split/连接数 1–16、任务数 1–10、最小分块 1MB 起）——上游对这些字段是零容忍的。
+- **取消会删掉临时文件**：先读 `path`，再 `forceRemove`，删文件（连 `.aria2`），最后 `removeDownloadResult`
+  丢掉记录。只 `remove` 会留下半个文件，而应用的下载循环会把"任务消失"误当成引擎重启又重下一遍
+  （见下）。
 - 引擎缺席（老版本组件目录）时，应用**自动退回自己的下载实现**，功能不受影响。
 
 ### 安装/替换时注意

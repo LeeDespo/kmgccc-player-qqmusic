@@ -318,6 +318,39 @@ nonisolated struct QQMusicAria2Options: Codable, Equatable, Sendable {
 }
 
 /// One queued file: the gid it was given, or its live state.
+/// One task in the engine's list.
+nonisolated struct QQMusicAria2Task: Codable, Equatable, Sendable, Identifiable {
+    var gid: String
+    /// aria2's own vocabulary: active / waiting / paused / complete / error / removed.
+    var status: String
+    var completed: Int?
+    var total: Int?
+    var speed: Int?
+    var name: String?
+    var path: String?
+    var error: String?
+
+    var id: String { gid }
+
+    var isActive: Bool { status == "active" }
+    var isPaused: Bool { status == "paused" }
+    var isFinished: Bool { status == "complete" }
+    var isFailed: Bool { status == "error" }
+
+    var fraction: Double {
+        guard let total, total > 0, let completed else { return 0 }
+        return min(1, Double(completed) / Double(total))
+    }
+}
+
+/// The engine's task list, plus whichever gids a cancel just removed.
+nonisolated struct QQMusicAria2TaskList: Codable, Equatable, Sendable {
+    var downloads: [QQMusicAria2Task]
+    var removed: [String]?
+
+    static let none = QQMusicAria2TaskList(downloads: [], removed: nil)
+}
+
 nonisolated struct QQMusicAria2Download: Codable, Equatable, Sendable {
     var gid: String?
     var status: String?
@@ -1074,6 +1107,8 @@ actor QQMusicHelperProcess {
         let breaker: QQMusicBreakerConfiguration?
         let aria2: QQMusicAria2Status?
         let download: QQMusicAria2Download?
+        let downloads: [QQMusicAria2Task]?
+        let removed: [String]?
         let qrcode: QQMusicLoginQRCode?
         let helper: QQMusicHelperInfo?
         let error: String?
@@ -1188,6 +1223,10 @@ actor QQMusicHelperProcess {
 
     private struct Aria2TellParams: Encodable, Sendable {
         let gid: String
+    }
+
+    private struct Aria2GidParams: Encodable, Sendable {
+        let gid: String?
     }
 
     private struct BreakerParams: Encodable, Sendable {
@@ -1466,6 +1505,42 @@ actor QQMusicHelperProcess {
             throw QQMusicHelperError.invalidResponse("下载引擎没有返回任务状态")
         }
         return download
+    }
+
+    /// Every task the engine holds.
+    func aria2Tasks() async -> [QQMusicAria2Task] {
+        let response = try? await send(method: "aria2_list", params: EmptyParams())
+        return (response?.downloads ?? []).sorted { left, right in
+            // Running first, then waiting/paused, and finished last: the list is
+            // read while something is happening, so what is happening is on top.
+            func rank(_ status: String) -> Int {
+                switch status {
+                case "active": return 0
+                case "waiting", "paused": return 1
+                default: return 2
+                }
+            }
+            return rank(left.status) < rank(right.status)
+        }
+    }
+
+    @discardableResult
+    func aria2Pause(gid: String? = nil) async -> [QQMusicAria2Task] {
+        let response = try? await send(method: "aria2_pause", params: Aria2GidParams(gid: gid))
+        return response?.downloads ?? []
+    }
+
+    @discardableResult
+    func aria2Unpause(gid: String? = nil) async -> [QQMusicAria2Task] {
+        let response = try? await send(method: "aria2_unpause", params: Aria2GidParams(gid: gid))
+        return response?.downloads ?? []
+    }
+
+    /// Cancel, deleting the partial files. Returns what the engine has left.
+    @discardableResult
+    func aria2Cancel(gid: String? = nil) async -> [QQMusicAria2Task] {
+        let response = try? await send(method: "aria2_cancel", params: Aria2GidParams(gid: gid))
+        return response?.downloads ?? []
     }
 
     func searchArtistArtwork(name: String, limit: Int = 5) async throws -> [QQMusicArtworkCandidate] {

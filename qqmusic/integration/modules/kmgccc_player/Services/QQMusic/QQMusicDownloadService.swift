@@ -23,9 +23,13 @@ nonisolated enum QQMusicDownloadError: LocalizedError, Sendable {
     case notPlayable(reason: String)
     case downloadFailed(String)
     case emptyAudio
+    /// The user cancelled this download; the caller stops rather than retrying.
+    case cancelled
 
     var errorDescription: String? {
         switch self {
+        case .cancelled:
+            return "已取消"
         case .notPlayable(let reason):
             switch reason {
             case "paid_required":
@@ -75,6 +79,19 @@ nonisolated struct QQMusicStagedDownload: Sendable {
 actor QQMusicDownloadService {
 
     private let helper: QQMusicHelperProcess
+
+    /// Gids the user cancelled.
+    ///
+    /// A cancelled task disappears from the engine, which looks exactly like an
+    /// engine restart from the polling side — and the difference matters: a
+    /// restart means "fetch it another way", a cancel means "stop". Without this
+    /// the fallback would download the file the user just cancelled.
+    private var cancelledGids: Set<String> = []
+
+    /// Called by the coordinator when the user cancels.
+    func markCancelled(_ gids: [String]) {
+        cancelledGids.formUnion(gids)
+    }
     private let session: URLSession
     /// Shared with the browse coordinator so artwork fetched once is reused by
     /// both the list rows and the download pipeline.
@@ -254,7 +271,7 @@ actor QQMusicDownloadService {
         songMid: String,
         handler: (@Sendable (QQMusicDownloadPhase) -> Void)?
     ) async throws {
-        if await downloadViaEngine(from: url, to: destination, songMid: songMid, handler: handler) {
+        if try await downloadViaEngine(from: url, to: destination, songMid: songMid, handler: handler) {
             return
         }
         try await downloadStreaming(from: url, to: destination, songMid: songMid, handler: handler)
@@ -267,7 +284,7 @@ actor QQMusicDownloadService {
         to destination: URL,
         songMid: String,
         handler: (@Sendable (QQMusicDownloadPhase) -> Void)?
-    ) async -> Bool {
+    ) async throws -> Bool {
         guard await helper.aria2Status(ensure: true)?.running == true else { return false }
         // The engine writes into its own directory under a name it is given; the
         // app then moves the finished file to staging, so the import pipeline sees
@@ -286,9 +303,32 @@ actor QQMusicDownloadService {
         // same number the streaming path reports as a fraction.
         let deadline = Date().addingTimeInterval(600)
         var lastReported = 0.0
+        var consecutiveTellFailures = 0
         while Date() < deadline {
             try? await Task.sleep(nanoseconds: 250_000_000)
-            guard let state = try? await helper.aria2Tell(gid: gid) else { continue }
+            let state: QQMusicAria2Download
+            do {
+                state = try await helper.aria2Tell(gid: gid)
+                consecutiveTellFailures = 0
+            } catch {
+                // The engine forgetting the task is the normal outcome of a
+                // restart: every gid it held dies with it. Report that instead of
+                // waiting out the deadline, so the download falls back to the app's
+                // own path and the user sees it happen.
+                if cancelledGids.contains(gid) {
+                    Log.info("[QQMusicDownload] \(songMid) cancelled by the user", category: .import)
+                    throw QQMusicDownloadError.cancelled
+                }
+                consecutiveTellFailures += 1
+                if consecutiveTellFailures >= 3 {
+                    Log.warning(
+                        "[QQMusicDownload] the engine lost \(songMid)'s task (restarted?); streaming instead",
+                        category: .import
+                    )
+                    return false
+                }
+                continue
+            }
             if state.isFinished {
                 guard let path = state.path else { return false }
                 let fileManager = FileManager.default
