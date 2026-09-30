@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-index 81b5c94f..babebef8 100644
+index 81b5c94f..686fc17b 100644
 --- a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 +++ b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 @@ -104,6 +104,348 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
@@ -1115,18 +1115,13 @@ index 81b5c94f..babebef8 100644
          guard let until = circuitOpenUntil else { return }
          if Date() < until {
              Log.warning("[QQMusicHelperProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)
-@@ -1163,30 +2157,47 @@ actor QQMusicHelperProcess {
+@@ -1163,30 +2157,49 @@ actor QQMusicHelperProcess {
      }
  
      private func findLaunchCandidate() -> LaunchCandidate? {
 -        let binaryURL = bundledBinaryURL()
 -        Log.info("[QQMusicHelperProcess] binary path=\(binaryURL.path)", category: .import)
-+        // Prefer a user-installed helper so it can be updated independently of
-+        // the app; fall back to the bundled copy.
-+        let external = Self.externalHelperDirectory
-+            .appendingPathComponent("qqmusic-helper", isDirectory: false)
-+        let candidates = [external, bundledBinaryURL()]
- 
+-
 -        var isDirectory: ObjCBool = false
 -        guard FileManager.default.fileExists(atPath: binaryURL.path, isDirectory: &isDirectory),
 -              !isDirectory.boolValue
@@ -1135,13 +1130,15 @@ index 81b5c94f..babebef8 100644
 -            Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
 -            return nil
 -        }
++        // Prefer a user-installed helper so it can be updated independently of
++        // the app; fall back to the bundled copy.
++        let external = Self.externalHelperDirectory
++            .appendingPathComponent("qqmusic-helper-next", isDirectory: false)
++        let candidates = [external, bundledBinaryURL()]
++
 +        for binaryURL in candidates {
 +            Log.info("[QQMusicHelperProcess] helper candidate path=\(binaryURL.path)", category: .import)
- 
--        guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else {
--            lastLaunchDiagnostics = "binary not executable: \(binaryURL.path)"
--            Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
--            return nil
++
 +            var isDirectory: ObjCBool = false
 +            guard FileManager.default.fileExists(atPath: binaryURL.path, isDirectory: &isDirectory),
 +                  !isDirectory.boolValue
@@ -1153,7 +1150,11 @@ index 81b5c94f..babebef8 100644
 +                Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
 +                continue
 +            }
-+
+ 
+-        guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else {
+-            lastLaunchDiagnostics = "binary not executable: \(binaryURL.path)"
+-            Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
+-            return nil
 +            lastLaunchDiagnostics = ""
 +            // Point the helper at a writable, app-owned directory so the login
 +            // ticket survives the helper's 60s idle shutdown.
@@ -1162,7 +1163,9 @@ index 81b5c94f..babebef8 100644
 +                withIntermediateDirectories: true
 +            )
 +            var environment = ProcessInfo.processInfo.environment
-+            environment["KMGCCC_QQMUSIC_CREDENTIAL_DIR"] = Self.credentialDirectory.path
++            // The component owns its credential store, so it is told *where its
++            // own directory is* rather than where the credential file is.
++            environment["QQMUSIC_HELPER_NEXT_DIR"] = Self.externalHelperDirectory.path
 +
 +            return LaunchCandidate(
 +                executableURL: binaryURL,
@@ -1183,10 +1186,16 @@ index 81b5c94f..babebef8 100644
      }
  
      private func bundledBinaryURL() -> URL {
-@@ -1198,6 +2209,30 @@ actor QQMusicHelperProcess {
-             .appendingPathComponent("qqmusic-helper", isDirectory: false)
-     }
- 
+@@ -1194,8 +2207,37 @@ actor QQMusicHelperProcess {
+             ?? URL(fileURLWithPath: Bundle.main.resourcePath ?? "", isDirectory: true)
+         return resources
+             .appendingPathComponent("Tools", isDirectory: true)
+-            .appendingPathComponent("qqmusic-helper", isDirectory: true)
+-            .appendingPathComponent("qqmusic-helper", isDirectory: false)
++            .appendingPathComponent("qqmusic-helper-next", isDirectory: true)
++            .appendingPathComponent("qqmusic-helper-next", isDirectory: false)
++    }
++
 +    /// Directory holding a user-installed helper, if any.
 +    ///
 +    /// The QQ Music endpoints are reverse-engineered and change without notice,
@@ -1194,13 +1203,18 @@ index 81b5c94f..babebef8 100644
 +    /// dropped here is picked up on the next launch without rebuilding the app;
 +    /// the bundled copy stays as the fallback so the feature always works out
 +    /// of the box.
++    /// The component's directory.
++    ///
++    /// Renamed with the component: this fork does not read the Python helper's
++    /// credential file, so a fresh login is expected once (the app's own login
++    /// sheet produces it, by QR or by the web login window).
 +    nonisolated static var externalHelperDirectory: URL {
 +        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
 +            ?? FileManager.default.homeDirectoryForCurrentUser
 +                .appendingPathComponent("Library/Application Support", isDirectory: true)
 +        return base
 +            .appendingPathComponent("kmgccc.player", isDirectory: true)
-+            .appendingPathComponent("QQMusicHelper", isDirectory: true)
++            .appendingPathComponent("QQMusicHelperNext", isDirectory: true)
 +    }
 +
 +    /// Root for the persisted QQ Music credential.
@@ -1209,8 +1223,6 @@ index 81b5c94f..babebef8 100644
 +    /// ticket survives helper restarts (the helper exits after 60s idle).
 +    nonisolated static var credentialDirectory: URL {
 +        externalHelperDirectory.appendingPathComponent("Credential", isDirectory: true)
-+    }
-+
+     }
+ 
      private func querySummary<Params: Encodable>(_ params: Params) -> String {
-         guard let data = try? encoder.encode(params),
-               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]

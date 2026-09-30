@@ -664,19 +664,17 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(PROJECT_DIR)/.build/products/qqmusic-helper/qqmusic-helper",
-				"$(PROJECT_DIR)/.build/products/qqmusic-helper/_internal.bundle",
+				"$(PROJECT_DIR)/Tools/helper-next/qqmusic-helper-next",
 			);
 			name = "Copy QQMusic helper";
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Tools/qqmusic-helper/qqmusic-helper",
-				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Tools/qqmusic-helper/_internal.bundle",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/Tools/qqmusic-helper-next/qqmusic-helper-next",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -euo pipefail\nSRC=\"${PROJECT_DIR}/.build/products/qqmusic-helper\"\nDST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Tools/qqmusic-helper\"\nAPP=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\"\nclean_xattrs() {\n  local root=\"$1\"\n  while IFS= read -r -d '' item; do\n    /usr/bin/xattr -d com.apple.FinderInfo \"${item}\" 2>/dev/null || true\n    /usr/bin/xattr -d 'com.apple.fileprovider.fpfs#P' \"${item}\" 2>/dev/null || true\n    /usr/bin/xattr -d com.apple.ResourceFork \"${item}\" 2>/dev/null || true\n  done < <(/usr/bin/find \"${root}\" -print0)\n  /usr/bin/xattr -cr \"${root}\" 2>/dev/null || true\n}\nif [ ! -x \"${SRC}/qqmusic-helper\" ] || [ ! -d \"${SRC}/_internal.bundle\" ]; then\n  echo \"error: Missing QQMusic helper build product.\"\n  echo \"error: Run ./scripts/bootstrap.sh before building.\"\n  exit 1\nfi\nrm -rf \"${DST}\"\nmkdir -p \"${DST}\"\nCOPYFILE_DISABLE=1 /bin/cp -f \"${SRC}/qqmusic-helper\" \"${DST}/qqmusic-helper\"\nCOPYFILE_DISABLE=1 /usr/bin/ditto \"${SRC}/_internal.bundle\" \"${DST}/_internal.bundle\"\nclean_xattrs \"${DST}\"\nchmod 755 \"${DST}/qqmusic-helper\"\ncodesign --force --deep --sign - \"${DST}/qqmusic-helper\" >/dev/null 2>&1 || true\nclean_xattrs \"${APP}\"\n";
+			shellScript = "set -euo pipefail\nSRC=\"${PROJECT_DIR}/Tools/helper-next\"\nDST=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/Tools/qqmusic-helper-next\"\nAPP=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\"\nclean_xattrs() {\n  local root=\"$1\"\n  while IFS= read -r -d '' item; do\n    /usr/bin/xattr -d com.apple.FinderInfo \"${item}\" 2>/dev/null || true\n    /usr/bin/xattr -d 'com.apple.fileprovider.fpfs#P' \"${item}\" 2>/dev/null || true\n    /usr/bin/xattr -d com.apple.ResourceFork \"${item}\" 2>/dev/null || true\n  done < <(/usr/bin/find \"${root}\" -print0)\n  /usr/bin/xattr -cr \"${root}\" 2>/dev/null || true\n}\nif [ ! -x \"${SRC}/qqmusic-helper-next\" ]; then\n  echo \"error: Missing the HelperNext component.\"\n  echo \"error: Put the component at Tools/helper-next/qqmusic-helper-next (built from the QQMusicApi_HelperNext repository).\"\n  exit 1\nfi\nrm -rf \"${DST}\"\nmkdir -p \"${DST}\"\nCOPYFILE_DISABLE=1 /bin/cp -f \"${SRC}/qqmusic-helper-next\" \"${DST}/qqmusic-helper-next\"\nclean_xattrs \"${DST}\"\nchmod 755 \"${DST}/qqmusic-helper-next\"\ncodesign --force --deep --sign - \"${DST}/qqmusic-helper-next\" >/dev/null 2>&1 || true\nclean_xattrs \"${APP}\"\n";
 		};
 		93D91A132FA5000000010002 /* Copy SACAD helper */ = {
 			isa = PBXShellScriptBuildPhase;

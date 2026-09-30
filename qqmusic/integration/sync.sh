@@ -90,6 +90,10 @@ is_shippable_path() {
     # the package for the same reason the Python helper does. `target/` is
     # git-ignored, so the build directory cannot leak in.
     Tools/HelperNext/*) return 0 ;;
+    # The component itself, vendored as a built binary so applying the patch
+    # package needs no Rust toolchain. Its source lives in the
+    # QQMusicApi_HelperNext repository; `Tools/helper-next/README.md` says so.
+    Tools/helper-next/*) return 0 ;;
     # The app's sources live in file-system-synchronized folders, so they need
     # no project entries — but the TEST target is an explicit file list. Without
     # this file the package would copy the test files into a tree that never

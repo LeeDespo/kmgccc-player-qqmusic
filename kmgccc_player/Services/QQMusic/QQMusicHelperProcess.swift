@@ -2160,7 +2160,7 @@ actor QQMusicHelperProcess {
         // Prefer a user-installed helper so it can be updated independently of
         // the app; fall back to the bundled copy.
         let external = Self.externalHelperDirectory
-            .appendingPathComponent("qqmusic-helper", isDirectory: false)
+            .appendingPathComponent("qqmusic-helper-next", isDirectory: false)
         let candidates = [external, bundledBinaryURL()]
 
         for binaryURL in candidates {
@@ -2186,7 +2186,9 @@ actor QQMusicHelperProcess {
                 withIntermediateDirectories: true
             )
             var environment = ProcessInfo.processInfo.environment
-            environment["KMGCCC_QQMUSIC_CREDENTIAL_DIR"] = Self.credentialDirectory.path
+            // The component owns its credential store, so it is told *where its
+            // own directory is* rather than where the credential file is.
+            environment["QQMUSIC_HELPER_NEXT_DIR"] = Self.externalHelperDirectory.path
 
             return LaunchCandidate(
                 executableURL: binaryURL,
@@ -2205,8 +2207,8 @@ actor QQMusicHelperProcess {
             ?? URL(fileURLWithPath: Bundle.main.resourcePath ?? "", isDirectory: true)
         return resources
             .appendingPathComponent("Tools", isDirectory: true)
-            .appendingPathComponent("qqmusic-helper", isDirectory: true)
-            .appendingPathComponent("qqmusic-helper", isDirectory: false)
+            .appendingPathComponent("qqmusic-helper-next", isDirectory: true)
+            .appendingPathComponent("qqmusic-helper-next", isDirectory: false)
     }
 
     /// Directory holding a user-installed helper, if any.
@@ -2216,13 +2218,18 @@ actor QQMusicHelperProcess {
     /// dropped here is picked up on the next launch without rebuilding the app;
     /// the bundled copy stays as the fallback so the feature always works out
     /// of the box.
+    /// The component's directory.
+    ///
+    /// Renamed with the component: this fork does not read the Python helper's
+    /// credential file, so a fresh login is expected once (the app's own login
+    /// sheet produces it, by QR or by the web login window).
     nonisolated static var externalHelperDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Library/Application Support", isDirectory: true)
         return base
             .appendingPathComponent("kmgccc.player", isDirectory: true)
-            .appendingPathComponent("QQMusicHelper", isDirectory: true)
+            .appendingPathComponent("QQMusicHelperNext", isDirectory: true)
     }
 
     /// Root for the persisted QQ Music credential.
