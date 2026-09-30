@@ -240,7 +240,91 @@ actor QQMusicDownloadService {
     ///
     /// The CDN advertises `Content-Length` and supports range requests, so
     /// counting bytes gives real progress instead of an indeterminate spinner.
+    /// Move the bytes for one track.
+    ///
+    /// Aria2 Next (the engine that ships with the component) does this when it is
+    /// available: it resumes, splits the file across connections and honours the
+    /// user's rate limits, none of which this app should re-implement. The app's
+    /// own streaming loop below is the fallback — kept, not deleted, because a
+    /// download that cannot happen at all is worse than one that is unsplit, and
+    /// because the engine can be absent (an older component install).
     private func downloadFile(
+        from url: URL,
+        to destination: URL,
+        songMid: String,
+        handler: (@Sendable (QQMusicDownloadPhase) -> Void)?
+    ) async throws {
+        if await downloadViaEngine(from: url, to: destination, songMid: songMid, handler: handler) {
+            return
+        }
+        try await downloadStreaming(from: url, to: destination, songMid: songMid, handler: handler)
+    }
+
+    /// Hand the file to Aria2 Next. Returns false when it could not be used, so
+    /// the caller falls back rather than failing the download.
+    private func downloadViaEngine(
+        from url: URL,
+        to destination: URL,
+        songMid: String,
+        handler: (@Sendable (QQMusicDownloadPhase) -> Void)?
+    ) async -> Bool {
+        guard await helper.aria2Status(ensure: true)?.running == true else { return false }
+        // The engine writes into its own directory under a name it is given; the
+        // app then moves the finished file to staging, so the import pipeline sees
+        // exactly what it saw before.
+        let out = "\(songMid)-\(UUID().uuidString.prefix(8)).\(destination.pathExtension)"
+        let queued: QQMusicAria2Download
+        do {
+            queued = try await helper.aria2Add(url: url.absoluteString, out: out)
+        } catch {
+            Log.warning("[QQMusicDownload] aria2 refused the task, streaming instead: \(error)", category: .import)
+            return false
+        }
+        guard let gid = queued.gid else { return false }
+
+        // Poll until it finishes. The engine reports a byte count, which is the
+        // same number the streaming path reports as a fraction.
+        let deadline = Date().addingTimeInterval(600)
+        var lastReported = 0.0
+        while Date() < deadline {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard let state = try? await helper.aria2Tell(gid: gid) else { continue }
+            if state.isFinished {
+                guard let path = state.path else { return false }
+                let fileManager = FileManager.default
+                if fileManager.fileExists(atPath: destination.path) {
+                    try? fileManager.removeItem(at: destination)
+                }
+                do {
+                    try fileManager.moveItem(at: URL(fileURLWithPath: path), to: destination)
+                } catch {
+                    Log.warning("[QQMusicDownload] aria2 finished but the move failed: \(error)", category: .import)
+                    return false
+                }
+                record(.downloading(fraction: 1), for: songMid, handler: handler)
+                return true
+            }
+            if state.isFailed {
+                Log.warning(
+                    "[QQMusicDownload] aria2 reported \(state.error ?? state.status ?? "failure") (\(state.errorCode ?? "-"))",
+                    category: .import
+                )
+                return false
+            }
+            let total = Double(state.total ?? 0)
+            let completed = Double(state.completed ?? 0)
+            guard total > 0 else { continue }
+            let fraction = completed / total
+            if fraction - lastReported >= 0.01 {
+                lastReported = fraction
+                record(.downloading(fraction: min(fraction, 1)), for: songMid, handler: handler)
+            }
+        }
+        Log.warning("[QQMusicDownload] aria2 timed out on \(songMid)", category: .import)
+        return false
+    }
+
+    private func downloadStreaming(
         from url: URL,
         to destination: URL,
         songMid: String,

@@ -53,6 +53,11 @@ require_directory "$RESOURCES/Tools/lddc-server/_internal" "LDDC runtime directo
 # The online source's data component: one self-contained binary, no runtime
 # directory (it replaced the Python helper, which shipped a whole interpreter).
 require_executable "$RESOURCES/Tools/qqmusic-helper-next/qqmusic-helper-next" "QQMusic data component"
+# The download engine the component starts; the app still works without it (it
+# falls back to its own streaming download), so this is a warning, not a failure.
+if [[ ! -x "$RESOURCES/Tools/qqmusic-helper-next/aria2-next" ]]; then
+  echo "[warn] Aria2 Next is not bundled; downloads will use the app's own path."
+fi
 require_executable "$RESOURCES/Tools/sacad/sacad" "SACAD helper"
 
 require_file "$RESOURCES/mediaremote-adapter/bin/mediaremote-adapter.pl" "MediaRemoteAdapter launcher"

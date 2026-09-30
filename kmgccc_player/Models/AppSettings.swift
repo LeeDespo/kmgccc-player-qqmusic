@@ -1143,6 +1143,11 @@ public final class AppSettings {
         static let preloadOnLaunch = "qqMusicPreloadOnLaunch"
         /// Whether the online source is what the app opens on.
         static let launchHome = "qqMusicLaunchHome"
+        static let aria2Split = "qqMusicAria2Split"
+        static let aria2ConnectionsPerServer = "qqMusicAria2ConnectionsPerServer"
+        static let aria2ConcurrentDownloads = "qqMusicAria2ConcurrentDownloads"
+        static let aria2MinSplitMiB = "qqMusicAria2MinSplitMiB"
+        static let aria2LimitKiB = "qqMusicAria2LimitKiB"
         static let rateLimitEnabled = "qqMusicRateLimitEnabled"
         static let rateLimitWindowSeconds = "qqMusicRateLimitWindowSeconds"
         static let rateLimitMaxRequests = "qqMusicRateLimitMaxRequests"
@@ -1237,6 +1242,70 @@ public final class AppSettings {
         set {
             withMutation(keyPath: \.qqMusicLaunchHome) {
                 UserDefaults.standard.set(newValue, forKey: QQMusicKeys.launchHome)
+            }
+        }
+    }
+
+    /// Aria2 Next's tunables, as the settings page edits them.
+    ///
+    /// Defaults are aria2's own, except the task count: a music player fetching a
+    /// handful of files gains nothing from downloading several at once.
+    var qqMusicAria2Split: Int {
+        get {
+            access(keyPath: \.qqMusicAria2Split)
+            return qqMusicInt(QQMusicKeys.aria2Split, default: 5)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicAria2Split) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.aria2Split)
+            }
+        }
+    }
+
+    var qqMusicAria2ConnectionsPerServer: Int {
+        get {
+            access(keyPath: \.qqMusicAria2ConnectionsPerServer)
+            return qqMusicInt(QQMusicKeys.aria2ConnectionsPerServer, default: 5)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicAria2ConnectionsPerServer) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.aria2ConnectionsPerServer)
+            }
+        }
+    }
+
+    var qqMusicAria2ConcurrentDownloads: Int {
+        get {
+            access(keyPath: \.qqMusicAria2ConcurrentDownloads)
+            return qqMusicInt(QQMusicKeys.aria2ConcurrentDownloads, default: 1)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicAria2ConcurrentDownloads) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.aria2ConcurrentDownloads)
+            }
+        }
+    }
+
+    var qqMusicAria2MinSplitMiB: Int {
+        get {
+            access(keyPath: \.qqMusicAria2MinSplitMiB)
+            return qqMusicInt(QQMusicKeys.aria2MinSplitMiB, default: 1)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicAria2MinSplitMiB) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.aria2MinSplitMiB)
+            }
+        }
+    }
+
+    var qqMusicAria2LimitKiB: Int {
+        get {
+            access(keyPath: \.qqMusicAria2LimitKiB)
+            return qqMusicInt(QQMusicKeys.aria2LimitKiB, default: 0)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicAria2LimitKiB) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.aria2LimitKiB)
             }
         }
     }

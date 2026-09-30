@@ -82,6 +82,9 @@ struct QQMusicSettingsView: View {
     @State private var helperBinaryPath: String?
     /// What the component reports it is enforcing, mirroring `effectiveCircuit`.
     @State private var effectiveRateLimit: QQMusicRateLimitConfiguration?
+    /// The download engine's state, so the section can show it and offer a restart.
+    @State private var aria2Status: QQMusicAria2Status?
+    @State private var isRestartingAria2 = false
 
     private let helper = QQMusicHelperProcess.shared
 
@@ -571,6 +574,8 @@ struct QQMusicSettingsView: View {
             .padding(SettingsStyleTokens.groupPadding)
             .background(sectionBackground)
 
+            aria2Section
+
             // No notices section: the online surface has no notice UI any more
             // (see `QQMusicOnlineCoordinator`'s header), so switches that gated
             // it were removed rather than left here doing nothing.
@@ -953,6 +958,8 @@ struct QQMusicSettingsView: View {
         defer { isCheckingStatus = false }
         helperInfo = try? await helper.helperInfo()
         helperBinaryPath = await helper.runningBinaryPath()
+        await refreshAria2()
+        await pushAria2Options()
         await pushCircuitConfiguration()
         await pushRateLimitConfiguration()
         do {
@@ -1192,6 +1199,160 @@ struct QQMusicSettingsView: View {
                 .toggleStyle(.switch)
                 .labelsHidden()
                 .tint(themeStore.accentColor)
+        }
+    }
+
+    // MARK: - Download engine
+
+    /// Aria2 Next: the download engine that ships with the component.
+    ///
+    /// Its own section rather than rows inside 组件, because it is a separate
+    /// process with its own lifecycle: it can be restarted, and it has its own
+    /// idea of how much of the network to use.
+    private var aria2Section: some View {
+        VStack(alignment: .leading, spacing: SettingsStyleTokens.groupSpacing) {
+            HStack(spacing: 6) {
+                SettingsHeaderLabel(title: "下载引擎", systemImage: "arrow.down.circle")
+                SettingsInfoButton(
+                    text: "歌曲的字节由 Aria2 Next 搬运（随组件一同发布）：它支持多连接、断点续传与限速。引擎不可用时会自动退回应用自身的下载方式，功能不受影响。"
+                )
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                labeledValue("状态", aria2Summary)
+                if let version = aria2Status?.version {
+                    labeledValue("版本", version)
+                }
+                if let port = aria2Status?.port, aria2Status?.running == true {
+                    labeledValue("端口", "\(port)")
+                }
+
+                HStack(spacing: 8) {
+                    Button("重启引擎") { Task { await restartAria2() } }
+                        .disabled(isRestartingAria2 || aria2Status?.installed != true)
+                    Button("重新检查") { Task { await refreshAria2() } }
+                    Spacer()
+                }
+
+                Divider().opacity(0.4)
+
+                stepperRow(
+                    title: "分块数量",
+                    value: aria2Split,
+                    range: 1...16,
+                    unit: "块",
+                    detail: "一个文件切成几段并行下载（aria2 的 split）。对同一台服务器开太多连接反而会被限速，通常 4–8 足够。"
+                )
+                stepperRow(
+                    title: "单服务器连接数",
+                    value: aria2ConnectionPerServer,
+                    range: 1...16,
+                    unit: "个",
+                    detail: "向同一台服务器最多同时开几个连接（max-connection-per-server）。"
+                )
+                stepperRow(
+                    title: "同时下载任务",
+                    value: aria2Concurrent,
+                    range: 1...10,
+                    unit: "个",
+                    detail: "最多同时下载几个文件（max-concurrent-downloads）。歌曲文件不大，1–2 个通常比贪多更快。"
+                )
+                stepperRow(
+                    title: "最小分块",
+                    value: aria2MinSplit,
+                    range: 1...64,
+                    unit: "MB",
+                    detail: "小于这个大小的文件不再切分（min-split-size）。"
+                )
+                stepperRow(
+                    title: "总下载限速",
+                    value: aria2Limit,
+                    range: 0...102_400,
+                    unit: "KB/s",
+                    detail: "整体下载速度上限（max-overall-download-limit）。0 表示不限速。"
+                )
+            }
+            .padding(SettingsStyleTokens.groupPadding)
+            .background(sectionBackground)
+        }
+        .onChange(of: AppSettings.shared.qqMusicAria2Split) { _, _ in Task { await pushAria2Options() } }
+        .onChange(of: AppSettings.shared.qqMusicAria2ConnectionsPerServer) { _, _ in Task { await pushAria2Options() } }
+        .onChange(of: AppSettings.shared.qqMusicAria2ConcurrentDownloads) { _, _ in Task { await pushAria2Options() } }
+        .onChange(of: AppSettings.shared.qqMusicAria2MinSplitMiB) { _, _ in Task { await pushAria2Options() } }
+        .onChange(of: AppSettings.shared.qqMusicAria2LimitKiB) { _, _ in Task { await pushAria2Options() } }
+    }
+
+    private var aria2Summary: String {
+        guard let status = aria2Status else { return "未知" }
+        if !status.installed { return "未随组件携带（下载将退回应用自身的方式）" }
+        if !status.running { return "已就绪（未运行）" }
+        var parts = ["运行中"]
+        if let active = status.active, active > 0 { parts.append("\(active) 个任务") }
+        if let speed = status.downloadSpeed, speed > 0 {
+            parts.append(ByteCountFormatter.string(fromByteCount: Int64(speed), countStyle: .file) + "/s")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private var aria2Split: Binding<Int> {
+        Binding(
+            get: { AppSettings.shared.qqMusicAria2Split },
+            set: { AppSettings.shared.qqMusicAria2Split = $0 }
+        )
+    }
+
+    private var aria2ConnectionPerServer: Binding<Int> {
+        Binding(
+            get: { AppSettings.shared.qqMusicAria2ConnectionsPerServer },
+            set: { AppSettings.shared.qqMusicAria2ConnectionsPerServer = $0 }
+        )
+    }
+
+    private var aria2Concurrent: Binding<Int> {
+        Binding(
+            get: { AppSettings.shared.qqMusicAria2ConcurrentDownloads },
+            set: { AppSettings.shared.qqMusicAria2ConcurrentDownloads = $0 }
+        )
+    }
+
+    private var aria2MinSplit: Binding<Int> {
+        Binding(
+            get: { AppSettings.shared.qqMusicAria2MinSplitMiB },
+            set: { AppSettings.shared.qqMusicAria2MinSplitMiB = $0 }
+        )
+    }
+
+    private var aria2Limit: Binding<Int> {
+        Binding(
+            get: { AppSettings.shared.qqMusicAria2LimitKiB },
+            set: { AppSettings.shared.qqMusicAria2LimitKiB = $0 }
+        )
+    }
+
+    private func refreshAria2() async {
+        aria2Status = await helper.aria2Status(ensure: false)
+    }
+
+    private func restartAria2() async {
+        isRestartingAria2 = true
+        defer { isRestartingAria2 = false }
+        aria2Status = await helper.aria2Restart()
+        await pushAria2Options()
+    }
+
+    /// Send the numbers. The engine applies them live, so this neither restarts
+    /// anything nor disturbs a download in flight.
+    private func pushAria2Options() async {
+        let settings = AppSettings.shared
+        let options = QQMusicAria2Options(
+            split: settings.qqMusicAria2Split,
+            maxConnectionPerServer: settings.qqMusicAria2ConnectionsPerServer,
+            maxConcurrentDownloads: settings.qqMusicAria2ConcurrentDownloads,
+            minSplitSizeMiB: settings.qqMusicAria2MinSplitMiB,
+            maxOverallDownloadLimitKiB: settings.qqMusicAria2LimitKiB
+        )
+        if let status = await helper.aria2Configure(options) {
+            aria2Status = status
         }
     }
 }

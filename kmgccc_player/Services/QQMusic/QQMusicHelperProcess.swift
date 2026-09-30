@@ -267,6 +267,71 @@ nonisolated struct QQMusicBreakerConfiguration: Codable, Equatable, Sendable {
     var openSeconds: Int
 }
 
+/// What the download engine is doing (Aria2 Next, shipped with the component).
+nonisolated struct QQMusicAria2Status: Codable, Equatable, Sendable {
+    var installed: Bool
+    var running: Bool
+    var binary: String
+    var port: Int?
+    var version: String?
+    var active: Int?
+    var downloads: Int?
+    var waiting: Int?
+    var stopped: Int?
+    var downloadSpeed: Int?
+    var options: QQMusicAria2Options
+
+    static let none = QQMusicAria2Status(
+        installed: false,
+        running: false,
+        binary: "",
+        port: nil,
+        version: nil,
+        active: nil,
+        downloads: nil,
+        waiting: nil,
+        stopped: nil,
+        downloadSpeed: nil,
+        options: .default
+    )
+}
+
+/// The engine's tunables, as the settings page edits them.
+nonisolated struct QQMusicAria2Options: Codable, Equatable, Sendable {
+    var split: Int
+    /// `--max-connection-per-server`
+    var maxConnectionPerServer: Int
+    /// `--max-concurrent-downloads`
+    var maxConcurrentDownloads: Int
+    /// `--min-split-size`, in MiB
+    var minSplitSizeMiB: Int
+    /// `--max-overall-download-limit`, in KiB/s; 0 is aria2's "no limit".
+    var maxOverallDownloadLimitKiB: Int
+
+    static let `default` = QQMusicAria2Options(
+        split: 5,
+        maxConnectionPerServer: 5,
+        maxConcurrentDownloads: 1,
+        minSplitSizeMiB: 1,
+        maxOverallDownloadLimitKiB: 0
+    )
+}
+
+/// One queued file: the gid it was given, or its live state.
+nonisolated struct QQMusicAria2Download: Codable, Equatable, Sendable {
+    var gid: String?
+    var status: String?
+    var completed: Int?
+    var total: Int?
+    var speed: Int?
+    var path: String?
+    var error: String?
+    var errorCode: String?
+
+    var isFinished: Bool { status == "complete" }
+    var isFailed: Bool { status == "error" || status == "removed" }
+}
+
 nonisolated struct QQMusicLoginStatus: Codable, Equatable, Sendable {
     var loggedIn: Bool
     var musicId: Int?
@@ -1007,6 +1072,8 @@ actor QQMusicHelperProcess {
         let login: QQMusicLoginStatus?
         let rateLimit: QQMusicRateLimitConfiguration?
         let breaker: QQMusicBreakerConfiguration?
+        let aria2: QQMusicAria2Status?
+        let download: QQMusicAria2Download?
         let qrcode: QQMusicLoginQRCode?
         let helper: QQMusicHelperInfo?
         let error: String?
@@ -1100,6 +1167,27 @@ actor QQMusicHelperProcess {
         let limit: Int
         let page: Int
         let sort: String
+    }
+
+    private struct Aria2StatusParams: Encodable, Sendable {
+        let ensure: Bool
+    }
+
+    private struct Aria2ConfigureParams: Encodable, Sendable {
+        let split: Int
+        let maxConnectionPerServer: Int
+        let maxConcurrentDownloads: Int
+        let minSplitSizeMiB: Int
+        let maxOverallDownloadLimitKiB: Int
+    }
+
+    private struct Aria2AddParams: Encodable, Sendable {
+        let url: String
+        let out: String
+    }
+
+    private struct Aria2TellParams: Encodable, Sendable {
+        let gid: String
     }
 
     private struct BreakerParams: Encodable, Sendable {
@@ -1329,6 +1417,55 @@ actor QQMusicHelperProcess {
         // The component clamps what it will accept, so the acknowledgement is
         // what the settings page shows — not the number the user typed.
         return response?.rateLimit
+    }
+
+    // MARK: - The download engine
+
+    /// The engine's state. `ensure` starts it when it is not up; the settings page
+    /// asks without it, so opening a window never spawns a daemon.
+    func aria2Status(ensure: Bool = false) async -> QQMusicAria2Status? {
+        let response = try? await send(method: "aria2_status", params: Aria2StatusParams(ensure: ensure))
+        return response?.aria2
+    }
+
+    func aria2Restart() async -> QQMusicAria2Status? {
+        let response = try? await send(method: "aria2_restart", params: EmptyParams())
+        return response?.aria2
+    }
+
+    @discardableResult
+    func aria2Configure(_ options: QQMusicAria2Options) async -> QQMusicAria2Status? {
+        let response = try? await send(
+            method: "aria2_configure",
+            params: Aria2ConfigureParams(
+                split: options.split,
+                maxConnectionPerServer: options.maxConnectionPerServer,
+                maxConcurrentDownloads: options.maxConcurrentDownloads,
+                minSplitSizeMiB: options.minSplitSizeMiB,
+                maxOverallDownloadLimitKiB: options.maxOverallDownloadLimitKiB
+            )
+        )
+        return response?.aria2
+    }
+
+    /// Queue one file and return its handle.
+    func aria2Add(url: String, out: String) async throws -> QQMusicAria2Download {
+        let response = try await send(
+            method: "aria2_add",
+            params: Aria2AddParams(url: url, out: out)
+        )
+        guard let download = response.download, download.gid != nil else {
+            throw QQMusicHelperError.invalidResponse("下载引擎没有返回任务 id")
+        }
+        return download
+    }
+
+    func aria2Tell(gid: String) async throws -> QQMusicAria2Download {
+        let response = try await send(method: "aria2_tell", params: Aria2TellParams(gid: gid))
+        guard let download = response.download else {
+            throw QQMusicHelperError.invalidResponse("下载引擎没有返回任务状态")
+        }
+        return download
     }
 
     func searchArtistArtwork(name: String, limit: Int = 5) async throws -> [QQMusicArtworkCandidate] {

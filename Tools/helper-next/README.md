@@ -58,6 +58,67 @@ cp target/release/qqmusic-helper-next \
 - **`get_status` 会回显两者**（`status.rateLimit.config` 与 `status.breakerConfig`），
   所以应用能显示"组件当前生效"的值，而不是显示用户输入的数字。
 
+
+## 下载引擎：Aria2 Next（随组件一同发布）
+
+歌曲的字节不在这里搬。组件启动 **Aria2 Next**（[AnInsomniacy/aria2-next](https://github.com/AnInsomniacy/aria2-next)，
+aria2 的活跃分支，2.7.5）——它就在组件旁边：`<组件目录>/aria2-next`，随同一个发行包发布。
+
+```
+应用 → 组件（aria2_add）→ Aria2 Next（JSON-RPC，回环端口 16800）→ CDN
+```
+
+**为什么是另一个进程**：组件管的是"跟腾讯的接口说话"（签名、cookie、限流、解析），
+搬字节是另一件事，aria2 有成熟实现（多连接、断点续传、限速）。应用那边因此只剩一句"要这个文件"。
+
+**协议方法**：
+
+```json
+// 状态。ensure=true 会顺手把引擎拉起来；设置页用 false，只报告不启动。
+{"id":"1","method":"aria2_status","params":{"ensure":false}}
+{"id":"1","ok":true,"aria2":{"installed":true,"running":true,"version":"2.7.5","port":16800,
+  "active":1,"downloadSpeed":4765284,"options":{"split":5,"maxConnectionPerServer":5,
+  "maxConcurrentDownloads":1,"minSplitSizeMiB":1,"maxOverallDownloadLimitKiB":0}}}
+
+// 重启（设置页的「重启引擎」）
+{"id":"2","method":"aria2_restart","params":{}}
+
+// 调整参数：立即生效（aria2.changeGlobalOption），不重启、不打断在下的任务
+{"id":"3","method":"aria2_configure","params":{"split":5,"maxConnectionPerServer":5,
+  "maxConcurrentDownloads":1,"minSplitSizeMiB":1,"maxOverallDownloadLimitKiB":0}}
+
+// 排队一个文件，out 是引擎目录里的文件名（应用挑它，导入才拿得到期望的名字）
+{"id":"4","method":"aria2_add","params":{"url":"https://isure.stream.qqmusic.qq.com/...","out":"0039MnYb0qxYhV-ab12cd34.flac"}}
+{"id":"4","ok":true,"download":{"gid":"d1cdc604873d9e10"}}
+
+// 轮询进度（status 为 complete / error / removed 时结束）
+{"id":"5","method":"aria2_tell","params":{"gid":"d1cdc604873d9e10"}}
+{"id":"5","ok":true,"download":{"status":"active","completed":8290304,"total":19844411,
+  "speed":4032580,"path":".../Downloads/xxx.flac","error":"","errorCode":"0"}}
+```
+
+**几个要点**：
+
+- 端口固定 **16800**（不是 aria2 默认的 6800——那正是用户自己的守护进程会占的），只监听回环，
+  `--rpc-secret` 每次启动重新生成。
+- 引擎**按需启动**：打开设置页不会拉起进程，只有真的要下载时才启动。
+- 参数会被 clamp（split/连接数 1–16、任务数 1–10、最小分块 1MB 起）——上游对这些字段是零容忍的。
+- 引擎缺席（老版本组件目录）时，应用**自动退回自己的下载实现**，功能不受影响。
+
+### 安装/替换时注意
+
+`aria2-next` 与组件一样，**复制到新位置后要 ad-hoc 签名**：
+
+```sh
+cp <新组件>/aria2-next ~/Library/Application\ Support/kmgccc.player/QQMusicHelperNext/
+xattr -cr ~/Library/Application\ Support/kmgccc.player/QQMusicHelperNext
+codesign --force --sign - ~/Library/Application\ Support/kmgccc.player/QQMusicHelperNext/aria2-next
+codesign --force --sign - ~/Library/Application\ Support/kmgccc.player/QQMusicHelperNext/qqmusic-helper-next
+```
+
+不签名的可执行文件在带 `com.apple.provenance` 的位置（外部目录、/tmp 都算）会被系统**直接杀掉**：
+退出码 137、stdout/stderr 一个字都没有——实测过，`xattr -cr` 单独不够，必须签名。
+
 ## 兼容性不是"差不多就行"
 
 应用按固定的键名解码每个响应，缺键不会报错——**只会让那个字段静默为空**。
