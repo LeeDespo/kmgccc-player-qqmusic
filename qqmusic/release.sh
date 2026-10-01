@@ -54,7 +54,7 @@ step() { printf '\n== %s ==\n' "$1"; }
 if [[ -z "$PATCH_VERSION" ]]; then
     PATCH_VERSION="$(
         sed -n 's/.*static let patchVersion = "\([^"]*\)".*/\1/p' \
-            "$REPO_ROOT/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift" | head -1
+            "$REPO_ROOT/kmgccc_player/Services/QQMusic/QQMusicComponentProcess.swift" | head -1
     )"
 fi
 [[ -n "$PATCH_VERSION" ]] || fail "could not read patchVersion from the source; pass --patch-version"
