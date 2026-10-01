@@ -84,6 +84,11 @@ nonisolated struct QQMusicStagedDownload: Sendable {
     /// Album cover, fetched separately because the CDN audio carries no APIC frame.
     let artworkData: Data?
     /// Raw LRC text; the import path converts it to TTML.
+    ///
+    /// When the component has the word-level track this is **that** — an LRC with a
+    /// timestamp before every word — because the import path turns any LRC into
+    /// TTML, and word-level tags are what make the result word-level. The
+    /// whole-line text is then only a fallback for songs without one.
     let lyricText: String?
     let translatedLyricText: String?
 }
@@ -274,7 +279,7 @@ actor QQMusicDownloadService {
             audioURL: queued.audioURL,
             track: track,
             artworkData: artworkData,
-            lyricText: lyricPayload?.lyric,
+            lyricText: lyricPayload?.preferredLyric,
             translatedLyricText: lyricPayload?.translation
         )
     }
@@ -390,7 +395,7 @@ actor QQMusicDownloadService {
             audioURL: audioURL,
             track: track,
             artworkData: artworkData,
-            lyricText: lyricPayload?.lyric,
+            lyricText: lyricPayload?.preferredLyric,
             translatedLyricText: lyricPayload?.translation
         )
     }

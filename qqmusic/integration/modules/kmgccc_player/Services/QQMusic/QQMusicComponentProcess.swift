@@ -232,6 +232,20 @@ nonisolated struct QQMusicLyricPayload: Codable, Equatable, Sendable {
     var lyric: String?
     var translation: String?
     var romanization: String?
+    /// The word-level track, when the service has one: the same LRC shape, with a
+    /// tag before every word rather than only at the start of a line.
+    ///
+    /// A sibling of `lyric` in the reply, not part of it — which is why the client
+    /// puts it here by hand.
+    var wordLyric: String?
+
+    /// What to keep: the word-level track when there is one, the whole-line text
+    /// otherwise. The import path converts either into TTML, so this is the only
+    /// place the choice has to be made.
+    var preferredLyric: String? {
+        if let wordLyric, !wordLyric.isEmpty { return wordLyric }
+        return lyric
+    }
 }
 
 /// Outcome of asking the upstream for a playback url.
@@ -1110,6 +1124,7 @@ actor QQMusicComponentProcess {
         let breaker: QQMusicBreakerConfiguration?
         let aria2: QQMusicAria2Status?
         let download: QQMusicAria2Download?
+        let wordLyric: String?
         let downloads: [QQMusicAria2Task]?
         let removed: [String]?
         let qrcode: QQMusicLoginQRCode?
@@ -1980,7 +1995,11 @@ actor QQMusicComponentProcess {
             method: "fetch_lyric",
             params: LyricParams(songMid: songMid, songId: songId, translation: translation)
         )
-        return response.lyric ?? QQMusicLyricPayload()
+        var payload = response.lyric ?? QQMusicLyricPayload()
+        // The word-level track travels beside the payload in the reply, so it has
+        // to be folded in here rather than decoded from it.
+        payload.wordLyric = response.wordLyric
+        return payload
     }
 
     /// Ask for the best playable url. Returns `playable == false` (rather than
