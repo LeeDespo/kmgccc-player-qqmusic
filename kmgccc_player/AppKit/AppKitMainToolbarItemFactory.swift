@@ -360,7 +360,14 @@ struct AppKitMainToolbarItemFactory {
 
         let host = NSHostingView(
             rootView: QQMusicDownloadProgressControl { visible in
-                item.isHidden = !visible
+                // Deferred, and only when it actually changes. The view reports
+                // this from inside a SwiftUI update, and mutating toolbar layout
+                // there invalidates AppKit's own layout pass re-entrantly — which
+                // showed up as the item *next to* this one disappearing.
+                Task { @MainActor in
+                    guard item.isHidden == visible else { return }
+                    item.isHidden = !visible
+                }
             }
             .qqMusicBrowseEnvironment(
                 coordinator: coordinator,

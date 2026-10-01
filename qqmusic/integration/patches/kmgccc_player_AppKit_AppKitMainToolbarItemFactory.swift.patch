@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/AppKit/AppKitMainToolbarItemFactory.swift b/kmgccc_player/AppKit/AppKitMainToolbarItemFactory.swift
-index 0c7d8155..e7bf14c9 100644
+index 0c7d8155..b19b54f0 100644
 --- a/kmgccc_player/AppKit/AppKitMainToolbarItemFactory.swift
 +++ b/kmgccc_player/AppKit/AppKitMainToolbarItemFactory.swift
 @@ -6,6 +6,7 @@
@@ -44,7 +44,7 @@ index 0c7d8155..e7bf14c9 100644
          case AppKitMainToolbarController.Identifier.lyricsToggle:
              return makeLyricsToggleItem(
                  identifier: identifier,
-@@ -263,6 +277,103 @@ struct AppKitMainToolbarItemFactory {
+@@ -263,6 +277,110 @@ struct AppKitMainToolbarItemFactory {
          return group
      }
  
@@ -131,7 +131,14 @@ index 0c7d8155..e7bf14c9 100644
 +
 +        let host = NSHostingView(
 +            rootView: QQMusicDownloadProgressControl { visible in
-+                item.isHidden = !visible
++                // Deferred, and only when it actually changes. The view reports
++                // this from inside a SwiftUI update, and mutating toolbar layout
++                // there invalidates AppKit's own layout pass re-entrantly — which
++                // showed up as the item *next to* this one disappearing.
++                Task { @MainActor in
++                    guard item.isHidden == visible else { return }
++                    item.isHidden = !visible
++                }
 +            }
 +            .qqMusicBrowseEnvironment(
 +                coordinator: coordinator,
