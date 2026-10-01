@@ -17,6 +17,11 @@
 #             the patch to consult, and the run continues so one conflict does
 #             not hide the rest.
 #
+#   removals.txt  Paths the feature deletes from upstream. A diff cannot express
+#             "this file should not exist", so the list is kept separately and
+#             applied last, once nothing else needs those files. A path that is
+#             already gone is fine — that is what reapplying should look like.
+#
 # The target does not have to be a git repository. Only --reset and the 3-way
 # fallback need one; without it a failing patch falls back to --reject, which
 # keeps the hunks that did apply and leaves the rest in a .rej file.
@@ -119,7 +124,7 @@ if (( DO_RESET == 1 )); then
 fi
 
 # --- modules -----------------------------------------------------------------
-echo "-- 1/3 new files (modules/) --"
+echo "-- 1/4 new files (modules/) --"
 while IFS= read -r rel; do
   src="${HERE}/modules/${rel}"
   dst="${REPO}/${rel}"
@@ -147,7 +152,7 @@ done < <(cd "$HERE/modules" && find . -type f | sed 's|^\./||' | sort)
 
 # --- patches -----------------------------------------------------------------
 echo
-echo "-- 2/3 patches to upstream files (patches/) --"
+echo "-- 2/4 patches to upstream files (patches/) --"
 while IFS= read -r patch; do
   name="$(basename "$patch" .patch)"
   # The patch carries the real path; read it from the diff header rather than
@@ -189,13 +194,40 @@ while IFS= read -r patch; do
   fi
 done < <(find "$HERE/patches" -name '*.patch' | sort)
 
+# --- removals ----------------------------------------------------------------
+echo
+echo "-- 3/4 removals (files the feature deletes) --"
+if [[ -f "$HERE/removals.txt" ]]; then
+  while IFS= read -r rel; do
+    [[ -n "$rel" ]] || continue
+    case "$rel" in \#*) continue ;; esac
+    dst="${REPO}/${rel}"
+    if [[ ! -e "$dst" ]]; then
+      printf '  = %s (already absent)\n' "$rel"
+      continue
+    fi
+    if [[ $DRY_RUN -eq 1 ]]; then
+      printf '  - %s\n' "$rel"
+    else
+      rm -f "$dst"
+      # Leave no empty directories behind: a removed component directory that
+      # still exists looks like a half-applied package.
+      rmdir -p "$(dirname "$dst")" 2>/dev/null || true
+      printf '  - %s\n' "$rel"
+    fi
+    applied=$((applied + 1))
+  done < <(grep -v '^[[:space:]]*$' "$HERE/removals.txt" | sort -r)
+else
+  echo '  = none'
+fi
+
 # --- verify ------------------------------------------------------------------
 # "It applied" is not the same as "it produced the intended file". Compare the
 # result against modules/ byte-for-byte, and refuse to call a tree healthy
 # while it still carries conflict markers or unresolved rejects.
 if (( DO_VERIFY == 1 && DRY_RUN == 0 )); then
   echo
-  echo "-- 3/3 content check --"
+  echo "-- 4/4 content check --"
   bad=0
   while IFS= read -r rel; do
     if ! cmp -s "$HERE/modules/${rel}" "$REPO/${rel}"; then
@@ -219,7 +251,7 @@ if (( DO_VERIFY == 1 && DRY_RUN == 0 )); then
   fi
 else
   echo
-  echo "-- 3/3 content check (skipped; pass --verify) --"
+  echo "-- 4/4 content check (skipped; pass --verify) --"
 fi
 
 echo
@@ -239,7 +271,7 @@ if (( conflicted == 0 && DRY_RUN == 0 )); then
   cat <<'NEXT'
 
 Next steps:
-  ./scripts/bootstrap.sh --component qqmusic-helper   # build the helper
+  ./scripts/bootstrap.sh                             # build the other components
   ./scripts/build_and_run.sh                          # build the app
 
 See README.md for the verification checklist.

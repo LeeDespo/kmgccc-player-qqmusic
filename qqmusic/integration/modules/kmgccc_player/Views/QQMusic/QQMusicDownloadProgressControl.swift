@@ -51,7 +51,32 @@ struct QQMusicDownloadProgressControl: View {
         return coordinator.aria2Tasks.first { $0.gid == gid }
     }
 
-    private var isVisible: Bool { !items.isEmpty }
+    /// On screen while anything is downloading **or** anything failed.
+    ///
+    /// A batch that finished cleanly takes the box away with it; a failure keeps
+    /// it there, because that is the one outcome the user has to act on.
+    private var isVisible: Bool { !downloading.isEmpty || !failed.isEmpty }
+
+    private var downloading: [QQMusicUserDownloadProgress.Item] {
+        items.filter { !$0.isFinished && !isFailed($0) }
+    }
+
+    private var failed: [QQMusicUserDownloadProgress.Item] {
+        items.filter { isFailed($0) }
+    }
+
+    private var completed: [QQMusicUserDownloadProgress.Item] {
+        items.filter(\.isFinished)
+    }
+
+    /// Failed as far as the list is concerned: the outcome says so, or the engine
+    /// gave up on it.
+    private func isFailed(_ item: QQMusicUserDownloadProgress.Item) -> Bool {
+        if let outcome = item.outcome {
+            return outcome == "失败" || outcome == "导入失败"
+        }
+        return task(for: item)?.isFailed == true
+    }
 
     var body: some View {
         Group {
@@ -120,10 +145,36 @@ struct QQMusicDownloadProgressControl: View {
         }
     }
 
+    private enum Section: String, CaseIterable, Identifiable {
+        case downloading
+        case failed
+        case completed
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .downloading: return "下载中"
+            case .failed: return "失败"
+            case .completed: return "完成"
+            }
+        }
+    }
+
+    @State private var section: Section = .downloading
+
     /// Finished over the whole selection: "3/100".
     private var countText: String {
         let done = items.filter(\.isFinished).count
         return "\(done)/\(items.count)"
+    }
+
+    private var visibleItems: [QQMusicUserDownloadProgress.Item] {
+        switch section {
+        case .downloading: return downloading
+        case .failed: return failed
+        case .completed: return completed
+        }
     }
 
     private var overallFraction: Double {
@@ -153,29 +204,91 @@ struct QQMusicDownloadProgressControl: View {
                     .foregroundStyle(.secondary)
             }
 
+            // Each action carries its own colour, so "全部取消" cannot be hit by
+            // mistake while reaching for "全部暂停".
             HStack(spacing: 8) {
-                Button("全部暂停") { Task { await coordinator.pauseAria2Tasks() } }
-                Button("全部恢复") { Task { await coordinator.resumeAria2Tasks() } }
-                Button("全部取消") { Task { await coordinator.cancelAria2Tasks() } }
+                actionButton("全部暂停", tint: .secondary) {
+                    Task { await coordinator.pauseAria2Tasks() }
+                }
+                actionButton("全部恢复", tint: themeStore.accentColor) {
+                    Task { await coordinator.resumeAria2Tasks() }
+                }
+                actionButton("全部取消", tint: .red) {
+                    Task { await coordinator.cancelAria2Tasks() }
+                }
                 Spacer(minLength: 0)
             }
-            .disabled(items.allSatisfy(\.isFinished))
-            .controlSize(.small)
+            .disabled(downloading.isEmpty)
+
+            Picker("", selection: $section) {
+                ForEach(Section.allCases) { section in
+                    Text("\(section.title) \(count(of: section))").tag(section)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
 
             Divider().opacity(0.4)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(items) { item in
-                        itemRow(item)
+            if visibleItems.isEmpty {
+                Text(emptyText)
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 18)
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(visibleItems) { item in
+                            itemRow(item)
+                        }
                     }
+                    .padding(.vertical, 1)
                 }
-                .padding(.vertical, 1)
+                .frame(maxHeight: 280)
             }
-            .frame(maxHeight: 280)
         }
         .padding(14)
-        .frame(width: 380)
+        .frame(width: 400)
+    }
+
+    private func count(of section: Section) -> Int {
+        switch section {
+        case .downloading: return downloading.count
+        case .failed: return failed.count
+        case .completed: return completed.count
+        }
+    }
+
+    private var emptyText: String {
+        switch section {
+        case .downloading: return "没有正在下载的任务"
+        case .failed: return "没有失败的任务"
+        case .completed: return "还没有完成的歌曲"
+        }
+    }
+
+    /// A filled, tinted action button.
+    private func actionButton(
+        _ title: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(title)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(tint == .secondary ? Color.primary : Color.white)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule().fill(
+                        tint == .secondary
+                            ? Color.primary.opacity(colorScheme == .dark ? 0.14 : 0.08)
+                            : tint
+                    )
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     private func itemRow(_ item: QQMusicUserDownloadProgress.Item) -> some View {

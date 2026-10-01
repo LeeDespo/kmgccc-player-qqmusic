@@ -64,11 +64,12 @@ qqmusic-helper-next（Tools/helper-next/qqmusic-helper-next，构建产物）
 腾讯的接口
 ```
 
-**它顶替了两样东西**：上一版的 Python helper（内含整个解释器与 `qqmusic-api-python`，约 56 MB）
-和**应用内的 HTTP 客户端** `QQMusicWebAPI`。以后者为例：同一个能力有两份实现时，
-"一条坏了另一条兜底"掩盖的是它们的行为差异，而落库与缓存判断还得同时考虑两者——
-合并之后，上游变化只换这一个二进制。组件里的请求参数与解析路径是从 `qqmusic-api-python`
-逐条比对来的（包括它的坑：`ptqrtoken` 用 seed 0 的 `hash33`，而 `g_tk` 用 5381）。
+**它是唯一的取数路径**：读取、登录、限流、熔断与下载调度都在组件内部，应用只跟它说 JSON。
+一份实现、一处行为——不用再为"同一个能力有两个客户端、差异靠兜底掩盖"付出代价，
+上游接口变化时换这一个二进制即可。
+
+**下载由它调度**：组件在旁边拉起 [Aria2 Next](#九致谢)（随同一个发行包）负责搬字节，
+多连接、断点续传、限速都由引擎负责，应用只说"要这个文件"。
 
 **组件自己管凭据**：`…/QQMusicHelperNext/Credential/qqmusic-credential.json`。
 扫码登录与网页登录两条路径产出的都是 `uin` + `qm_keyst` 这一对 cookie，二者等价
@@ -79,9 +80,6 @@ bundle 内的只是兜底——所以使用者的修法是"替换那个文件"�
 **源码不在本仓库**：在 [QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext)，
 本仓库只放构建产物与它的 README（含兼容性约定）。
 
-**保留下来的 Python helper**：`Tools/QQMusicHelper/`（上游的目录，我们改过 `main.py`）仍在仓库里，
-`bootstrap.sh` 也仍会构建它，但**应用的代码已不再引用**——它作为回退路径存在，
-换回去的办法是重新构建并让应用指向旧目录。这段历史记录在 `Tools/helper-next/README.md`。
 一个如实的补充：应用侧**只显示**组件自报的版本号（设置 → Helper 组件），**没有版本闸门**——
 换上一个响应形状不兼容的组件，表现会是某个页面报错或字段变空，而不是启动时明确拒绝。
 
@@ -112,16 +110,19 @@ DEVELOPMENT_TEAM=<你的 team id> ./scripts/build_and_run.sh
 输出会指名是哪个文件、哪份补丁，一条失败不挡住其余的。步骤与移植办法见
 [`qqmusic/integration/README.md`](qqmusic/integration/README.md)。
 
-不想本地编译 helper？Release 里那份 DMG 中的应用已经带了构建好的 helper，复制过去即可：
+数据组件**不需要自己构建**：DMG 里的应用已经带了它（预编译的 Rust 二进制 + Aria2 Next）。
+只有想**单独替换组件**（上游接口变化时最省事的修法）才需要复制到外部目录——这时后两行不能省：
 
 ```sh
-cp -R /Applications/kmgccc_player.app/Contents/Resources/Tools/qqmusic-helper/* \
-      ~/Library/Application\ Support/kmgccc.player/QQMusicHelper/
-xattr -cr ~/Library/Application\ Support/kmgccc.player/QQMusicHelper   # 不能省，见下
+cp /Applications/kmgccc_player.app/Contents/Resources/Tools/qqmusic-helper-next/* \
+      ~/Library/Application\ Support/kmgccc.player/QQMusicHelperNext/
+xattr -cr ~/Library/Application\ Support/kmgccc.player/QQMusicHelperNext
+codesign --force --sign - ~/Library/Application\ Support/kmgccc.player/QQMusicHelperNext/*
 ```
 
-第二行不能省：从下载来的 DMG 复制出的文件带 `com.apple.quarantine`，带隔离属性的 helper 会被系统直接杀掉
-（退出码 137），而应用只会写一行日志——表现是"在线音源整个不工作"，看起来像接口失效。
+后两行都不能省：从 DMG 复制出的文件带 `com.apple.quarantine`，带隔离属性的可执行文件会被系统直接杀掉
+（退出码 137，无任何输出），而应用只会写一行日志——表现是"在线音源整个不工作"，看起来像接口失效；
+只清属性仍会被杀，必须再补一次 ad-hoc 签名。
 
 ## 五、安装 DMG 版
 
@@ -194,11 +195,24 @@ docs/qqmusic/             设计、方案与实现记录（不进仓库）
 ## 八、参考的项目
 
 - [kmgccc_player](https://github.com/kmgcc/kmgccc_player) —— 播放器本体（上游）
-- [qqmusic-api-python](https://github.com/L-1124/QQMusicApi) —— QQ 音乐接口的 Python 实现，helper 的目录、
-  排行、电台、歌手、歌词与取流都走它
 - 上游 README 致谢的 AMLL、LDDC、SACAD、MediaRemote Adapter、ncmdump 等组件同样构成本项目的基础
 
-## 九、从源码构建与本机开发环境
+## 九、致谢
+
+在线音源这一层站在这些项目上面，它们各自解决了本功能里最难的一块：
+
+- [QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext) —— **数据组件本身**：
+  在线内容的全部读取、登录、限流与熔断都在这里，本仓库只放它的构建产物。
+- [Aria2 Next](https://github.com/AnInsomniacy/aria2-next) —— **下载引擎**（aria2 的活跃分支，
+  由 Motrix Next 的作者维护）：多连接分块、断点续传、并发与限速。歌曲的字节全部由它搬运，
+  组件只负责把任务交给它。
+- [BoltFFI](https://github.com/boltffi/boltffi) —— 组件的类型与协议绑定生成器，
+  Rust 的数据结构与 JSON 协议由它统一描述。
+- [qqmusic-api-python](https://github.com/L-1124/QQMusicApi) —— QQ 音乐接口的 Python 实现。
+  数据组件已不再依赖它，但组件的请求参数与解析路径是逐条对照它写出来的，扫码登录、
+  取流与歌词那几处的坑也是从它那里学到的。
+
+## 十、从源码构建与本机开发环境
 
 ```sh
 git clone --recurse-submodules <this repo>
@@ -219,17 +233,18 @@ CMake 3.15 或更新版本、Git、curl 与 Xcode Command Line Tools。构建输
 - **Xcode 报外部组件产物缺失**：回仓库根目录跑 `./scripts/bootstrap.sh`。
 - **产物被判为 stale**：`./scripts/bootstrap.sh --force --component <name>` 重建，失败日志在 `.build/logs/`。
 
-## 十、技术文档（上游）
+## 十一、技术文档（上游）
 
 上游在 [`docs/README.md`](docs/README.md) 中系统梳理了架构理念、核心算法与工程实现：应用架构、
 原生歌词系统、资料库体系、色彩系统、曲库搜索与偏好随机播放、实现约束与坑。本补丁自己的设计与实现记录
 在 `docs/qqmusic/`（不进仓库）。
 
-## 十一、许可证与致谢
+## 十二、许可证
 
 代码基于 GNU Affero General Public License v3.0 (AGPL-3.0) 发布，与上游一致；第三方组件遵循各自的开源许可证，
 详见应用内 About 页面及 `Licenses` 目录。
 
 上游 README 的「美术素材版权声明」与「致谢」对上游内容继续有效：美术素材著作权归上游作者保留，
 AMLL、LDDC、apple-audio-visualization、ncmdump、sacad、QQMusicApi、MediaRemote Adapter、WhatsNewKit、
-PLCrashReporter 等项目的贡献属于它们各自的作者。本补丁只新增 QQ 音乐在线音源相关的代码与文案。
+PLCrashReporter 等项目的贡献属于它们各自的作者。本补丁只新增 QQ 音乐在线音源相关的代码与文案；
+第九节列出的项目属于本次新增功能所依赖的第三方。

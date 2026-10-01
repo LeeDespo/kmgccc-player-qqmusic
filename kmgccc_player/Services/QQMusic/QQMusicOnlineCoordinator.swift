@@ -5,7 +5,7 @@
 //  Bridges the online QQ Music catalog into the local library.
 //
 //  The catalogue side is network work, and all of it is served by one channel:
-//  `QQMusicHelperProcess`, the data component that owns the credential, the rate
+//  `QQMusicComponentProcess`, the data component that owns the credential, the rate
 //  limit and the circuit breaker. The library side is main-actor state owned by the
 //  import pipeline. This coordinator is where the two meet: it downloads a track
 //  to staging, imports it, and — for a playback session — keeps the player queue
@@ -246,7 +246,7 @@ final class QQMusicOnlineCoordinator {
 
     // MARK: - Dependencies
 
-    private let helper: QQMusicHelperProcess
+    private let helper: QQMusicComponentProcess
     private let downloader: QQMusicDownloadService
 
     /// On-disk cache for catalogue payloads and artwork. Nil until a library
@@ -517,7 +517,7 @@ final class QQMusicOnlineCoordinator {
     private var albumSearchGeneration: UInt64 = 0
 
     init(
-        helper: QQMusicHelperProcess = .shared,
+        helper: QQMusicComponentProcess = .shared,
         downloader: QQMusicDownloadService = QQMusicDownloadService()
     ) {
         self.helper = helper

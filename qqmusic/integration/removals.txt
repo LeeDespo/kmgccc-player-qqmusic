@@ -1,0 +1,6 @@
+# Paths the feature deletes from a pristine upstream tree.
+Tools/QQMusicHelper/build-universal.sh
+Tools/QQMusicHelper/main.py
+Tools/QQMusicHelper/requirements.txt
+kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
+scripts/components/qqmusic-helper.sh

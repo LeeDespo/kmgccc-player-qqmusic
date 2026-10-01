@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Services/LibrarySession/LibrarySession.swift b/kmgccc_player/Services/LibrarySession/LibrarySession.swift
-index 8f975be4..87c33e2b 100644
+index 8f975be4..e0229c69 100644
 --- a/kmgccc_player/Services/LibrarySession/LibrarySession.swift
 +++ b/kmgccc_player/Services/LibrarySession/LibrarySession.swift
 @@ -19,6 +19,9 @@ final class LibrarySession: LibrarySessionLifecycle {
@@ -34,10 +34,10 @@ index 8f975be4..87c33e2b 100644
 +            open: TimeInterval(settings.qqMusicCircuitOpenSeconds)
 +        )
 +        Task {
-+            await QQMusicHelperProcess.shared.applyIdleTimeout(
++            await QQMusicComponentProcess.shared.applyIdleTimeout(
 +                TimeInterval(settings.qqMusicHelperIdleSeconds)
 +            )
-+            await QQMusicHelperProcess.shared.applyCircuitConfiguration(
++            await QQMusicComponentProcess.shared.applyCircuitConfiguration(
 +                isEnabled: circuit.isEnabled,
 +                threshold: circuit.threshold,
 +                failureWindow: circuit.window,

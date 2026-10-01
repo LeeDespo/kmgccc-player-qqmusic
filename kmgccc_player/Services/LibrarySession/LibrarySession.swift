@@ -119,10 +119,10 @@ final class LibrarySession: LibrarySessionLifecycle {
             open: TimeInterval(settings.qqMusicCircuitOpenSeconds)
         )
         Task {
-            await QQMusicHelperProcess.shared.applyIdleTimeout(
+            await QQMusicComponentProcess.shared.applyIdleTimeout(
                 TimeInterval(settings.qqMusicHelperIdleSeconds)
             )
-            await QQMusicHelperProcess.shared.applyCircuitConfiguration(
+            await QQMusicComponentProcess.shared.applyCircuitConfiguration(
                 isEnabled: circuit.isEnabled,
                 threshold: circuit.threshold,
                 failureWindow: circuit.window,

@@ -1383,7 +1383,7 @@ final class AppSessionHost: ObservableObject {
                 if let monitor = self.activeLibraryBinding.activeSession?.libraryChangeMonitor {
                     await monitor.stopAndWait()
                 }
-                await QQMusicHelperProcess.shared.terminate()
+                await QQMusicComponentProcess.shared.terminate()
             }
         }
     }
@@ -1481,7 +1481,7 @@ final class AppSessionHost: ObservableObject {
         let libraryVM = self.libraryVM
         let preferenceStatsService = activeLibraryBinding.activeSession?.preferenceStatsService
         Task { @MainActor [weak self, weak libraryVM] in
-            async let helperTermination: Void = QQMusicHelperProcess.shared.terminate()
+            async let helperTermination: Void = QQMusicComponentProcess.shared.terminate()
             if let libraryVM, let preferenceStatsService {
                 let tracksByID = Dictionary(
                     uniqueKeysWithValues: libraryVM.allTracks.map { ($0.id, $0) }

@@ -89,7 +89,6 @@ __pycache__/
 env/
 dist/
 *.spec
-.qqmusic-helper-venv/
 
 # Local build outputs
 .derivedDataLocalBuild/

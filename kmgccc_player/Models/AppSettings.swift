@@ -1330,7 +1330,7 @@ public final class AppSettings {
     /// Off means the component's own per-class budgets and nothing more; on adds
     /// a single "at most N requests per M seconds, across everything" on top of
     /// them. Exceeding it waits for the next window rather than failing — see
-    /// `QQMusicHelperProcess.applyRateLimit`.
+    /// `QQMusicComponentProcess.applyRateLimit`.
     var qqMusicRateLimitEnabled: Bool {
         get {
             access(keyPath: \.qqMusicRateLimitEnabled)

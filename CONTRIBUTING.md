@@ -44,7 +44,7 @@ open kmgccc_player.xcodeproj
 ./scripts/bootstrap.sh --force --component mediaremote
 ```
 
-组件名：`amll`、`lddc`、`qqmusic-helper`、`mediaremote`、`sacad`。
+组件名：`amll`、`lddc`、`mediaremote`、`sacad`。
 
 需要实际启动 App 时运行 `./scripts/build_and_run.sh`。需要验证 Release 产物时运行 `./scripts/build_app.sh Release`。
 

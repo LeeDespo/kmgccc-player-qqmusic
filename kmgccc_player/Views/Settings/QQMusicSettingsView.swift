@@ -65,7 +65,7 @@ struct QQMusicSettingsView: View {
     @State private var pollTask: Task<Void, Never>?
 
     // Helper
-    @State private var helperInfo: QQMusicHelperInfo?
+    @State private var helperInfo: QQMusicComponentInfo?
 
     // Cache
     /// Usage strings for the two budgets. Kept as state so the numbers shown
@@ -86,7 +86,7 @@ struct QQMusicSettingsView: View {
     @State private var aria2Status: QQMusicAria2Status?
     @State private var isRestartingAria2 = false
 
-    private let helper = QQMusicHelperProcess.shared
+    private let helper = QQMusicComponentProcess.shared
 
     /// Fixed window size for the settings sheet.
     ///
@@ -534,7 +534,7 @@ struct QQMusicSettingsView: View {
                     )
                     Spacer(minLength: 0)
                 }
-                labeledValue("", QQMusicHelperProcess.externalHelperDirectory.path, monospaced: true)
+                labeledValue("", QQMusicComponentProcess.externalComponentDirectory.path, monospaced: true)
                 if let running = helperBinaryPath {
                     labeledValue("当前运行", running, monospaced: true)
                 }
@@ -802,7 +802,7 @@ struct QQMusicSettingsView: View {
 
     private func resetCircuitBreaker() {
         Task {
-            await QQMusicHelperProcess.shared.resetCircuitBreaker()
+            await QQMusicComponentProcess.shared.resetCircuitBreaker()
             await refreshCircuitState()
         }
     }
@@ -1177,7 +1177,7 @@ struct QQMusicSettingsView: View {
     }
 
     private func revealHelperDirectory() {
-        let directory = QQMusicHelperProcess.externalHelperDirectory
+        let directory = QQMusicComponentProcess.externalComponentDirectory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         NSWorkspace.shared.activateFileViewerSelecting([directory])
     }

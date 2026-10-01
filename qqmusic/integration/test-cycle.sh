@@ -166,29 +166,46 @@ if has_step apply; then
 fi
 
 # --- build -------------------------------------------------------------------
-# Build the helper from the development tree: bootstrap resolves the AMLL
-# submodule through git, which the test area deliberately does not have. The
-# products land in the shared .build either way.
+# Nothing to build for the online source: its data component and download engine
+# are vendored binaries that travel with the patch package. bootstrap is still
+# needed for the other components, and it resolves the AMLL submodule through
+# git, which the test area deliberately does not have — so it runs here, against
+# the development tree, and the products land in the shared .build.
 APP_BUNDLE="${TESTAREA}/build/DerivedData/Build/Products/${CONFIGURATION}/kmgccc_player.app"
 
-if has_step build; then
-  echo "-- helper --"
-  "${DEV}/scripts/bootstrap.sh" --component qqmusic-helper \
-    || fail "helper build failed"
+# Keep the external component directory in step with the tree under test. The app
+# prefers it over the bundled copy, so a stale one would silently shadow the
+# package and the cycle would exercise old behaviour.
+COMPONENT_DIR="${DEV}/Tools/helper-next"
+COMPONENT_EXTERNAL="${HOME}/Library/Application Support/kmgccc.player/QQMusicHelperNext"
 
-  # The app prefers the external helper directory over the copy inside the
-  # bundle, so a stale external copy silently shadows what was just built and
-  # the test would exercise old behaviour. Keep them in step.
-  HELPER_PRODUCT="${DEV}/.build/products/qqmusic-helper"
-  HELPER_EXTERNAL="${HOME}/Library/Application Support/kmgccc.player/QQMusicHelper"
-  if [[ -x "${HELPER_PRODUCT}/qqmusic-helper" ]]; then
-    mkdir -p "$HELPER_EXTERNAL"
-    # Credential/ holds the login state and is not part of the build output.
+if has_step build; then
+  echo "-- components --"
+  # Not rebuilt here. The other components (LDDC, SACAD, MediaRemote, the AMLL
+  # runtime) come from the development tree's .build/products, and bootstrap
+  # would insist on a Node toolchain to refresh them — which a cycle is not the
+  # place for. What this step does is make sure they are present, so a missing
+  # product fails here rather than as a confusing bundle error later.
+  for product in lddc/lddc-server sacad/sacad mediaremote/build; do
+    [[ -e "${DEV}/.build/products/${product}" ]] \
+      || fail "no ${product} in .build/products — run ./scripts/bootstrap.sh once"
+  done
+  echo "  using the development tree's build products"
+
+  if [[ -x "${COMPONENT_DIR}/qqmusic-helper-next" ]]; then
+    mkdir -p "$COMPONENT_EXTERNAL"
+    # Credential/ holds the login state and is not part of the package.
     /usr/bin/rsync -a --delete --exclude '/Credential/' \
-      "${HELPER_PRODUCT}/" "${HELPER_EXTERNAL}/"
-    echo "  synced to ${HELPER_EXTERNAL}"
+      "${COMPONENT_DIR}/" "${COMPONENT_EXTERNAL}/"
+    # A copied executable needs an ad-hoc signature; without one macOS kills it
+    # on launch (exit 137, no output) and every online request fails.
+    /usr/bin/xattr -cr "${COMPONENT_EXTERNAL}" 2>/dev/null || true
+    for binary in "${COMPONENT_EXTERNAL}/qqmusic-helper-next" "${COMPONENT_EXTERNAL}/aria2-next"; do
+      [[ -f "$binary" ]] && /usr/bin/codesign --force --sign - "$binary" >/dev/null 2>&1 || true
+    done
+    echo "  synced to ${COMPONENT_EXTERNAL}"
   else
-    echo "  warning: no helper product at ${HELPER_PRODUCT}; app will use the bundled copy"
+    echo "  warning: no component at ${COMPONENT_DIR}; app will use the bundled copy"
   fi
   echo
 

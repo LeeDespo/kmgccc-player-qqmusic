@@ -10,7 +10,7 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/bootstrap.sh [--check] [--force] [--component NAME]
 
-Components: amll, lddc, qqmusic-helper, mediaremote, sacad
+Components: amll, lddc, mediaremote, sacad
   --check           Validate products without downloading or building.
   --force           Rebuild selected generated products.
   --component NAME  Prepare or check only one component.
@@ -44,7 +44,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$SELECTED_COMPONENT" in
-  ""|amll|lddc|qqmusic-helper|mediaremote|sacad) ;;
+  ""|amll|lddc|mediaremote|sacad) ;;
   *)
     echo "error: unknown component: $SELECTED_COMPONENT" >&2
     usage >&2
@@ -58,7 +58,7 @@ source "$ROOT/scripts/lib/common.sh"
 trap bootstrap_cleanup EXIT
 trap 'bootstrap_cleanup; exit 130' INT TERM
 
-PYTHON_BIN="${KMGCCC_ARM_PYTHON:-${LDDC_ARM_PYTHON:-${QQMUSIC_HELPER_ARM_PYTHON:-$(command -v python3.12 || true)}}}"
+PYTHON_BIN="${KMGCCC_ARM_PYTHON:-${LDDC_ARM_PYTHON:-$(command -v python3.12 || true)}}"
 export PYTHON_BIN
 
 component_selected() {
@@ -78,7 +78,7 @@ check_environment() {
     require_command node "Install Node.js 22."
     require_command corepack "Install Node.js 22 with Corepack."
   fi
-  if component_selected lddc || component_selected qqmusic-helper; then
+  if component_selected lddc; then
     [[ -n "$PYTHON_BIN" && -x "$PYTHON_BIN" ]] \
       || bootstrap_fail Environment "ARM64 Python 3.12 is unavailable." "Install Python 3.12 or set KMGCCC_ARM_PYTHON."
     [[ "$(arch -arm64 "$PYTHON_BIN" -c 'import platform; print(platform.machine())')" == "arm64" ]] \
@@ -102,8 +102,6 @@ check_environment() {
 source "$ROOT/scripts/components/amll.sh"
 # shellcheck source=scripts/components/lddc.sh
 source "$ROOT/scripts/components/lddc.sh"
-# shellcheck source=scripts/components/qqmusic-helper.sh
-source "$ROOT/scripts/components/qqmusic-helper.sh"
 # shellcheck source=scripts/components/mediaremote.sh
 source "$ROOT/scripts/components/mediaremote.sh"
 # shellcheck source=scripts/components/sacad.sh
@@ -123,7 +121,6 @@ run_component() {
 check_environment
 run_component amll amll
 run_component lddc lddc
-run_component qqmusic-helper qqmusic
 run_component mediaremote mediaremote
 run_component sacad sacad
 

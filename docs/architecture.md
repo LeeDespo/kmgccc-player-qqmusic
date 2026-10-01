@@ -127,7 +127,7 @@ App 依赖五个外部运行组件，都由 `bootstrap.sh` 构建，产物通过
 | --- | --- | --- | --- |
 | AMLL | WKWebView 中的 JS/DOM | `LyricsWebViewStore` | 对应歌词 surface 无法渲染 |
 | LDDC Fetch Core | `127.0.0.1` 随机端口 HTTP | `LDDCServerManager` | 在线歌词搜索失败，AMLL DB 仍可用 |
-| QQ Music Helper | stdin/stdout JSON 子进程 | `QQMusicHelperProcess` | QQ 封面候选不可用，其他来源独立 |
+| QQ Music 数据组件 | stdin/stdout JSON 子进程 | `QQMusicComponentProcess` | 在线音源与 QQ 封面候选不可用，其他来源独立 |
 | MediaRemoteAdapter | Perl launcher + framework | `SystemNowPlayingProvider` | 系统外部播放不可用，本地和 Apple Music 独立 |
 | SACAD | 单次命令行进程 | `CoverDownloadService` | SACAD 封面候选失败，其他来源独立 |
 

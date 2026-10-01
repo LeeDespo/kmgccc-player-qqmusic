@@ -9,8 +9,8 @@ applemusic-like-lyrics-kmgcccplayer-integration/** linguist-vendored
 
 LDDC_Fetch_Core/** linguist-vendored
 
-# External Python helper tools
-kmgccc_player/Resources/Tools/qqmusic-helper/** linguist-vendored
+# Vendor-supplied component binaries
+kmgccc_player/Resources/Tools/qqmusic-helper-next/** linguist-vendored
 
 # Keep accidental private inputs out of source archives. The release audit
 # still rejects these paths in clones and in reachable Git history.

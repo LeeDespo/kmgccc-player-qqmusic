@@ -2472,7 +2472,7 @@ final class LibraryViewModel {
     ) async -> [QQMusicArtworkCandidate] {
         let durationInt = duration.map { Int($0.rounded()) }
         do {
-            return try await QQMusicHelperProcess.shared.searchTrackArtwork(
+            return try await QQMusicComponentProcess.shared.searchTrackArtwork(
                 title: title,
                 artist: artist,
                 album: album,

@@ -1,5 +1,5 @@
 diff --git a/.gitignore b/.gitignore
-index c3238624..b0abe5dd 100644
+index c3238624..57a4cb58 100644
 --- a/.gitignore
 +++ b/.gitignore
 @@ -42,6 +42,7 @@ kmgccc_player/Assets.xcassets/
@@ -10,7 +10,15 @@ index c3238624..b0abe5dd 100644
  
  # Tool working directories
  .opencode/
-@@ -102,3 +103,21 @@ superteam/
+@@ -88,7 +89,6 @@ __pycache__/
+ env/
+ dist/
+ *.spec
+-.qqmusic-helper-venv/
+ 
+ # Local build outputs
+ .derivedDataLocalBuild/
+@@ -102,3 +102,21 @@ superteam/
  
  # Repo-root reference screenshots (kept locally, not published)
  /screenshots/

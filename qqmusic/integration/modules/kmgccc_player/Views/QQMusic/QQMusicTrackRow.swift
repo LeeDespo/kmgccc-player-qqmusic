@@ -67,8 +67,15 @@ struct QQMusicTrackRow: View {
     /// it had disabled entries in it.
     var isOwnedByUser: Bool = false
 
+    /// True while this track is queued for download right now.
+    ///
+    /// Downloading is not downloaded, but it is just as unselectable — picking it
+    /// again would queue the same file twice — so the row dims the same way. The
+    /// 下载中 tag beside the title is what tells the two apart.
+    var isDownloading: Bool = false
+
     /// Whether the row is unselectable in a selection in progress.
-    private var isBlockedFromSelection: Bool { isSelecting && isOwnedByUser }
+    private var isBlockedFromSelection: Bool { isSelecting && (isOwnedByUser || isDownloading) }
 
     /// Whether the trailing menu is live. The library's rows drop theirs to a
     /// static glyph while a selection is being made, because the row's click
@@ -179,7 +186,7 @@ struct QQMusicTrackRow: View {
         .gesture(
             TapGesture().onEnded {
                 if isSelecting {
-                    guard !isOwnedByUser else { return }
+                    guard !isBlockedFromSelection else { return }
                     onToggleSelection?()
                 } else {
                     onPlay()

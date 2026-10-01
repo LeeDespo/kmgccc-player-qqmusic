@@ -1,5 +1,5 @@
 //
-//  QQMusicHelperProcess.swift
+//  QQMusicComponentProcess.swift
 //  myPlayer2
 //
 //  On-demand stdio JSON IPC process manager for the bundled QQMusic helper.
@@ -393,7 +393,7 @@ nonisolated struct QQMusicLoginQRCode: Codable, Equatable, Sendable {
 
 /// The helper's own version and capabilities, so the app can stay compatible
 /// with builds it did not ship.
-nonisolated struct QQMusicHelperInfo: Codable, Equatable, Sendable {
+nonisolated struct QQMusicComponentInfo: Codable, Equatable, Sendable {
     var helperVersion: String
     var protocolVersion: Int
     var libraryVersion: String
@@ -415,7 +415,7 @@ nonisolated enum QQMusicBuildStamp {
     /// 2.3.1 plus a patch, the two are released under names that say so, and a
     /// patch can move without upstream moving. Bump it when the patch package is
     /// released, not on every commit — the build stamp below covers those.
-    static let patchVersion = "1.0.0"
+    static let patchVersion = "1.1.0"
 
     static var text: String {
         (Bundle.main.object(forInfoDictionaryKey: key) as? String) ?? "开发构建"
@@ -764,9 +764,9 @@ protocol MetadataDetailProvider: Sendable {
 actor QQMusicMetadataProvider: MetadataDetailProvider {
     static let shared = QQMusicMetadataProvider()
 
-    private let helper: QQMusicHelperProcess
+    private let helper: QQMusicComponentProcess
 
-    init(helper: QQMusicHelperProcess = .shared) {
+    init(helper: QQMusicComponentProcess = .shared) {
         self.helper = helper
     }
 
@@ -1031,7 +1031,7 @@ final class MetadataDetailCoordinator {
     }
 }
 
-nonisolated enum QQMusicHelperError: LocalizedError, Sendable {
+nonisolated enum QQMusicComponentError: LocalizedError, Sendable {
     case helperUnavailable(String)
     case circuitOpen(until: Date)
     case requestWriteFailed(String)
@@ -1063,8 +1063,8 @@ nonisolated enum QQMusicHelperError: LocalizedError, Sendable {
     }
 }
 
-actor QQMusicHelperProcess {
-    static let shared = QQMusicHelperProcess()
+actor QQMusicComponentProcess {
+    static let shared = QQMusicComponentProcess()
 
     private struct LaunchCandidate {
         let executableURL: URL
@@ -1075,17 +1075,17 @@ actor QQMusicHelperProcess {
     private struct PendingRequest {
         let method: String
         let startedAt: Date
-        let continuation: CheckedContinuation<QQMusicHelperResponse, Error>
+        let continuation: CheckedContinuation<QQMusicComponentResponse, Error>
         let timeoutTask: Task<Void, Never>
     }
 
-    private struct QQMusicHelperRequest<Params: Encodable>: Encodable {
+    private struct QQMusicComponentRequest<Params: Encodable>: Encodable {
         let id: String
         let method: String
         let params: Params
     }
 
-    private struct QQMusicHelperResponse: Decodable, Sendable {
+    private struct QQMusicComponentResponse: Decodable, Sendable {
         let id: String?
         let ok: Bool
         /// A list's own size, when the endpoint reports one (`dirinfo.songnum`
@@ -1113,7 +1113,7 @@ actor QQMusicHelperProcess {
         let downloads: [QQMusicAria2Task]?
         let removed: [String]?
         let qrcode: QQMusicLoginQRCode?
-        let helper: QQMusicHelperInfo?
+        let helper: QQMusicComponentInfo?
         let error: String?
     }
 
@@ -1422,7 +1422,7 @@ actor QQMusicHelperProcess {
     private var launchedBinaryPath: String?
 
     private let encoder = JSONEncoder()
-    private let decoder = QQMusicHelperProcess.makeDecoder()
+    private let decoder = QQMusicComponentProcess.makeDecoder()
 
     /// Which binary the component runs from — the external copy or the bundled
     /// one. The settings page shows it so "did my replacement take effect?" has
@@ -1499,7 +1499,7 @@ actor QQMusicHelperProcess {
             params: Aria2AddParams(url: url, out: out)
         )
         guard let download = response.download, download.gid != nil else {
-            throw QQMusicHelperError.invalidResponse("下载引擎没有返回任务 id")
+            throw QQMusicComponentError.invalidResponse("下载引擎没有返回任务 id")
         }
         return download
     }
@@ -1507,7 +1507,7 @@ actor QQMusicHelperProcess {
     func aria2Tell(gid: String) async throws -> QQMusicAria2Download {
         let response = try await send(method: "aria2_tell", params: Aria2TellParams(gid: gid))
         guard let download = response.download else {
-            throw QQMusicHelperError.invalidResponse("下载引擎没有返回任务状态")
+            throw QQMusicComponentError.invalidResponse("下载引擎没有返回任务状态")
         }
         return download
     }
@@ -1648,17 +1648,17 @@ actor QQMusicHelperProcess {
     private func sendRetrying<Params: Encodable & Sendable>(
         method: String,
         params: Params
-    ) async throws -> QQMusicHelperResponse {
+    ) async throws -> QQMusicComponentResponse {
         do {
             return try await send(method: method, params: params)
-        } catch let error as QQMusicHelperError {
+        } catch let error as QQMusicComponentError {
             switch error {
             case .cancelled, .circuitOpen, .requestFailed:
                 throw error
             case .helperUnavailable, .processTerminated, .requestTimedOut,
                  .requestWriteFailed, .invalidResponse:
                 Log.info(
-                    "[QQMusicHelperProcess] retrying after \(error) method=\(method)",
+                    "[QQMusicComponentProcess] retrying after \(error) method=\(method)",
                     category: .import
                 )
                 return try await send(method: method, params: params)
@@ -1669,18 +1669,18 @@ actor QQMusicHelperProcess {
     private func send<Params: Encodable & Sendable>(
         method: String,
         params: Params
-    ) async throws -> QQMusicHelperResponse {
+    ) async throws -> QQMusicComponentResponse {
         try checkCircuitBreaker()
         try await ensureRunning()
 
         let id = UUID().uuidString
         let startedAt = Date()
         Log.info(
-            "[QQMusicHelperProcess] request id=\(id) method=\(method) query=\(querySummary(params))",
+            "[QQMusicComponentProcess] request id=\(id) method=\(method) query=\(querySummary(params))",
             category: .import
         )
 
-        let response: QQMusicHelperResponse
+        let response: QQMusicComponentResponse
         do {
             response = try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { continuation in
@@ -1693,12 +1693,12 @@ actor QQMusicHelperProcess {
                 }
             } onCancel: {
                 Task {
-                    await self.failPendingRequest(id: id, error: QQMusicHelperError.cancelled)
+                    await self.failPendingRequest(id: id, error: QQMusicComponentError.cancelled)
                 }
             }
         } catch {
             Log.warning(
-                "[QQMusicHelperProcess] request failed id=\(id) method=\(method) reason=\(error)",
+                "[QQMusicComponentProcess] request failed id=\(id) method=\(method) reason=\(error)",
                 category: .import
             )
             throw error
@@ -1708,16 +1708,16 @@ actor QQMusicHelperProcess {
             let message = response.error ?? "unknown helper error"
             recordFailure(reason: message)
             Log.warning(
-                "[QQMusicHelperProcess] request failed id=\(id) method=\(method) reason=\(message)",
+                "[QQMusicComponentProcess] request failed id=\(id) method=\(method) reason=\(message)",
                 category: .import
             )
-            throw QQMusicHelperError.requestFailed(message)
+            throw QQMusicComponentError.requestFailed(message)
         }
 
         recordSuccess()
         let durationMs = Int(Date().timeIntervalSince(startedAt) * 1_000)
         Log.info(
-            "[QQMusicHelperProcess] response id=\(id) method=\(method) durationMs=\(durationMs)",
+            "[QQMusicComponentProcess] response id=\(id) method=\(method) durationMs=\(durationMs)",
             category: .import
         )
         return response
@@ -1841,7 +1841,7 @@ actor QQMusicHelperProcess {
             params: SetLikedParams(songMid: songMid, liked: liked)
         )
         guard let result = response.like else {
-            throw QQMusicHelperError.requestFailed("missing like payload")
+            throw QQMusicComponentError.requestFailed("missing like payload")
         }
         return result
     }
@@ -1986,7 +1986,7 @@ actor QQMusicHelperProcess {
             )
         )
         guard let stream = response.stream else {
-            throw QQMusicHelperError.requestFailed("missing stream payload")
+            throw QQMusicComponentError.requestFailed("missing stream payload")
         }
         return stream
     }
@@ -1996,10 +1996,10 @@ actor QQMusicHelperProcess {
     // MARK: - Account
 
     /// Query the helper's own version and capabilities.
-    func helperInfo() async throws -> QQMusicHelperInfo {
+    func helperInfo() async throws -> QQMusicComponentInfo {
         let response = try await send(method: "get_helper_info", params: EmptyParams())
         guard let info = response.helper else {
-            throw QQMusicHelperError.requestFailed("missing helper info")
+            throw QQMusicComponentError.requestFailed("missing helper info")
         }
         return info
     }
@@ -2017,7 +2017,7 @@ actor QQMusicHelperProcess {
             params: StartLoginParams(loginType: type.rawValue)
         )
         guard let qr = response.qrcode else {
-            throw QQMusicHelperError.requestFailed("missing qrcode payload")
+            throw QQMusicComponentError.requestFailed("missing qrcode payload")
         }
         return qr
     }
@@ -2053,7 +2053,7 @@ actor QQMusicHelperProcess {
             params: ImportCookiesParams(cookies: cookies)
         )
         guard let status = response.login else {
-            throw QQMusicHelperError.requestFailed("missing login payload")
+            throw QQMusicComponentError.requestFailed("missing login payload")
         }
         return status
     }
@@ -2096,11 +2096,11 @@ actor QQMusicHelperProcess {
         circuitOpenUntil = nil
         recentFailureDates.removeAll()
         circuitLastReason = ""
-        Log.info("[QQMusicHelperProcess] circuit breaker reset by user", category: .import)
+        Log.info("[QQMusicComponentProcess] circuit breaker reset by user", category: .import)
     }
 
     func terminate() {
-        stopProcess(failingPendingWith: QQMusicHelperError.cancelled)
+        stopProcess(failingPendingWith: QQMusicComponentError.cancelled)
     }
 
     private func request<Params: Encodable & Sendable>(
@@ -2113,9 +2113,9 @@ actor QQMusicHelperProcess {
         let id = UUID().uuidString
         let startedAt = Date()
         let query = querySummary(params)
-        Log.info("[QQMusicHelperProcess] request id=\(id) method=\(method) query=\(query)", category: .import)
+        Log.info("[QQMusicComponentProcess] request id=\(id) method=\(method) query=\(query)", category: .import)
 
-        let response: QQMusicHelperResponse
+        let response: QQMusicComponentResponse
         do {
             response = try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { continuation in
@@ -2128,26 +2128,26 @@ actor QQMusicHelperProcess {
                 }
             } onCancel: {
                 Task {
-                    await self.failPendingRequest(id: id, error: QQMusicHelperError.cancelled)
+                    await self.failPendingRequest(id: id, error: QQMusicComponentError.cancelled)
                 }
             }
         } catch {
-            Log.warning("[QQMusicHelperProcess] request failed id=\(id) method=\(method) reason=\(error)", category: .import)
+            Log.warning("[QQMusicComponentProcess] request failed id=\(id) method=\(method) reason=\(error)", category: .import)
             throw error
         }
 
         guard response.ok else {
             let message = response.error ?? "unknown helper error"
             recordFailure(reason: message)
-            Log.warning("[QQMusicHelperProcess] request failed id=\(id) method=\(method) reason=\(message)", category: .import)
-            throw QQMusicHelperError.requestFailed(message)
+            Log.warning("[QQMusicComponentProcess] request failed id=\(id) method=\(method) reason=\(message)", category: .import)
+            throw QQMusicComponentError.requestFailed(message)
         }
 
         let candidates = response.candidates ?? []
         recordSuccess()
         let durationMs = Int(Date().timeIntervalSince(startedAt) * 1_000)
         let topConfidence = candidates.compactMap(\.confidence).max() ?? 0
-        Log.info("[QQMusicHelperProcess] response id=\(id) method=\(method) candidates=\(candidates.count) topConfidence=\(String(format: "%.2f", topConfidence)) durationMs=\(durationMs)", category: .import)
+        Log.info("[QQMusicComponentProcess] response id=\(id) method=\(method) candidates=\(candidates.count) topConfidence=\(String(format: "%.2f", topConfidence)) durationMs=\(durationMs)", category: .import)
         return candidates
     }
 
@@ -2161,9 +2161,9 @@ actor QQMusicHelperProcess {
         let id = UUID().uuidString
         let startedAt = Date()
         let query = querySummary(params)
-        Log.info("[QQMusicHelperProcess] request id=\(id) method=\(method) query=\(query)", category: .import)
+        Log.info("[QQMusicComponentProcess] request id=\(id) method=\(method) query=\(query)", category: .import)
 
-        let response: QQMusicHelperResponse
+        let response: QQMusicComponentResponse
         do {
             response = try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { continuation in
@@ -2176,32 +2176,32 @@ actor QQMusicHelperProcess {
                 }
             } onCancel: {
                 Task {
-                    await self.failPendingRequest(id: id, error: QQMusicHelperError.cancelled)
+                    await self.failPendingRequest(id: id, error: QQMusicComponentError.cancelled)
                 }
             }
         } catch {
-            Log.warning("[QQMusicHelperProcess] request failed id=\(id) method=\(method) reason=\(error)", category: .import)
+            Log.warning("[QQMusicComponentProcess] request failed id=\(id) method=\(method) reason=\(error)", category: .import)
             throw error
         }
 
         guard response.ok else {
             let message = response.error ?? "unknown helper error"
             recordFailure(reason: message)
-            Log.warning("[QQMusicHelperProcess] request failed id=\(id) method=\(method) reason=\(message)", category: .import)
-            throw QQMusicHelperError.requestFailed(message)
+            Log.warning("[QQMusicComponentProcess] request failed id=\(id) method=\(method) reason=\(message)", category: .import)
+            throw QQMusicComponentError.requestFailed(message)
         }
 
         guard let detail = response.detail else {
             let message = "missing metadata detail"
             recordFailure(reason: message)
-            Log.warning("[QQMusicHelperProcess] request failed id=\(id) method=\(method) reason=\(message)", category: .import)
-            throw QQMusicHelperError.invalidResponse(message)
+            Log.warning("[QQMusicComponentProcess] request failed id=\(id) method=\(method) reason=\(message)", category: .import)
+            throw QQMusicComponentError.invalidResponse(message)
         }
 
         recordSuccess()
         let durationMs = Int(Date().timeIntervalSince(startedAt) * 1_000)
         let confidence = detail.confidence ?? detail.metadataConfidence ?? 0
-        Log.info("[QQMusicHelperProcess] response id=\(id) method=\(method) detail=1 confidence=\(String(format: "%.2f", confidence)) durationMs=\(durationMs)", category: .import)
+        Log.info("[QQMusicComponentProcess] response id=\(id) method=\(method) detail=1 confidence=\(String(format: "%.2f", confidence)) durationMs=\(durationMs)", category: .import)
         return detail
     }
 
@@ -2209,11 +2209,11 @@ actor QQMusicHelperProcess {
         id: String,
         method: String,
         params: Params,
-        continuation: CheckedContinuation<QQMusicHelperResponse, Error>
+        continuation: CheckedContinuation<QQMusicComponentResponse, Error>
     ) {
         guard let stdinHandle else {
             continuation.resume(
-                throwing: QQMusicHelperError.helperUnavailable("stdin pipe is not available")
+                throwing: QQMusicComponentError.helperUnavailable("stdin pipe is not available")
             )
             return
         }
@@ -2227,7 +2227,7 @@ actor QQMusicHelperProcess {
             }
             await self?.failPendingRequest(
                 id: id,
-                error: QQMusicHelperError.requestTimedOut(seconds: timeout)
+                error: QQMusicComponentError.requestTimedOut(seconds: timeout)
             )
         }
 
@@ -2239,7 +2239,7 @@ actor QQMusicHelperProcess {
         )
 
         do {
-            let payload = QQMusicHelperRequest(id: id, method: method, params: params)
+            let payload = QQMusicComponentRequest(id: id, method: method, params: params)
             var data = try encoder.encode(payload)
             data.append(0x0A)
             try stdinHandle.write(contentsOf: data)
@@ -2249,7 +2249,7 @@ actor QQMusicHelperProcess {
             pendingRequests.removeValue(forKey: id)
             recordFailure(reason: "request write failed: \(error.localizedDescription)")
             continuation.resume(
-                throwing: QQMusicHelperError.requestWriteFailed(error.localizedDescription)
+                throwing: QQMusicComponentError.requestWriteFailed(error.localizedDescription)
             )
         }
     }
@@ -2260,11 +2260,11 @@ actor QQMusicHelperProcess {
             return
         }
 
-        stopProcess(failingPendingWith: QQMusicHelperError.processTerminated(-1))
+        stopProcess(failingPendingWith: QQMusicComponentError.processTerminated(-1))
 
         guard let candidate = findLaunchCandidate() else {
             recordFailure(reason: "helper unavailable")
-            throw QQMusicHelperError.helperUnavailable(
+            throw QQMusicComponentError.helperUnavailable(
                 lastLaunchDiagnostics.isEmpty
                     ? "binary missing"
                     : lastLaunchDiagnostics
@@ -2325,8 +2325,8 @@ actor QQMusicHelperProcess {
         } catch {
             let reason = "launch failed: \(error.localizedDescription)"
             recordFailure(reason: reason)
-            Log.warning("[QQMusicHelperProcess] \(reason) path=\(candidate.executableURL.path)", category: .import)
-            throw QQMusicHelperError.helperUnavailable(reason)
+            Log.warning("[QQMusicComponentProcess] \(reason) path=\(candidate.executableURL.path)", category: .import)
+            throw QQMusicComponentError.helperUnavailable(reason)
         }
 
         self.process = process
@@ -2336,7 +2336,7 @@ actor QQMusicHelperProcess {
         stdoutBuffer = Data()
         recentStderr = ""
         markActivity()
-        Log.info("[QQMusicHelperProcess] started path=\(candidate.executableURL.path)", category: .import)
+        Log.info("[QQMusicComponentProcess] started path=\(candidate.executableURL.path)", category: .import)
 
         // A fresh process knows nothing about the user's settings, so the ones
         // that live in the component are re-sent here. (The breaker is mirrored
@@ -2386,7 +2386,7 @@ actor QQMusicHelperProcess {
                 // chunk boundary; report it rather than dropping it silently.
                 recordFailure(reason: "JSON IPC invalid UTF-8 line")
                 Log.warning(
-                    "[QQMusicHelperProcess] JSON IPC invalid UTF-8 line bytes=\(lineData.count)",
+                    "[QQMusicComponentProcess] JSON IPC invalid UTF-8 line bytes=\(lineData.count)",
                     category: .import
                 )
                 continue
@@ -2399,19 +2399,19 @@ actor QQMusicHelperProcess {
 
     private func handleResponseLine(_ line: String) {
         guard let data = line.data(using: .utf8) else { return }
-        let response: QQMusicHelperResponse
+        let response: QQMusicComponentResponse
         do {
-            response = try decoder.decode(QQMusicHelperResponse.self, from: data)
+            response = try decoder.decode(QQMusicComponentResponse.self, from: data)
         } catch {
             recordFailure(reason: "JSON IPC invalid response")
-            Log.warning("[QQMusicHelperProcess] JSON IPC invalid response reason=\(error)", category: .import)
+            Log.warning("[QQMusicComponentProcess] JSON IPC invalid response reason=\(error)", category: .import)
             return
         }
 
         guard let id = response.id,
               let pending = pendingRequests.removeValue(forKey: id)
         else {
-            Log.warning("[QQMusicHelperProcess] JSON IPC unknown response id=\(response.id ?? "nil")", category: .import)
+            Log.warning("[QQMusicComponentProcess] JSON IPC unknown response id=\(response.id ?? "nil")", category: .import)
             return
         }
 
@@ -2425,8 +2425,8 @@ actor QQMusicHelperProcess {
         let status = terminatedProcess.terminationStatus
         let stderr = recentStderr.trimmingCharacters(in: .whitespacesAndNewlines)
         let reason = stderr.isEmpty ? "process terminated code=\(status)" : "process terminated code=\(status) stderr=\(stderr)"
-        Log.warning("[QQMusicHelperProcess] \(reason)", category: .import)
-        stopProcess(failingPendingWith: QQMusicHelperError.processTerminated(status))
+        Log.warning("[QQMusicComponentProcess] \(reason)", category: .import)
+        stopProcess(failingPendingWith: QQMusicComponentError.processTerminated(status))
         recordFailure(reason: reason)
     }
 
@@ -2494,8 +2494,8 @@ actor QQMusicHelperProcess {
             scheduleIdleShutdown()
             return
         }
-        Log.info("[QQMusicHelperProcess] idle timeout; stopping helper", category: .import)
-        stopProcess(failingPendingWith: QQMusicHelperError.cancelled)
+        Log.info("[QQMusicComponentProcess] idle timeout; stopping helper", category: .import)
+        stopProcess(failingPendingWith: QQMusicComponentError.cancelled)
     }
 
     private func appendStderr(_ text: String) {
@@ -2515,8 +2515,8 @@ actor QQMusicHelperProcess {
         circuitLastReason = reason
         if recentFailureDates.count >= failureThreshold {
             circuitOpenUntil = now.addingTimeInterval(circuitOpenDuration)
-            Log.warning("[QQMusicHelperProcess] circuit open until=\(circuitOpenUntil!) reason=\(reason)", category: .import)
-            stopProcess(failingPendingWith: QQMusicHelperError.requestFailed("circuit opened"))
+            Log.warning("[QQMusicComponentProcess] circuit open until=\(circuitOpenUntil!) reason=\(reason)", category: .import)
+            stopProcess(failingPendingWith: QQMusicComponentError.requestFailed("circuit opened"))
         }
     }
 
@@ -2539,8 +2539,8 @@ actor QQMusicHelperProcess {
         }
         guard let until = circuitOpenUntil else { return }
         if Date() < until {
-            Log.warning("[QQMusicHelperProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)
-            throw QQMusicHelperError.circuitOpen(until: until)
+            Log.warning("[QQMusicComponentProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)
+            throw QQMusicComponentError.circuitOpen(until: until)
         }
         circuitOpenUntil = nil
         recentFailureDates.removeAll()
@@ -2550,12 +2550,12 @@ actor QQMusicHelperProcess {
     private func findLaunchCandidate() -> LaunchCandidate? {
         // Prefer a user-installed helper so it can be updated independently of
         // the app; fall back to the bundled copy.
-        let external = Self.externalHelperDirectory
+        let external = Self.externalComponentDirectory
             .appendingPathComponent("qqmusic-helper-next", isDirectory: false)
         let candidates = [external, bundledBinaryURL()]
 
         for binaryURL in candidates {
-            Log.info("[QQMusicHelperProcess] helper candidate path=\(binaryURL.path)", category: .import)
+            Log.info("[QQMusicComponentProcess] helper candidate path=\(binaryURL.path)", category: .import)
 
             var isDirectory: ObjCBool = false
             guard FileManager.default.fileExists(atPath: binaryURL.path, isDirectory: &isDirectory),
@@ -2565,7 +2565,7 @@ actor QQMusicHelperProcess {
             }
             guard FileManager.default.isExecutableFile(atPath: binaryURL.path) else {
                 lastLaunchDiagnostics = "helper not executable: \(binaryURL.path)"
-                Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
+                Log.warning("[QQMusicComponentProcess] \(lastLaunchDiagnostics)", category: .import)
                 continue
             }
 
@@ -2580,7 +2580,7 @@ actor QQMusicHelperProcess {
             var environment = ProcessInfo.processInfo.environment
             // The component owns its credential store, so it is told *where its
             // own directory is* rather than where the credential file is.
-            environment["QQMUSIC_HELPER_NEXT_DIR"] = Self.externalHelperDirectory.path
+            environment["QQMUSIC_HELPER_NEXT_DIR"] = Self.externalComponentDirectory.path
 
             return LaunchCandidate(
                 executableURL: binaryURL,
@@ -2590,7 +2590,7 @@ actor QQMusicHelperProcess {
         }
 
         lastLaunchDiagnostics = "helper binary missing (checked external and bundled paths)"
-        Log.warning("[QQMusicHelperProcess] \(lastLaunchDiagnostics)", category: .import)
+        Log.warning("[QQMusicComponentProcess] \(lastLaunchDiagnostics)", category: .import)
         return nil
     }
 
@@ -2615,7 +2615,7 @@ actor QQMusicHelperProcess {
     /// Renamed with the component: this fork does not read the Python helper's
     /// credential file, so a fresh login is expected once (the app's own login
     /// sheet produces it, by QR or by the web login window).
-    nonisolated static var externalHelperDirectory: URL {
+    nonisolated static var externalComponentDirectory: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent("Library/Application Support", isDirectory: true)
@@ -2629,7 +2629,7 @@ actor QQMusicHelperProcess {
     /// Passed to the helper as `KMGCCC_QQMUSIC_CREDENTIAL_DIR` so the login
     /// ticket survives helper restarts (the helper exits after 60s idle).
     nonisolated static var credentialDirectory: URL {
-        externalHelperDirectory.appendingPathComponent("Credential", isDirectory: true)
+        externalComponentDirectory.appendingPathComponent("Credential", isDirectory: true)
     }
 
     private func querySummary<Params: Encodable>(_ params: Params) -> String {
@@ -2667,7 +2667,7 @@ actor QQMusicHelperProcess {
                 return date
             }
             // Date only (e.g. "2023-01-15")
-            if let date = QQMusicHelperProcess.parseQQMusicDateOnly(value) {
+            if let date = QQMusicComponentProcess.parseQQMusicDateOnly(value) {
                 return date
             }
             throw DecodingError.dataCorruptedError(

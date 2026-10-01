@@ -64,7 +64,11 @@ struct QQMusicTrackListBody: View {
                         // order, which is what is actually adjacent on screen.
                         selectionContinuity: selection.continuity(at: index, in: displayedSongMids),
                         onToggleSelection: { selection.toggle(track.songMid) },
-                        isOwnedByUser: coordinator.isUserDownloaded(track.songMid)
+                        isOwnedByUser: coordinator.isUserDownloaded(track.songMid),
+                        // A queued track is dimmed and unselectable too: it is not
+                        // in the library yet, but choosing it again would queue it
+                        // a second time.
+                        isDownloading: coordinator.userDownloadSongMids.contains(track.songMid)
                     )
                     .onAppear {
                         guard index >= tracks.count - 3 else { return }

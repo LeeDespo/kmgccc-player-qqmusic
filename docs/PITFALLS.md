@@ -26,7 +26,7 @@
 ## 外部组件
 
 - 外部组件一律从 `Bundle.main.resourceURL` 解析；不要添加系统 Python、venv 或环境变量 fallback。
-- Swift 不直接调用 QQMusicApi 或其他第三方 API；QQMusic 只经 bundle 内 `qqmusic-helper`（stdout 只输出 JSON，诊断走 stderr）。
+- Swift 不直接调用任何第三方 API；QQMusic 只经 bundle 内 `qqmusic-helper-next` 组件（stdout 只输出 JSON，诊断走 stderr）。
 
 ## 工程
 

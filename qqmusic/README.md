@@ -36,29 +36,15 @@ Rust，静态链接），应用通过 stdin/stdout 的 JSON 协议跟它说话�
 | 层 | 是什么 | 负责 |
 |---|---|---|
 | `Tools/helper-next/qqmusic-helper-next` | 独立子进程，一行一个 JSON | **全部读取与登录**：账号列表、曲库详情、搜索、排行榜、电台、推荐流、歌词、取流，以及**唯一的写**（收藏/取消收藏）；同时管凭据、限流与熔断 |
-| `Services/QQMusic/QQMusicHelperProcess.swift` | 应用侧的进程客户端 | 启动/守护组件、按 `id` 配对请求与响应、超时与熔断镜像 |
+| `Tools/helper-next/aria2-next` | 下载引擎（Aria2 Next） | 由组件按需拉起，通过 JSON-RPC 搬字节：多连接、断点续传、并发与限速 |
+| `Services/QQMusic/QQMusicComponentProcess.swift` | 应用侧的进程客户端 | 启动/守护组件、按 `id` 配对请求与响应、超时、熔断镜像与设置推送 |
 
-**应用侧没有自己的 HTTP 客户端**——原先的 `QQMusicWebAPI`（直连 `musicu.fcg`）与「两条通道」机制
-（`QQMusicFetchChannel` / `QQMusicChannelSubject` / `webFirst`，设置里的「在线内容 → 通道」分区）
-已随这次替换删除。合成的理由：同一个能力有两份实现时，"兜底"掩盖了它们的行为差异，
-而落库与缓存判断还得同时考虑两者；合并后上游变化只换一个二进制，不重建应用。
+**应用侧没有自己的 HTTP 客户端**，也没有第二套取数实现。组件的源码在
+[QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext)，
+本仓库只放构建产物；上游接口变化时换那个文件即可，不必重新构建应用。
 
 组件**自己管凭据**（`…/QQMusicHelperNext/Credential/qqmusic-credential.json`），扫码登录与网页登录两条路径
 产出的都是 `uin` + `qm_keyst` 这一对 cookie，二者等价。
-
-**Helper 那一格的内部还有一层：`qqmusic-api-python`（第三方 Python 库）↔ `Tools/QQMusicHelper/main.py`
-（本项目自己的程序）。** 库负责签名、cookie、平台参数与模块方法（`client.lyric.get_lyric` 是逐字歌词的来源，
-`client.song.get_song_urls` 是取流）；helper 负责 JSON 协议与能力自报、**库里没包成公开方法的接口**
-（用 `client.song._build_cgi` / `_build_http` 直接打上游，共 10 处）、字段归一化（含补上库模型没有的
-`albumId` / `singers`）、以及取流音质阶梯等业务动作。所以"helper 可独立替换"这件事包含换库版本：
-`requirements.txt` 钉 `qqmusic-api-python==0.7.3`，PyInstaller 把运行时和库一起打进 `_internal.bundle/`，
-使用者的机器不需要装 Python。应用侧**只显示、不校验** helper 的版本号（设置 → Helper 组件）。
-详见根 `README.md` 的「Helper 组件」一节。
-
-有一条规则要记住：**整表读取时空列表按"没作答"处理，而歌曲简介返回空就是答案**——
-大多数歌本来就没有简介，把空当成"没答"会让每首歌都白跑一趟。这条规矩现在落在组件里：
-账号列表接口在 `data` 为空或 `code != 0` 时报错（不返回 `[]`），musigu 那条路对风控码 `2001`
-（它会带着"成功但空"的结果集回来）同样报错，避免把"被限流"显示成"没有内容"。
 
 **缓存策略：先显示缓存，取到完整的在线数据，不符才整体替换。** 会变但变得不多的列表
 （我喜欢、收藏歌单、收藏专辑、歌单/专辑/排行榜的曲目）都走同一套：
@@ -71,7 +57,7 @@ Rust，静态链接），应用通过 stdin/stdout 的 JSON 协议跟它说话�
 拿第一页去替换会把 400 首的歌单缩成 100 首再长回来。
 
 **数据与缓存不和应用混放。** 在线数据放在资料库的 `QQMusic/`（与应用自身的 `Cache/` 平级且分开），
-helper 凭据放在 helper 目录的 `Credential/`。
+组件凭据放在组件目录的 `Credential/`。
 
 **失败只写日志。** 曾经有一条挂在工具栏下方的提示条承载失败与各种确认，按用户要求整条删除
 （连设置里那两个开关一起）；失败仍可在日志里查，日志插值里的 `noteFailure(error)` 还负责记录限流退避。
@@ -79,39 +65,11 @@ helper 凭据放在 helper 目录的 `Credential/`。
 ## 三、怎么构建
 
 ```sh
-./scripts/bootstrap.sh              # 构建外部组件（含 QQ 音乐 helper）
+./scripts/bootstrap.sh              # 构建外部组件（AMLL / LDDC / SACAD / MediaRemote）
 ./scripts/build_and_run.sh          # 构建并运行
 DEVELOPMENT_TEAM=<你的teamID> ./scripts/build_and_run.sh   # 本机需要覆盖签名 team
 ```
 
-应用的在线数据来自 **HelperNext 组件**，它是**构建产物**（`Tools/helper-next/qqmusic-helper-next`），
-源码在另一个仓库（见该目录的 README）。它随应用打包，也会被复制到外部目录
-`…/QQMusicHelperNext/`（外部那份优先，便于单独替换而不重建应用）。
-`bootstrap.sh` 仍会构建 Python helper（上游的组件，保留以便回退）：应用的**代码里已不再引用它**，
-但那段历史与替换过程记录在 `Tools/helper-next/README.md` 与根 `AGENTS.md`。
-
-## 四、怎么打补丁 / 维护
-
-```sh
-./qqmusic/integration/sync.sh           # 改完功能：从开发树重新生成 modules/ + patches/
-./qqmusic/integration/sync.sh --check   # 提交前：是否落后（落后则非零退出）
-./qqmusic/integration/test-cycle.sh --sync   # 改完必跑：重建 → 重放 → 构建 → 测试 → 启动
-```
-
-改动只有走完 `test-cycle.sh` 才算完成："补丁能应用"不等于"补丁能构建、能跑"。
-把它重放到别人的上游版本上：
-
-```sh
-cp -R qqmusic/integration /path/to/kmgccc_player/
-cd /path/to/kmgccc_player
-./qqmusic/integration/apply.sh --repo . --verify
-```
-
-补丁失败是**预期行为**，表示上游改动了同一个文件；处理步骤见 `integration/README.md`。
-
-## 五、参考的项目
-
-- **[qqmusic-api-python](https://github.com/L-1124/QQMusicApi)** — QQ 音乐接口的 Python 实现，helper 的浏览、搜索、电台、歌手、歌词与取流都走它。
-- **[kmgccc_player](https://github.com/kmgcc/kmgccc_player)** — 播放器本体（上游）。它的 README 里列出的
-  AMLL、LDDC、apple-audio-visualization、ncmdump、sacad、QQMusicApi、MediaRemote Adapter 等组件同样构成本项目的基础；
-  本功能只是在这套能力之上接了一层在线音源。
+应用的在线数据来自 **HelperNext 组件**，它是**构建产物**（`Tools/helper-next/qqmusic-helper-next`
+与 `Tools/helper-next/aria2-next`），源码在另一个仓库（见该目录的 README）。
+两个二进制随应用打包，也会被复制到外部目录 `…/QQMusicHelperNext/`（外部那份优先，便于单独替换而不重建应用）。

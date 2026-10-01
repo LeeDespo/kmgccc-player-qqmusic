@@ -86,10 +86,6 @@ is_shippable_path() {
     # to run, and without the patch following this package's README hits a
     # signing error instead of a build.
     scripts/build_and_run.sh|scripts/components/qqmusic-helper.sh) return 0 ;;
-    # HelperNext is the feature's data component (Rust); it has to travel with
-    # the package for the same reason the Python helper does. `target/` is
-    # git-ignored, so the build directory cannot leak in.
-    Tools/HelperNext/*) return 0 ;;
     # The component itself, vendored as a built binary so applying the patch
     # package needs no Rust toolchain. Its source lives in the
     # QQMusicApi_HelperNext repository; `Tools/helper-next/README.md` says so.
@@ -133,15 +129,38 @@ while IFS= read -r path; do
   added+=("$path")
 done < <(git -C "$FROM" ls-files --others --exclude-standard)
 
-if (( ${#deleted[@]} > 0 )); then
-  echo "error: the feature deletes files that exist in the base commit:" >&2
-  printf '  - %s\n' "${deleted[@]}" >&2
-  echo "       Deletions cannot be replayed by apply.sh. Either restore the file" >&2
-  echo "       or teach apply.sh a removal list before syncing." >&2
-  exit 2
-fi
+# Deletions are recorded, not refused: "this file should not exist" is not
+# something a diff can say, so apply.sh reads the list and removes them last.
 
 stale=0
+
+# --- removals.txt ------------------------------------------------------------
+if [[ $CHECK -eq 1 ]]; then
+  if (( ${#deleted[@]} > 0 )); then
+    printf '%s\n' "${deleted[@]}" > /tmp/qqmusic-removals-expected.txt
+    if ! diff -q <(sort /tmp/qqmusic-removals-expected.txt) \
+                 <(grep -v '^[[:space:]]*$' "$HERE/removals.txt" 2>/dev/null | sort) >/dev/null 2>&1; then
+      echo "-- removals.txt: STALE"
+      stale=1
+    else
+      echo "-- removals.txt: up to date (${#deleted[@]} paths)"
+    fi
+  elif [[ -f "$HERE/removals.txt" ]]; then
+    echo "-- removals.txt: STALE (feature no longer deletes anything)"
+    stale=1
+  else
+    echo "-- removals.txt: none"
+  fi
+else
+  if (( ${#deleted[@]} > 0 )); then
+    printf '# Paths the feature deletes from a pristine upstream tree.\n' > "$HERE/removals.txt"
+    printf '%s\n' "${deleted[@]}" | sort >> "$HERE/removals.txt"
+    echo "-- removals.txt: wrote ${#deleted[@]} paths"
+  else
+    rm -f "$HERE/removals.txt"
+    echo "-- removals.txt: none"
+  fi
+fi
 
 # --- modules/ ----------------------------------------------------------------
 # Rewrite the whole directory so a file removed from the feature also leaves

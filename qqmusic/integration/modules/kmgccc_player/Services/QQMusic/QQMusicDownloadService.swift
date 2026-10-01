@@ -90,7 +90,7 @@ nonisolated struct QQMusicStagedDownload: Sendable {
 
 actor QQMusicDownloadService {
 
-    private let helper: QQMusicHelperProcess
+    private let helper: QQMusicComponentProcess
 
     /// Gids the user cancelled.
     ///
@@ -117,7 +117,7 @@ actor QQMusicDownloadService {
     private var phases: [String: QQMusicDownloadPhase] = [:]
 
     init(
-        helper: QQMusicHelperProcess = .shared,
+        helper: QQMusicComponentProcess = .shared,
         session: URLSession = QQMusicDownloadService.makeDefaultSession(),
         cacheStore: QQMusicCacheStore? = nil
     ) {

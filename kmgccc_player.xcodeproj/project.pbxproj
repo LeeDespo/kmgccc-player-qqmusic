@@ -456,7 +456,7 @@
 				935118902F3231C500766A5F /* Resources */,
 				9396ADAC2FA12C0100000003 /* Copy MediaRemoteAdapter runtime */,
 				93CF3F842F344E9F0004C8E4 /* Copy LDDC runtime */,
-				93D91A122FA5000000010001 /* Copy QQMusic helper */,
+				93D91A122FA5000000010001 /* Copy QQMusic component */,
 				93D91A152FA5000000010004 /* Stamp QQ Music build */,
 				93D91A132FA5000000010002 /* Copy SACAD helper */,
 				93D91A142FA5000000010003 /* Run Optional Build Hook */,
@@ -655,7 +655,7 @@
 			shellPath = /bin/sh;
 			shellScript = "set -uo pipefail\n# Stamp the app with the commit and time it was built. The online source is\n# delivered as a patch package, so an app can be built from several different\n# trees and directories on one machine; without a stamp there is no way to tell\n# a stale build from an unfixed bug, and \"it still does not work\" costs a round\n# trip through the source to answer.\nPLIST=\"${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/Info.plist\"\n[ -f \"${PLIST}\" ] || exit 0\nCOMMIT=\"$(git -C \"${PROJECT_DIR}\" rev-parse --short HEAD 2>/dev/null || echo unknown)\"\nDIRTY=\"\"\nif ! git -C \"${PROJECT_DIR}\" diff --quiet 2>/dev/null; then DIRTY=\"+\"; fi\nSTAMP=\"${COMMIT}${DIRTY} $(date +%Y-%m-%d\\ %H:%M)\"\n/usr/libexec/PlistBuddy -c \"Delete :QQMusicBuildStamp\" \"${PLIST}\" >/dev/null 2>&1 || true\n/usr/libexec/PlistBuddy -c \"Add :QQMusicBuildStamp string ${STAMP}\" \"${PLIST}\" >/dev/null 2>&1 || true\necho \"note: stamped QQ Music build ${STAMP}\"\n";
 		};
-		93D91A122FA5000000010001 /* Copy QQMusic helper */ = {
+		93D91A122FA5000000010001 /* Copy QQMusic component */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -666,7 +666,7 @@
 			inputPaths = (
 				"$(PROJECT_DIR)/Tools/helper-next/qqmusic-helper-next",
 			);
-			name = "Copy QQMusic helper";
+			name = "Copy QQMusic component";
 			outputFileListPaths = (
 			);
 			outputPaths = (

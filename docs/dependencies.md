@@ -26,7 +26,7 @@ flowchart LR
 ./scripts/bootstrap.sh --force --component amll
 ```
 
-组件名为 `amll`、`lddc`、`qqmusic-helper`、`mediaremote` 和 `sacad`。
+组件名为 `amll`、`lddc`、`mediaremote` 和 `sacad`。在线音源的数据组件（`qqmusic-helper-next`）随补丁包提供构建产物，源码在其自己的仓库里。
 
 ## 组件概览
 
