@@ -2061,11 +2061,10 @@ final class QQMusicOnlineCoordinator {
             return (page.tracks, page.total ?? (offset + page.tracks.count))
 
         case .album(let id):
-            // One helper call returns the whole album; albums long enough to need
-            // a second page are a corner the helper route cannot express, so the
-            // count it returns is the count we have.
-            let tracks = try await helper.fetchAlbumTracks(albumID: id, limit: limit)
-            return (tracks, tracks.count)
+            // The album endpoint reports its own size, so an album pages like the
+            // rest and 全选 covers all of it rather than the loaded page.
+            let page = try await helper.fetchAlbumTracksPage(albumID: id, offset: offset, limit: limit)
+            return (page.tracks, page.total ?? (offset + page.tracks.count))
         }
     }
 

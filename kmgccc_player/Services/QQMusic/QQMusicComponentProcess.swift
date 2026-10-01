@@ -1264,6 +1264,7 @@ actor QQMusicComponentProcess {
     private struct AlbumTracksParams: Encodable, Sendable {
         let albumId: Int
         let limit: Int
+        var offset: Int = 0
     }
 
     private struct NewSongsParams: Encodable, Sendable {
@@ -1944,11 +1945,24 @@ actor QQMusicComponentProcess {
 
     /// Tracks of a favorited album, addressed by its numeric id.
     func fetchAlbumTracks(albumID: Int, limit: Int = 100) async throws -> [QQMusicOnlineTrack] {
+        try await fetchAlbumTracksPage(albumID: albumID, offset: 0, limit: limit).tracks
+    }
+
+    /// A page of an album, with the album's own size.
+    ///
+    /// The endpoint reports it (`totalNum`), which is what lets the album page
+    /// walk past the first page and lets 全选 mean the whole album rather than
+    /// the rows that happen to be loaded.
+    func fetchAlbumTracksPage(
+        albumID: Int,
+        offset: Int = 0,
+        limit: Int = 100
+    ) async throws -> (tracks: [QQMusicOnlineTrack], total: Int?) {
         let response = try await sendRetrying(
             method: "fetch_album_tracks",
-            params: AlbumTracksParams(albumId: albumID, limit: limit)
+            params: AlbumTracksParams(albumId: albumID, limit: limit, offset: offset)
         )
-        return response.tracks ?? []
+        return (response.tracks ?? [], response.total)
     }
 
     /// The account's own playlists. Requires a login.
