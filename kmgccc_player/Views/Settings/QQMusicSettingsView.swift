@@ -85,6 +85,7 @@ struct QQMusicSettingsView: View {
     /// The download engine's state, so the section can show it and offer a restart.
     @State private var aria2Status: QQMusicAria2Status?
     @State private var isRestartingAria2 = false
+    @State private var isShowingUpdateHelp = false
 
     private let helper = QQMusicComponentProcess.shared
 
@@ -516,7 +517,7 @@ struct QQMusicSettingsView: View {
             SettingsHeaderLabel(title: "Helper 组件", systemImage: "shippingbox")
 
             VStack(alignment: .leading, spacing: 10) {
-                labeledValue("组件", "HelperNext（在线音源的唯一数据来源）")
+                labeledValue("组件", "Helper组件")
                 labeledValue("组件版本", helperInfo?.helperVersion ?? "未知")
                 labeledValue("协议版本", helperInfo.map { "v\($0.protocolVersion)" } ?? "未知")
                 // Which build this is. The online source ships as a patch package
@@ -526,15 +527,6 @@ struct QQMusicSettingsView: View {
                 labeledValue("本功能版本", QQMusicBuildStamp.featureVersion)
                 labeledValue("本功能构建", QQMusicBuildStamp.text)
 
-                HStack(spacing: 6) {
-                    Text("组件目录")
-                        .settingsRowLabelStyle()
-                    SettingsInfoButton(
-                        text: "QQ 音乐的接口是逆向来的，随时可能变化。组件与应用分离，可单独更新：换掉这个路径下的文件即可，无需重新构建应用。应用优先用外部目录里的那份，bundle 内的只作兜底。\n\n注意：从别处复制过来的二进制会带隔离属性，会被系统直接杀掉（退出码 137，且没有任何输出）。复制后请执行 xattr -cr 那个目录。"
-                    )
-                    Spacer(minLength: 0)
-                }
-                labeledValue("", QQMusicComponentProcess.externalComponentDirectory.path, monospaced: true)
                 if let running = helperBinaryPath {
                     labeledValue("当前运行", running, monospaced: true)
                 }
@@ -566,9 +558,16 @@ struct QQMusicSettingsView: View {
                 Divider().opacity(0.4)
 
                 HStack(spacing: 8) {
-                    Button("在访达中显示") { revealHelperDirectory() }
+                    Button("更新组件") { isShowingUpdateHelp = true }
                     Button("重新检查") { Task { await refreshStatus() } }
                     Spacer()
+                }
+                .alert("更新组件", isPresented: $isShowingUpdateHelp) {
+                    Button("前往 Release 页面") { openComponentReleasePage() }
+                    Button("打开文件位置") { revealComponentDirectory() }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text(updateHelpText)
                 }
             }
             .padding(SettingsStyleTokens.groupPadding)
@@ -1176,10 +1175,40 @@ struct QQMusicSettingsView: View {
         window.present()
     }
 
-    private func revealHelperDirectory() {
+    private func revealComponentDirectory() {
         let directory = QQMusicComponentProcess.externalComponentDirectory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         NSWorkspace.shared.activateFileViewerSelecting([directory])
+    }
+
+    /// Where a newer component package is published.
+    private func openComponentReleasePage() {
+        guard let url = URL(string: QQMusicComponentProcess.componentReleasePage) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// What replacing the component actually takes — spelled out, because two of
+    /// the three steps are the ones people skip and then wonder why the app says
+    /// the component is not there.
+    private var updateHelpText: String {
+        """
+        组件与应用分开更新：换掉下面目录里的文件即可，不必重新构建应用。
+
+        1. 在 Release 页面下载最新的组件包（含 qqmusic-helper-next 与 aria2-next）。
+        2. 把两个文件放进：
+           \(QQMusicComponentProcess.externalComponentDirectory.path)
+           应用优先用外部目录里的这份，bundle 内的只作兜底。
+        3. 清掉隔离属性并重新签名，两件都要做：
+
+           xattr -cr "~/Library/Application Support/kmgccc.player/QQMusicHelperNext"
+           codesign --force --sign - "~/Library/Application Support/kmgccc.player/QQMusicHelperNext/"*
+
+        第 3 步不能省：从浏览器下载来的文件带隔离属性，带它的可执行文件会被系统直接杀掉
+        （退出码 137，没有任何输出），而应用只会写一行日志——表现是"在线音源整个不工作"。
+        只清属性仍会被杀，所以要再补一次签名。
+
+        放好之后点「重新检查」，上面的版本号应当随之更新。
+        """
     }
 
     private func revealCacheDirectory() {

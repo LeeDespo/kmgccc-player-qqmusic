@@ -2624,6 +2624,13 @@ actor QQMusicComponentProcess {
             .appendingPathComponent("QQMusicHelperNext", isDirectory: true)
     }
 
+    /// Where a newer component package is published.
+    ///
+    /// The component travels with the app's patch package, so its releases live on
+    /// this project's release page — one place to look for both.
+    nonisolated static let componentReleasePage =
+        "https://github.com/LeeDespo/kmgccc-player-qqmusic/releases"
+
     /// Root for the persisted QQ Music credential.
     ///
     /// Passed to the helper as `KMGCCC_QQMUSIC_CREDENTIAL_DIR` so the login

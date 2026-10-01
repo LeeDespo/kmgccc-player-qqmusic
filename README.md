@@ -95,7 +95,7 @@ git checkout b0de7aa6
 cp -R /path/to/kmgccc_player-2.3.1+QQMusic.1.0.0-patch/integration ./qqmusic/integration
 ./qqmusic/integration/apply.sh --repo . --verify
 
-# 3. 构建（helper 需要 Python 3.12 / Node 22 / CMake）
+# 3. 构建（数据组件是补丁包自带的预编译二进制，不需要 Rust/Python）
 ./scripts/bootstrap.sh
 DEVELOPMENT_TEAM=<你的 team id> ./scripts/build_and_run.sh
 ```
@@ -223,9 +223,11 @@ cd kmgccc_player_for_QQMusic
 open kmgccc_player.xcodeproj
 ```
 
-开发环境需要 Xcode 26.2 或更新版本（Swift 6）、Node.js 22（含 Corepack）、ARM64 Python 3.12、
-CMake 3.15 或更新版本、Git、curl 与 Xcode Command Line Tools。构建输入可选地在
+开发环境需要 Xcode 26.2 或更新版本（Swift 6）、Node.js 22（含 Corepack，供 AMLL）、
+ARM64 Python 3.12（供 LDDC）、CMake 3.15 或更新版本（供 MediaRemoteAdapter），
+以及 Git、curl 与 Xcode Command Line Tools。构建输入可选地在
 `Config/LocalOverrides.xcconfig` 配置（可从同目录 `.example` 复制）。
+在线音源的数据组件是预编译产物，**不需要** Rust 或 Python。
 
 - **AMLL submodule 缺失或 commit 不一致**：`git submodule sync --recursive` 再 `git submodule update --init --recursive`。
 - **找不到 node 或 corepack**：装 Node.js 22，确认两者都在 PATH 中。npm 官方源不通时可用 `registry.npmmirror.com`。

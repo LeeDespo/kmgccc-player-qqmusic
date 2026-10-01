@@ -186,9 +186,25 @@ find "$PKG" -name '.DS_Store' -delete
 TARBALL="$OUT_DIR/kmgccc_player-${SLUG}-patch.tar.gz"
 rm -rf "$OUT_DIR/patch"
 
+step "assemble component package"
+# The component and its download engine, on their own, so someone whose online
+# source broke can replace two files instead of the whole app. This is what the
+# settings window's 「更新组件」 points at.
+COMP="$OUT_DIR/component/kmgccc_player-${SLUG}-component"
+rm -rf "$OUT_DIR/component"
+mkdir -p "$COMP"
+cp "$REPO_ROOT/Tools/helper-next/qqmusic-helper-next" "$COMP/"
+cp "$REPO_ROOT/Tools/helper-next/aria2-next" "$COMP/"
+cp "$REPO_ROOT/qqmusic/release/component-README.md" "$COMP/README.md"
+find "$COMP" -name '.DS_Store' -delete
+( cd "$OUT_DIR/component" && COPYFILE_DISABLE=1 tar -czf "../kmgccc_player-${SLUG}-component.tar.gz" "$(basename "$COMP")" )
+COMPONENT_TARBALL="$OUT_DIR/kmgccc_player-${SLUG}-component.tar.gz"
+rm -rf "$OUT_DIR/component"
+
 step "artifacts"
-printf 'dmg:     %s\n' "$DMG"
-printf 'patch:   %s\n' "$TARBALL"
-printf 'baseline: %s\n' "$UPSTREAM_BASE"
-printf 'commit:   %s\n' "$STAMP"
-( cd "$OUT_DIR" && shasum -a 256 "$(basename "$DMG")" "$(basename "$TARBALL")" )
+printf 'dmg:       %s\n' "$DMG"
+printf 'patch:     %s\n' "$TARBALL"
+printf 'component: %s\n' "$COMPONENT_TARBALL"
+printf 'baseline:  %s\n' "$UPSTREAM_BASE"
+printf 'commit:    %s\n' "$STAMP"
+( cd "$OUT_DIR" && shasum -a 256 "$(basename "$DMG")" "$(basename "$TARBALL")" "$(basename "$COMPONENT_TARBALL")" )
