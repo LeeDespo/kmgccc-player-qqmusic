@@ -138,8 +138,9 @@ stale=0
 if [[ $CHECK -eq 1 ]]; then
   if (( ${#deleted[@]} > 0 )); then
     printf '%s\n' "${deleted[@]}" > /tmp/qqmusic-removals-expected.txt
+    # Comments and blanks are not paths; apply.sh skips them the same way.
     if ! diff -q <(sort /tmp/qqmusic-removals-expected.txt) \
-                 <(grep -v '^[[:space:]]*$' "$HERE/removals.txt" 2>/dev/null | sort) >/dev/null 2>&1; then
+                 <(grep -vE '^[[:space:]]*(#|$)' "$HERE/removals.txt" 2>/dev/null | sort) >/dev/null 2>&1; then
       echo "-- removals.txt: STALE"
       stale=1
     else
