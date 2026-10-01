@@ -85,7 +85,7 @@ aria2 的活跃分支，2.7.5）——它就在组件旁边：`<组件目录>/ar
 
 // 调整参数：立即生效（aria2.changeGlobalOption），不重启、不打断在下的任务
 {"id":"3","method":"aria2_configure","params":{"split":5,"maxConnectionPerServer":5,
-  "maxConcurrentDownloads":1,"minSplitSizeMiB":1,"maxOverallDownloadLimitKiB":0}}
+  "maxConcurrentDownloads":1,"minSplitSizeMiB":1,"maxOverallDownloadLimitKiB":0,"port":16800}}
 
 // 排队一个文件，out 是引擎目录里的文件名（应用挑它，导入才拿得到期望的名字）
 {"id":"4","method":"aria2_add","params":{"url":"https://isure.stream.qqmusic.qq.com/...","out":"0039MnYb0qxYhV-ab12cd34.flac"}}
@@ -113,8 +113,11 @@ aria2 的活跃分支，2.7.5）——它就在组件旁边：`<组件目录>/ar
 
 **几个要点**：
 
-- 端口固定 **16800**（不是 aria2 默认的 6800——那正是用户自己的守护进程会占的），只监听回环，
-  `--rpc-secret` 每次启动重新生成。
+- 端口默认 **16800**（不是 aria2 默认的 6800——那正是用户自己的守护进程会占的），**可由用户改**
+  （`aria2_configure` 的 `port`，clamp 到 1024–65535）。端口**不能在运行中改**（监听套接字搬不了），
+  所以它在下一次启动时生效：设置页的「重启引擎」会应用它，`aria2_status` 回报的 `port` 才是实际在用的。
+  改动后 `changeGlobalOption` **不会**被推送端口——推了就是骗人。端口被占用时自动改用空闲端口。
+  只监听回环，`--rpc-secret` 每次启动重新生成。
 - 引擎**按需启动**：打开设置页不会拉起进程，只有真的要下载时才启动。
 - 参数会被 clamp（split/连接数 1–16、任务数 1–10、最小分块 1MB 起）——上游对这些字段是零容忍的。
 - **取消会删掉临时文件**：先读 `path`，再 `forceRemove`，删文件（连 `.aria2`），最后 `removeDownloadResult`

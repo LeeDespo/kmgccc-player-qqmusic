@@ -122,6 +122,9 @@ final class QQMusicOnlineCoordinator {
     /// Set when the user cancels, so the batch loop stops instead of walking on
     /// through the rest of the selection.
     private var didCancelUserDownload = false
+    /// The running batch, so a new one can supersede it and so leaving the
+    /// surface stops it.
+    private var userBatchTask: Task<Void, Never>?
 
     func refreshAria2Tasks() {
         Task { [weak self] in
@@ -160,7 +163,11 @@ final class QQMusicOnlineCoordinator {
     /// fetching the same file a second way.
     func cancelAria2Tasks(gid: String? = nil) async {
         let cancelled = gid.map { [$0] } ?? aria2Tasks.filter { !$0.isFinished }.map(\.gid)
-        didCancelUserDownload = true
+        // Cancelling everything stops the batch; cancelling one task leaves the
+        // rest of the queue alone.
+        if gid == nil {
+            didCancelUserDownload = true
+        }
         aria2Tasks = await helper.aria2Cancel(gid: gid)
         await downloader.markCancelled(cancelled)
         if aria2Tasks.isEmpty {
@@ -2697,75 +2704,91 @@ final class QQMusicOnlineCoordinator {
 
     /// Download several tracks the user picked, one after another.
     ///
-    /// Serial on purpose: the upstream is sensitive to concurrent requests, and a
-    /// batch download is the easiest way to look like abuse. Each track's
-    /// progress reuses the per-row phase the list already displays, so no
-    /// separate progress UI is needed.
+    /// Start a batch download and return at once.
     ///
-    /// Already-downloaded tracks are not fetched again — `materialize` reuses the
-    /// local copy and only promotes its ownership, which is exactly the
-    /// automatic-to-manual transition.
-    ///
-    /// Returns a summary so the caller can report what happened rather than
-    /// guessing from the phases.
-    @discardableResult
-    func downloadSelected(_ tracks: [QQMusicOnlineTrack]) async -> (downloaded: Int, converted: Int, failed: Int) {
-        guard canDownload, let stagingDirectory else {
+    /// Returns as soon as the mode can close: the user asked for the selection to
+    /// end when they press download, not when the last file lands. The work
+    /// continues in `userBatchTask`, and the toolbar's progress box is what shows
+    /// it — that is the surface for "how is the batch going", which is why this
+    /// does not need to block.
+    func startBatchDownload(_ tracks: [QQMusicOnlineTrack]) {
+        guard canDownload, stagingDirectory != nil else {
             Log.warning("[QQMusicOnline] batch download needs a managed library", category: .import)
-            return (0, 0, 0)
+            return
         }
         let selection = tracks.filter { !$0.songMid.isEmpty }
-        guard !selection.isEmpty else { return (0, 0, 0) }
+        guard !selection.isEmpty else { return }
 
+        // One batch at a time, and a new one supersedes the old: two overlapping
+        // batches would fight over the same progress box.
+        userBatchTask?.cancel()
+        didCancelUserDownload = false
+        beginUserDownload(selection)
+        let generation = prefetchGeneration
+        userBatchTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runBatch(selection)
+            // Only the batch that is still current may clear the box.
+            guard generation == self.prefetchGeneration else { return }
+            self.endUserDownload()
+        }
+    }
+
+    /// The batch itself: hand the whole selection to the engine, then import the
+    /// finished files.
+    ///
+    /// Queueing everything up front is what makes the engine's own
+    /// `max-concurrent-downloads` the thing that decides how many run at once —
+    /// this used to hand over a window of tracks equal to that setting, so the
+    /// engine never held more than a couple and the "how many at once" control
+    /// looked like it did nothing. (Serialising the *resolve* calls is deliberate:
+    /// the upstream is sensitive to concurrent requests, and that part is cheap
+    /// next to the transfer.)
+    @discardableResult
+    private func runBatch(_ selection: [QQMusicOnlineTrack]) async -> (downloaded: Int, converted: Int, failed: Int) {
+        guard let stagingDirectory else { return (0, 0, 0) }
         var downloaded = 0
         var converted = 0
         var failed = 0
-        didCancelUserDownload = false
-        beginUserDownload(selection)
-        defer { endUserDownload() }
 
-        // The whole selection is handed to the engine up front, so the download
-        // list shows every track the user asked for and the engine's own
-        // concurrency setting decides how many run at once. The window here only
-        // bounds how far ahead of the *import* the queue is allowed to run.
-        let window = max(1, AppSettings.shared.qqMusicAria2ConcurrentDownloads)
-        var next = 0
-        var inFlight: [(track: QQMusicOnlineTrack, queued: QQMusicQueuedDownload)] = []
-
-        func fill() async {
-            while inFlight.count < window, next < selection.count, !didCancelUserDownload {
-                let track = selection[next]
-                next += 1
-                // Dropped by the user while it was still waiting here.
-                if userDownloadProgress?.items.first(where: { $0.songMid == track.songMid })?.outcome != nil {
+        var queued: [(track: QQMusicOnlineTrack, download: QQMusicQueuedDownload)] = []
+        for track in selection {
+            guard !Task.isCancelled, !didCancelUserDownload else { break }
+            // Dropped by the user while it was still waiting here.
+            if userDownloadProgress?.items.first(where: { $0.songMid == track.songMid })?.outcome != nil {
+                continue
+            }
+            do {
+                let download = try await downloader.queue(
+                    track,
+                    stagingDirectory: stagingDirectory
+                )
+                queued.append((track, download))
+                updateUserDownloadItem(
+                    track.songMid,
+                    gid: download.gid,
+                    fileName: download.fileName,
+                    outcome: nil
+                )
+            } catch {
+                if case QQMusicDownloadError.cancelled = error {
+                    updateUserDownloadItem(track.songMid, outcome: "已取消")
                     continue
                 }
-                do {
-                    let queued = try await downloader.queue(
-                        track,
-                        stagingDirectory: stagingDirectory
-                    )
-                    inFlight.append((track, queued))
-                    updateUserDownloadItem(track.songMid, gid: queued.gid, fileName: queued.fileName, outcome: nil)
-                } catch {
-                    if case QQMusicDownloadError.cancelled = error {
-                        updateUserDownloadItem(track.songMid, outcome: "已取消")
-                        continue
-                    }
-                    failed += 1
-                    updateUserDownloadItem(track.songMid, outcome: "失败")
-                }
+                failed += 1
+                updateUserDownloadItem(track.songMid, outcome: "失败")
             }
         }
 
-        await fill()
-        while !inFlight.isEmpty {
+        for (track, download) in queued {
             guard !Task.isCancelled, !didCancelUserDownload else { break }
-            let (track, queued) = inFlight.removeFirst()
+            guard userDownloadProgress?.items.first(where: { $0.songMid == track.songMid })?.outcome == nil else {
+                continue
+            }
             let alreadyLocal = existingTrack(for: track.songMid) != nil
             do {
                 let staged = try await downloader.finishQueued(
-                    queued,
+                    download,
                     track: track,
                     stagingDirectory: stagingDirectory
                 )
@@ -2787,13 +2810,17 @@ final class QQMusicOnlineCoordinator {
                 failed += 1
                 updateUserDownloadItem(track.songMid, outcome: "失败")
             }
-            await fill()
         }
-        // Anything the user cancelled before it was ever queued is marked, so the
-        // list does not keep showing "等待中" for a batch that is over.
+
+        // Anything never reached is marked, so the list does not keep showing
+        // "等待中" for a batch that is over.
         for track in selection where userDownloadProgress?.items.first(where: { $0.songMid == track.songMid })?.outcome == nil {
-            updateUserDownloadItem(track.songMid, outcome: "已取消")
+            updateUserDownloadItem(track.songMid, outcome: didCancelUserDownload ? "已取消" : "未完成")
         }
+        Log.info(
+            "[QQMusicOnline] batch: \(downloaded) downloaded, \(converted) already local, \(failed) failed",
+            category: .import
+        )
         return (downloaded, converted, failed)
     }
 

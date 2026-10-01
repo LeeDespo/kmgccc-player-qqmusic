@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Models/AppSettings.swift b/kmgccc_player/Models/AppSettings.swift
-index 6c11cee7..700e48a3 100644
+index 6c11cee7..f30d35f0 100644
 --- a/kmgccc_player/Models/AppSettings.swift
 +++ b/kmgccc_player/Models/AppSettings.swift
 @@ -22,10 +22,24 @@ enum PlaybackStartPolicy: Equatable {
@@ -37,7 +37,7 @@ index 6c11cee7..700e48a3 100644
              return .sequence
          case .forceShuffleTemporary:
              return .shuffle
-@@ -1105,6 +1119,438 @@ public final class AppSettings {
+@@ -1105,6 +1119,453 @@ public final class AppSettings {
          static let sourcePreferences = "externalPlaybackSourcePreferences"
      }
  
@@ -70,6 +70,7 @@ index 6c11cee7..700e48a3 100644
 +        static let aria2ConcurrentDownloads = "qqMusicAria2ConcurrentDownloads"
 +        static let aria2MinSplitMiB = "qqMusicAria2MinSplitMiB"
 +        static let aria2LimitKiB = "qqMusicAria2LimitKiB"
++        static let aria2Port = "qqMusicAria2Port"
 +        static let rateLimitEnabled = "qqMusicRateLimitEnabled"
 +        static let rateLimitWindowSeconds = "qqMusicRateLimitWindowSeconds"
 +        static let rateLimitMaxRequests = "qqMusicRateLimitMaxRequests"
@@ -216,6 +217,20 @@ index 6c11cee7..700e48a3 100644
 +        set {
 +            withMutation(keyPath: \.qqMusicAria2MinSplitMiB) {
 +                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.aria2MinSplitMiB)
++            }
++        }
++    }
++
++    /// The engine's RPC port. Takes effect when the engine restarts — a listener
++    /// cannot move — so the settings row says so and offers the restart button.
++    var qqMusicAria2Port: Int {
++        get {
++            access(keyPath: \.qqMusicAria2Port)
++            return qqMusicInt(QQMusicKeys.aria2Port, default: 16_800)
++        }
++        set {
++            withMutation(keyPath: \.qqMusicAria2Port) {
++                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.aria2Port)
 +            }
 +        }
 +    }

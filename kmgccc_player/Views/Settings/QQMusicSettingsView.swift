@@ -767,16 +767,22 @@ struct QQMusicSettingsView: View {
         step: Int = 1,
         detail: String
     ) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 8) {
             HStack(spacing: 6) {
                 Text(title)
                     .settingsRowLabelStyle()
                 SettingsInfoButton(text: detail)
             }
             Spacer(minLength: 12)
-            NumericSettingField(value: value, range: range, unit: unit)
+            NumericSettingField(value: value, range: range)
             Stepper("", value: value, in: range, step: step)
                 .labelsHidden()
+            if !unit.isEmpty {
+                Text(unit)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(minWidth: 30, alignment: .leading)
+            }
         }
     }
 
@@ -916,7 +922,10 @@ struct QQMusicSettingsView: View {
                             )
                         }
                         Spacer(minLength: 12)
-                        NumericSettingField(value: reclaimPercent, range: 0...90, unit: "%")
+                        NumericSettingField(value: reclaimPercent, range: 0...90)
+                        Text("%")
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -1265,6 +1274,14 @@ struct QQMusicSettingsView: View {
                     detail: "小于这个大小的文件不再切分（min-split-size）。"
                 )
                 stepperRow(
+                    title: "RPC 端口",
+                    value: aria2Port,
+                    range: 1024...65_535,
+                    unit: "端口",
+                    step: 1,
+                    detail: "下载引擎在本机监听这个端口（只监听回环地址，外部访问不到）。改动**需要重启引擎**才会生效——监听端口不能在运行中改，重启按钮就在上面。端口被占用时会自动改用系统给的空闲端口。"
+                )
+                stepperRow(
                     title: "总下载限速",
                     value: aria2Limit,
                     range: 0...102_400,
@@ -1280,6 +1297,7 @@ struct QQMusicSettingsView: View {
         .onChange(of: AppSettings.shared.qqMusicAria2ConcurrentDownloads) { _, _ in Task { await pushAria2Options() } }
         .onChange(of: AppSettings.shared.qqMusicAria2MinSplitMiB) { _, _ in Task { await pushAria2Options() } }
         .onChange(of: AppSettings.shared.qqMusicAria2LimitKiB) { _, _ in Task { await pushAria2Options() } }
+        .onChange(of: AppSettings.shared.qqMusicAria2Port) { _, _ in Task { await pushAria2Options() } }
     }
 
     private var aria2Summary: String {
@@ -1322,6 +1340,13 @@ struct QQMusicSettingsView: View {
         )
     }
 
+    private var aria2Port: Binding<Int> {
+        Binding(
+            get: { AppSettings.shared.qqMusicAria2Port },
+            set: { AppSettings.shared.qqMusicAria2Port = $0 }
+        )
+    }
+
     private var aria2Limit: Binding<Int> {
         Binding(
             get: { AppSettings.shared.qqMusicAria2LimitKiB },
@@ -1349,7 +1374,8 @@ struct QQMusicSettingsView: View {
             maxConnectionPerServer: settings.qqMusicAria2ConnectionsPerServer,
             maxConcurrentDownloads: settings.qqMusicAria2ConcurrentDownloads,
             minSplitSizeMiB: settings.qqMusicAria2MinSplitMiB,
-            maxOverallDownloadLimitKiB: settings.qqMusicAria2LimitKiB
+            maxOverallDownloadLimitKiB: settings.qqMusicAria2LimitKiB,
+            port: settings.qqMusicAria2Port
         )
         if let status = await helper.aria2Configure(options) {
             aria2Status = status
@@ -1401,7 +1427,6 @@ private struct NumericSettingField: View {
 
     @Binding var value: Int
     let range: ClosedRange<Int>
-    let unit: String
 
     @State private var text: String = ""
     @FocusState private var isFocused: Bool
@@ -1432,12 +1457,6 @@ private struct NumericSettingField: View {
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .strokeBorder(Color.primary.opacity(isFocused ? 0.25 : 0.10), lineWidth: 0.5)
             )
-            // The unit is a label beside the box, not part of the control: the box
-            // is for the number the user types.
-            Text(unit)
-                .font(.system(size: 12))
-                .foregroundStyle(.secondary)
-                .frame(minWidth: 28, alignment: .leading)
         }
         .onAppear { text = String(value) }
         .onChange(of: value) { _, newValue in
@@ -1499,7 +1518,7 @@ private struct DecimalSettingField: View {
             Text(unit)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-                .frame(minWidth: 28, alignment: .leading)
+                .frame(minWidth: 30, alignment: .leading)
         }
         .onAppear { text = formatted(value) }
         .onChange(of: value) { _, newValue in

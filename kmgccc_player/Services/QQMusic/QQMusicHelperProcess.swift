@@ -307,13 +307,16 @@ nonisolated struct QQMusicAria2Options: Codable, Equatable, Sendable {
     var minSplitSizeMiB: Int
     /// `--max-overall-download-limit`, in KiB/s; 0 is aria2's "no limit".
     var maxOverallDownloadLimitKiB: Int
+    /// The engine's RPC port. Applied when it next starts.
+    var port: Int
 
     static let `default` = QQMusicAria2Options(
         split: 5,
         maxConnectionPerServer: 5,
         maxConcurrentDownloads: 1,
         minSplitSizeMiB: 1,
-        maxOverallDownloadLimitKiB: 0
+        maxOverallDownloadLimitKiB: 0,
+        port: 16_800
     )
 }
 
@@ -1214,6 +1217,7 @@ actor QQMusicHelperProcess {
         let maxConcurrentDownloads: Int
         let minSplitSizeMiB: Int
         let maxOverallDownloadLimitKiB: Int
+        let port: Int
     }
 
     private struct Aria2AddParams: Encodable, Sendable {
@@ -1481,7 +1485,8 @@ actor QQMusicHelperProcess {
                 maxConnectionPerServer: options.maxConnectionPerServer,
                 maxConcurrentDownloads: options.maxConcurrentDownloads,
                 minSplitSizeMiB: options.minSplitSizeMiB,
-                maxOverallDownloadLimitKiB: options.maxOverallDownloadLimitKiB
+                maxOverallDownloadLimitKiB: options.maxOverallDownloadLimitKiB,
+                port: options.port
             )
         )
         return response?.aria2

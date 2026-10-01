@@ -1148,6 +1148,7 @@ public final class AppSettings {
         static let aria2ConcurrentDownloads = "qqMusicAria2ConcurrentDownloads"
         static let aria2MinSplitMiB = "qqMusicAria2MinSplitMiB"
         static let aria2LimitKiB = "qqMusicAria2LimitKiB"
+        static let aria2Port = "qqMusicAria2Port"
         static let rateLimitEnabled = "qqMusicRateLimitEnabled"
         static let rateLimitWindowSeconds = "qqMusicRateLimitWindowSeconds"
         static let rateLimitMaxRequests = "qqMusicRateLimitMaxRequests"
@@ -1294,6 +1295,20 @@ public final class AppSettings {
         set {
             withMutation(keyPath: \.qqMusicAria2MinSplitMiB) {
                 UserDefaults.standard.set(newValue, forKey: QQMusicKeys.aria2MinSplitMiB)
+            }
+        }
+    }
+
+    /// The engine's RPC port. Takes effect when the engine restarts — a listener
+    /// cannot move — so the settings row says so and offers the restart button.
+    var qqMusicAria2Port: Int {
+        get {
+            access(keyPath: \.qqMusicAria2Port)
+            return qqMusicInt(QQMusicKeys.aria2Port, default: 16_800)
+        }
+        set {
+            withMutation(keyPath: \.qqMusicAria2Port) {
+                UserDefaults.standard.set(newValue, forKey: QQMusicKeys.aria2Port)
             }
         }
     }

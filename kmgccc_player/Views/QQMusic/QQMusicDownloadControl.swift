@@ -118,7 +118,6 @@ struct QQMusicDownloadControl: View {
         .frame(height: GlassStyleTokens.headerControlHeight)
         .animation(shapeAnimation, value: selection.isSelecting)
         .animation(shapeAnimation, value: selection.selectedSongMids.count)
-        .animation(shapeAnimation, value: selection.isDownloading)
         // Availability is not a transition. The control keeps its shape on every
         // page and only its opacity and behaviour change; without this, whatever
         // animation happens to be in flight when the page changes carries the
@@ -221,15 +220,14 @@ struct QQMusicDownloadControl: View {
     /// finishes the job rather than as one of four equals.
     private var downloadSelectedSegment: some View {
         Button {
-            Task { await downloadSelection() }
+            downloadSelection()
         } label: {
             HStack(spacing: 5) {
-                if selection.isDownloading {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "arrow.down.circle.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                }
+                // No spinner: pressing this now queues the batch and closes the
+                // mode, so the button is never "busy" — the progress box that
+                // appears beside it is where the work is visible.
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
                 Text("下载所选")
                     .font(.system(size: 13, weight: .semibold))
                 if selection.selectedSongMids.count > 0 {
@@ -248,7 +246,7 @@ struct QQMusicDownloadControl: View {
             .background(themeStore.accentColor.opacity(selection.selectedSongMids.isEmpty ? 0.35 : 1))
         }
         .buttonStyle(.plain)
-        .disabled(selection.selectedSongMids.isEmpty || selection.isDownloading)
+        .disabled(selection.selectedSongMids.isEmpty)
         .help("下载选中的歌曲")
     }
 
@@ -267,21 +265,14 @@ struct QQMusicDownloadControl: View {
     /// and failure are drawn on its row's artwork. `downloadSelected` still
     /// counts downloaded/converted/failed — that is what the log records, and
     /// what decides whether the selection is cleared.
-    private func downloadSelection() async {
+    private func downloadSelection() {
         let chosen = tracks.filter { selection.isSelected($0.songMid) }
         guard !chosen.isEmpty else { return }
-        selection.setDownloading(true)
-        defer { selection.setDownloading(false) }
-
-        let result = await coordinator.downloadSelected(chosen)
-        Log.info(
-            "[QQMusicOnline] batch download: \(result.downloaded) downloaded, "
-                + "\(result.converted) promoted, \(result.failed) failed",
-            category: .import
-        )
-        // The batch is queued; the mode has done its job. Leaving it open was the
-        // old behaviour, and it read as "the download did not start" — the user
-        // asked for the mode to close on its own.
+        // Hand the whole selection over and close the mode in the same gesture.
+        // The batch runs in the background and reports through the toolbar's
+        // progress box; making the user sit in selection mode until the last file
+        // lands was the old behaviour, and it read as "the download never started".
+        coordinator.startBatchDownload(chosen)
         withAnimation(shapeAnimation) {
             selection.cancel()
         }

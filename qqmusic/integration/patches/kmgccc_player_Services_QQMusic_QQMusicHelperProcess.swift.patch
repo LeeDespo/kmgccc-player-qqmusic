@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
-index 81b5c94f..da73f035 100644
+index 81b5c94f..72c85215 100644
 --- a/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 +++ b/kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
 @@ -45,6 +45,11 @@ nonisolated struct QQMusicMetadataDetail: Codable, Equatable, Sendable {
@@ -14,7 +14,7 @@ index 81b5c94f..da73f035 100644
      var metadataSource: String?
      var metadataFetchedAt: Date?
      var metadataConfidence: Double?
-@@ -104,6 +109,461 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
+@@ -104,6 +109,464 @@ nonisolated struct MetadataApplyResult<Value>: Sendable where Value: Sendable {
      let changed: Bool
  }
  
@@ -216,13 +216,16 @@ index 81b5c94f..da73f035 100644
 +    var minSplitSizeMiB: Int
 +    /// `--max-overall-download-limit`, in KiB/s; 0 is aria2's "no limit".
 +    var maxOverallDownloadLimitKiB: Int
++    /// The engine's RPC port. Applied when it next starts.
++    var port: Int
 +
 +    static let `default` = QQMusicAria2Options(
 +        split: 5,
 +        maxConnectionPerServer: 5,
 +        maxConcurrentDownloads: 1,
 +        minSplitSizeMiB: 1,
-+        maxOverallDownloadLimitKiB: 0
++        maxOverallDownloadLimitKiB: 0,
++        port: 16_800
 +    )
 +}
 +
@@ -476,7 +479,7 @@ index 81b5c94f..da73f035 100644
  nonisolated enum MetadataDetailApplicator {
      static func applyMissingFields(
          _ detail: ArtistMetadataDetail,
-@@ -625,8 +1085,32 @@ actor QQMusicHelperProcess {
+@@ -625,8 +1088,32 @@ actor QQMusicHelperProcess {
      private struct QQMusicHelperResponse: Decodable, Sendable {
          let id: String?
          let ok: Bool
@@ -509,7 +512,7 @@ index 81b5c94f..da73f035 100644
          let error: String?
      }
  
-@@ -668,18 +1152,260 @@ actor QQMusicHelperProcess {
+@@ -668,18 +1155,261 @@ actor QQMusicHelperProcess {
          let duration: Int?
      }
  
@@ -575,6 +578,7 @@ index 81b5c94f..da73f035 100644
 +        let maxConcurrentDownloads: Int
 +        let minSplitSizeMiB: Int
 +        let maxOverallDownloadLimitKiB: Int
++        let port: Int
 +    }
 +
 +    private struct Aria2AddParams: Encodable, Sendable {
@@ -775,7 +779,7 @@ index 81b5c94f..da73f035 100644
      private var recentStderr = ""
      private var pendingRequests: [String: PendingRequest] = [:]
      private var idleShutdownTask: Task<Void, Never>?
-@@ -688,10 +1414,135 @@ actor QQMusicHelperProcess {
+@@ -688,10 +1418,136 @@ actor QQMusicHelperProcess {
      private var circuitLastReason = ""
      private var lastActivity = Date()
      private var lastLaunchDiagnostics = ""
@@ -846,7 +850,8 @@ index 81b5c94f..da73f035 100644
 +                maxConnectionPerServer: options.maxConnectionPerServer,
 +                maxConcurrentDownloads: options.maxConcurrentDownloads,
 +                minSplitSizeMiB: options.minSplitSizeMiB,
-+                maxOverallDownloadLimitKiB: options.maxOverallDownloadLimitKiB
++                maxOverallDownloadLimitKiB: options.maxOverallDownloadLimitKiB,
++                port: options.port
 +            )
 +        )
 +        return response?.aria2
@@ -911,7 +916,7 @@ index 81b5c94f..da73f035 100644
      func searchArtistArtwork(name: String, limit: Int = 5) async throws -> [QQMusicArtworkCandidate] {
          try await request(
              method: "search_artist_artwork",
-@@ -776,6 +1627,473 @@ actor QQMusicHelperProcess {
+@@ -776,6 +1632,473 @@ actor QQMusicHelperProcess {
          )
      }
  
@@ -1385,7 +1390,7 @@ index 81b5c94f..da73f035 100644
      func terminate() {
          stopProcess(failingPendingWith: QQMusicHelperError.cancelled)
      }
-@@ -968,9 +2286,11 @@ actor QQMusicHelperProcess {
+@@ -968,9 +2291,11 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -1399,7 +1404,7 @@ index 81b5c94f..da73f035 100644
              }
          }
  
-@@ -981,7 +2301,9 @@ actor QQMusicHelperProcess {
+@@ -981,7 +2306,9 @@ actor QQMusicHelperProcess {
                  try? handle.close()
                  return
              }
@@ -1410,7 +1415,7 @@ index 81b5c94f..da73f035 100644
              Task {
                  await self?.appendStderr(text)
              }
-@@ -1006,20 +2328,67 @@ actor QQMusicHelperProcess {
+@@ -1006,20 +2333,67 @@ actor QQMusicHelperProcess {
          self.stdinHandle = stdinPipe.fileHandleForWriting
          self.stdoutPipe = stdoutPipe
          self.stderrPipe = stderrPipe
@@ -1487,7 +1492,7 @@ index 81b5c94f..da73f035 100644
          }
      }
  
-@@ -1091,7 +2460,7 @@ actor QQMusicHelperProcess {
+@@ -1091,7 +2465,7 @@ actor QQMusicHelperProcess {
          stdinHandle = nil
          stdoutPipe = nil
          stderrPipe = nil
@@ -1496,7 +1501,7 @@ index 81b5c94f..da73f035 100644
      }
  
      private func markActivity() {
-@@ -1132,6 +2501,7 @@ actor QQMusicHelperProcess {
+@@ -1132,6 +2506,7 @@ actor QQMusicHelperProcess {
      }
  
      private func recordFailure(reason: String) {
@@ -1504,7 +1509,7 @@ index 81b5c94f..da73f035 100644
          let now = Date()
          recentFailureDates = recentFailureDates.filter {
              now.timeIntervalSince($0) <= failureWindow
-@@ -1152,6 +2522,16 @@ actor QQMusicHelperProcess {
+@@ -1152,6 +2527,16 @@ actor QQMusicHelperProcess {
      }
  
      private func checkCircuitBreaker() throws {
@@ -1521,7 +1526,7 @@ index 81b5c94f..da73f035 100644
          guard let until = circuitOpenUntil else { return }
          if Date() < until {
              Log.warning("[QQMusicHelperProcess] circuit open until=\(until) reason=\(circuitLastReason)", category: .import)
-@@ -1163,30 +2543,50 @@ actor QQMusicHelperProcess {
+@@ -1163,30 +2548,50 @@ actor QQMusicHelperProcess {
      }
  
      private func findLaunchCandidate() -> LaunchCandidate? {
@@ -1593,7 +1598,7 @@ index 81b5c94f..da73f035 100644
      }
  
      private func bundledBinaryURL() -> URL {
-@@ -1194,8 +2594,37 @@ actor QQMusicHelperProcess {
+@@ -1194,8 +2599,37 @@ actor QQMusicHelperProcess {
              ?? URL(fileURLWithPath: Bundle.main.resourcePath ?? "", isDirectory: true)
          return resources
              .appendingPathComponent("Tools", isDirectory: true)
