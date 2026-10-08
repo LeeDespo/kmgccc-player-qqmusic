@@ -85,7 +85,7 @@ HelperNext 的端点、queryId/module/method、解析规则不在本仓库复制
 
 ## 许可证
 
-播放器及本 fork 源码遵循根目录 [LICENSE](LICENSE) 中的 **AGPL-3.0**。运行时第三方组件有各自许可证：
+播放器及本 fork 源码遵循根目录 [LICENSE](LICENSE.txt) 中的 **AGPL-3.0**。运行时第三方组件有各自许可证：
 
 - QQMusicApi_HelperNext：GPL-3.0-or-later；
 - Aria2 Next：GPL-2.0；

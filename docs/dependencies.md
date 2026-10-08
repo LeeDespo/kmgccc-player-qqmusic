@@ -26,7 +26,7 @@ flowchart LR
 ./scripts/bootstrap.sh --force --component amll
 ```
 
-组件名为 `amll`、`lddc`、`mediaremote` 和 `sacad`。在线音源的数据组件（`qqmusic-helper-next`）随补丁包提供构建产物，源码在其自己的仓库里。
+组件名为 `amll`、`lddc`、`mediaremote`、`sacad` 和 `qqmusic`。QQ Music 运行组件根据 [`components.lock.json`](../qqmusic/integration/components.lock.json) 从正式 Release 下载并核验；可重放补丁包只包含宿主侧改动，不携带二进制。
 
 ## 组件概览
 
@@ -34,7 +34,7 @@ flowchart LR
 | --- | --- | --- | --- |
 | AMLL | WKWebView 中的 JavaScript 与 DOM（兼容回退通道） | 兼容模式下的 TTML 解析与逐词歌词渲染（生产环境默认由纯原生 Swift 组件 NativeLyrics 承载） | AMLL Web 兼容回退不可用，原生 NativeLyrics 渲染不受影响 |
 | LDDC Fetch Core | 本机回环 HTTP 服务 | 多来源歌词搜索、获取和格式处理 | LDDC 搜索不可用，本地 AMLL DB 仍可用 |
-| QQ Music Helper | stdin/stdout JSON 子进程 | QQ 音乐元数据和封面候选 | QQ 候选不可用，其他来源独立 |
+| QQMusicApi_HelperNext | stdin/stdout JSON 子进程 | QQ 音乐浏览、登录、下载和元数据等宿主数据服务 | 在线服务不可用；本地曲库与其他数据来源独立 |
 | MediaRemoteAdapter | 原生 framework 与流式 JSON | 系统 Now Playing 状态和控制 | 系统外部播放不可用，本地与 Apple Music 独立 |
 | SACAD | 单次命令行进程 | 专辑封面搜索和下载 | SACAD 候选不可用 |
 
@@ -56,13 +56,13 @@ bootstrap 使用 ARM64 Python 与 PyInstaller 生成 onedir 产品。运行时�
 
 许可证：GPL-3.0-only。
 
-## QQ Music Helper
+## QQMusicApi_HelperNext 与 Aria2 Next
 
-QQ Music Helper 将 [QQMusicApi](https://github.com/L-1124/QQMusicApi) 包装为逐行 JSON 子进程。App 每行写入一个请求，helper 每行返回一个 JSON 响应；诊断信息写入 stderr，保证 stdout 始终可由程序解析。
+[QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext) 是独立维护的数据组件，宿主通过 `QQMusicComponentProcess` 使用逐行 JSON 的 stdin/stdout 协议交互；请求、签名、上游响应解析和凭据处理由组件仓库维护。本仓库不复制 endpoint、queryId 或组件内部实现文档。宿主负责进程生命周期、在线页面状态、缓存、下载入库与播放器衔接。
 
-查询结果只是候选，仍须进入共享封面或元数据管线。Swift 不直接调用 QQ Music API，也不让 helper 绕过资料库持久化边界。
+[Aria2 Next](https://github.com/AnInsomniacy/aria2-next) 作为独立下载引擎随锁定资产准备；运行时缺席时可回退宿主下载路径。正式物化、打包和随包许可证以 [`components.lock.json`](../qqmusic/integration/components.lock.json)、[`qqmusic/RELEASING.md`](../qqmusic/RELEASING.md) 和实际构建结果为准。HelperNext 可优先从用户 Application Support 的 `QQMusicHelperNext/` 外部目录加载，bundle 内为默认交付；其他依赖不因此获得任意路径 fallback。
 
-许可证：QQMusicApi 为 GPL-3.0-or-later，包装层随主仓库许可证。
+HelperNext 许可证为 GPL-3.0-or-later，Aria2 Next 为 GPL-2.0；本仓库的分发义务和来源见根目录 [`NOTICE`](../NOTICE)。
 
 ## MediaRemoteAdapter
 
@@ -91,7 +91,7 @@ bootstrap 使用固定的 macOS ARM64 预编译产物并校验归档，不在本
 
 bootstrap 把下载、源码、中间工作目录、最终产品和日志分开保存。Xcode 只复制最终产品，不从下载缓存、虚拟环境或构建中间目录取文件。
 
-组件检查会验证固定版本、校验值、工具链状态、产品结构和 `arm64` 架构。App 运行时只从 `Bundle.main.resourceURL` 解析组件，不扫描仓库路径，不退回系统解释器，也不依赖环境变量寻找替代文件。
+组件检查会验证锁定版本、校验值、工具链状态、产品结构和 `arm64` 架构。LDDC 等上游运行组件从 App bundle 解析，不扫描仓库路径，也不回退到系统解释器。QQ Music 数据组件例外：用户 Application Support 下的 `QQMusicHelperNext/` 可作为优先覆盖目录，bundle 是默认副本；不从任意环境变量加载替代文件。
 
 这条边界保证干净 clone、CI 和日常开发使用相同产品布局，也让单个组件失败时能够沿表中的方式独立降级。
 
@@ -103,7 +103,8 @@ bootstrap 把下载、源码、中间工作目录、最终产品和日志分开�
 | --- | --- |
 | AMLL | AGPL-3.0-only |
 | LDDC Fetch Core | GPL-3.0-only |
-| QQMusicApi | GPL-3.0-or-later |
+| QQMusicApi_HelperNext | GPL-3.0-or-later |
+| Aria2 Next | GPL-2.0 |
 | MediaRemoteAdapter | BSD-3-Clause |
 | SACAD | MPL-2.0 |
 | PLCrashReporter | MIT；内含 protobuf-c Apache-2.0 部分 |

@@ -25,8 +25,8 @@
 
 ## 外部组件
 
-- 外部组件一律从 `Bundle.main.resourceURL` 解析；不要添加系统 Python、venv 或环境变量 fallback。
-- Swift 不直接调用任何第三方 API；QQMusic 只经 bundle 内 `qqmusic-helper-next` 组件（stdout 只输出 JSON，诊断走 stderr）。
+- LDDC 等上游运行组件从 `Bundle.main.resourceURL` 解析；不要添加系统 Python、venv 或任意环境变量 fallback。
+- QQ Music 只经 `QQMusicApi_HelperNext` 组件的 stdio 协议访问在线数据（stdout 只输出 JSON，诊断走 stderr）。该组件可从用户 Application Support 的 `QQMusicHelperNext/` 外部目录优先加载，bundle 内副本兜底；不要恢复应用内第二套直连 API。
 
 ## 工程
 
