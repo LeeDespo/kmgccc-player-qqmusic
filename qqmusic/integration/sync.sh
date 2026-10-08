@@ -199,7 +199,7 @@ for path in "${modified[@]}"; do
   expected+=("${safe}.patch")
   # Pin inter-hunk context so differing local/global Git configurations do not
   # rewrite the shipped patch bytes on a clean CI checkout.
-  git -C "$FROM" diff --inter-hunk-context=1 "$BASE" -- "$path" > "$tmp_patches/${safe}.patch"
+  git -C "$FROM" diff --inter-hunk-context=0 "$BASE" -- "$path" > "$tmp_patches/${safe}.patch"
 done
 
 if [[ $CHECK -eq 1 ]]; then

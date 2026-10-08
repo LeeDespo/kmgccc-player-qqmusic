@@ -29,7 +29,7 @@ index 6524ba1c..cc79cfa6 100755
  export PYTHON_BIN
  
  component_selected() {
-@@ -78,14 +78,19 @@ check_environment() {
+@@ -78,7 +78,7 @@ check_environment() {
      require_command node "Install Node.js 22."
      require_command corepack "Install Node.js 22 with Corepack."
    fi
@@ -38,7 +38,7 @@ index 6524ba1c..cc79cfa6 100755
      [[ -n "$PYTHON_BIN" && -x "$PYTHON_BIN" ]] \
        || bootstrap_fail Environment "ARM64 Python 3.12 is unavailable." "Install Python 3.12 or set KMGCCC_ARM_PYTHON."
      [[ "$(arch -arm64 "$PYTHON_BIN" -c 'import platform; print(platform.machine())')" == "arm64" ]] \
-       || bootstrap_fail Environment "Python must run as arm64: $PYTHON_BIN" "Set KMGCCC_ARM_PYTHON to an ARM64 Python 3.12 executable."
+@@ -86,6 +86,11 @@ check_environment() {
      [[ "$($PYTHON_BIN -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" == "3.12" ]] \
        || bootstrap_fail Environment "Python 3.12 is required: $PYTHON_BIN"
    fi
