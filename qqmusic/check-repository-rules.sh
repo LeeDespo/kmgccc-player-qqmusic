@@ -15,7 +15,7 @@ tracked_bins="$(git ls-files -- Tools/helper-next/qqmusic-helper-next Tools/help
 [[ -f qqmusic/integration/BASE ]] && pass 'integration BASE exists' || fail 'integration BASE missing'
 [[ -f qqmusic/integration/components.lock.json ]] && /usr/bin/plutil -lint qqmusic/integration/components.lock.json >/dev/null && pass 'component lock is valid' || fail 'component lock missing or invalid'
 
-for obsolete in .github/FUNDING.yml .github/workflows/deploy-pages.yml pages qqmusic/release/notes.md qqmusic/release/patch-README.md; do
+for obsolete in .github/FUNDING.yml .github/workflows/deploy-pages.yml pages qqmusic/release/notes.md qqmusic/release/patch-README.md Tools/QQMusicHelper scripts/components/qqmusic-helper.sh kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift; do
   [[ ! -e "$obsolete" ]] || fail "obsolete repository surface remains: $obsolete"
 done
 
