@@ -64,6 +64,9 @@ jobs:
           corepack --version
           cmake --version | head -1
 
+      - name: Repository boundaries
+        run: ./qqmusic/check-repository-rules.sh
+
       - name: Replayable patch consistency
         run: ./qqmusic/integration/sync.sh --check
 

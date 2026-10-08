@@ -1,3 +1,5 @@
+> This file is the inherited kmgccc_player application changelog. QQ Music fork-specific history lives in [qqmusic/CHANGELOG.md](qqmusic/CHANGELOG.md).
+
 # Changelog
 
 本项目的所有主要更改都将记录在此文件中。

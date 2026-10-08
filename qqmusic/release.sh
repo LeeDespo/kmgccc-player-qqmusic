@@ -184,7 +184,11 @@ mkdir -p "$PKG"
 cp -R "$REPO_ROOT/qqmusic/integration" "$PKG/integration"
 rm -f "$PKG/integration/GUIDE.md"
 cp "$REPO_ROOT/qqmusic/README.md" "$PKG/FEATURES.md"
-cp "$REPO_ROOT/qqmusic/release/patch-README.md" "$PKG/README.md"
+sed \
+  -e "s|@UPSTREAM_VERSION@|$UPSTREAM_VERSION|g" \
+  -e "s|@PATCH_VERSION@|$PATCH_VERSION|g" \
+  -e "s|@UPSTREAM_BASE@|$UPSTREAM_BASE|g" \
+  "$REPO_ROOT/qqmusic/release/patch-README.template.md" > "$PKG/README.md"
 find "$PKG" -name '.DS_Store' -delete
 ( cd "$OUT_DIR/patch" && COPYFILE_DISABLE=1 tar -czf "../kmgccc_player-${SLUG}-patch.tar.gz" "$(basename "$PKG")" )
 TARBALL="$OUT_DIR/kmgccc_player-${SLUG}-patch.tar.gz"

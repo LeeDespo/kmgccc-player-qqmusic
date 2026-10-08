@@ -1,75 +1,70 @@
-# QQ 音乐在线音源
+# QQ Music 集成
 
-`qqmusic/` 是这个改版**除应用源码之外的一切**。应用源码（`kmgccc_player/`）里只有本功能必需的接入点改动，
-每一处都登记在 `AGENTS.md` 的「对上游的改动」表里；其余全部集中在这里，便于上游更新时搬迁。
+本目录描述 **kmgccc_player 宿主如何集成 QQ Music**。QQ 音乐协议本身由
+[QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext) 维护，本仓库不复制其 endpoint 知识。
 
+## 责任分层
+
+```text
+Swift UI / navigation / cache / local library / playback
+                     │
+                     ▼
+       QQMusicComponentProcess (stdio adapter)
+                     │ JSON lines
+                     ▼
+             qqmusic-helper-next
+                     │
+                     ├─ QQ Music upstream protocol
+                     └─ aria2-next (optional download engine)
 ```
-qqmusic/
-  README.md           ← 本文件：功能做什么、怎么实现、怎么维护
-  integration/        补丁包：modules/（上游没有的新文件）+ patches/（上游文件的 diff）+ 脚本
-    BASE              打这个包所依据的上游 commit
-    apply.sh          把补丁包重放到一个检出上
-    sync.sh           从开发树重新生成补丁包
-    test-cycle.sh     干净基线上一路走完：重建 → 重放 → 构建 → 测试 → 启动
-```
 
-本地工作笔记（设计、方案、实现记录、API 笔记）在 `docs/qqmusic/`，按约定不进仓库。
+本仓库负责横线以上的宿主行为以及进程边界；HelperNext 负责协议请求、签名、解析、凭据和上游保护。
 
-## 一、功能做什么
+## 宿主侧主要模块
 
-保留原应用的全部本地能力，在其之上加一个 QQ 音乐在线音源：
+- `Services/QQMusic/QQMusicComponentProcess.swift`：组件生命周期、stdio 请求关联、配置与版本信息；
+- `QQMusicOnlineCoordinator.swift`：在线页面数据编排与宿主状态；
+- `QQMusicDownloadService.swift`：下载任务到本地资料库的衔接；
+- `QQMusicCacheStore.swift` / `QQMusicCacheBudget.swift`：宿主缓存；
+- `Views/QQMusic/`：浏览、搜索、详情、下载与选择 UI；
+- `Views/Settings/QQMusicSettingsView.swift`：QQ Music 设置与组件状态。
 
-- **浏览**：落地页最上方是精选大卡片（内容取「猜你喜欢」，换一首换一张，卡面显示歌曲简介——点它读全文），往下是收藏歌单、收藏专辑、关注的歌手、新歌电台、排行榜、电台、猜你喜欢；向下钻到歌单 / 专辑 / 排行榜 / 电台 / 歌手的详情页。行内「更多」菜单可查看详情、查看歌曲描述、查看艺人、查看专辑。搜索支持歌曲 / 歌手 / 专辑 / 歌单四类；歌手页的歌曲与专辑都能按热门或最新排序；歌手简介与本地页面一样可滚动、点开读全文。
-- **播放**：点击列表里的一行即播放。顺序播放从**你点的那一首**往下走到表尾（不回头到表头）；随机播放先放这一首，其余整表打乱——两种模式下队列里排队的就是接下来真正会播的那些。
-- **下载入库**：在线歌曲下载后走原应用的导入管线入库，于是无缝播放、原生歌词、频谱、Now Playing 全部自动继承。批量下载在选择模式下勾选（整行变色表示选中），已手动下载过的曲目不可再选、排在最前。
-- **我的**：我喜欢、收藏歌单、收藏专辑；行内可收藏/取消收藏（写回上游）。
-- **缓存与回收**：歌单/推荐/排行榜/浏览态封面缓存在资料库的 `QQMusic/` 目录，歌曲缓存只约束「为了播放而自动下载」的那部分，可设定上限并回收；用户自己点过下载的属于曲库，永不回收。
+公开行为由 `kmgccc_playerTests/` 的相关测试覆盖。测试应验证宿主生产行为，而不是保存第三方 endpoint 的历史故事。
 
-## 二、怎么实现（要点）
+## 组件版本
 
-**先下载，后本地播放。** 播放引擎（`AVAudioPlaybackService`）基于 `AVAudioFile`，只认本地文件。
-在线歌曲一律先下载入库，再作为普通本地曲目播放。这是"零改动继承原应用一切能力"的原因。
-
-**一个组件，一条规则。** 在线数据全部来自 **HelperNext 组件**（`Tools/helper-next/qqmusic-helper-next`，
-Rust，静态链接），应用通过 stdin/stdout 的 JSON 协议跟它说话：
-
-| 层 | 是什么 | 负责 |
-|---|---|---|
-| `Tools/helper-next/qqmusic-helper-next` | 独立子进程，一行一个 JSON | **全部读取与登录**：账号列表、曲库详情、搜索、排行榜、电台、推荐流、歌词、取流，以及**唯一的写**（收藏/取消收藏）；同时管凭据、限流与熔断 |
-| `Tools/helper-next/aria2-next` | 下载引擎（Aria2 Next） | 由组件按需拉起，通过 JSON-RPC 搬字节：多连接、断点续传、并发与限速 |
-| `Services/QQMusic/QQMusicComponentProcess.swift` | 应用侧的进程客户端 | 启动/守护组件、按 `id` 配对请求与响应、超时、熔断镜像与设置推送 |
-
-**应用侧没有自己的 HTTP 客户端**，也没有第二套取数实现。组件的源码在
-[QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext)，
-本仓库只放构建产物；上游接口变化时换那个文件即可，不必重新构建应用。
-
-组件**自己管凭据**（`…/QQMusicHelperNext/Credential/qqmusic-credential.json`），扫码登录与网页登录两条路径
-产出的都是 `uin` + `qm_keyst` 这一对 cookie，二者等价。
-
-**缓存策略：先显示缓存，取到完整的在线数据，不符才整体替换。** 会变但变得不多的列表
-（我喜欢、收藏歌单、收藏专辑、歌单/专辑/排行榜的曲目）都走同一套：
-
-1. 缓存里有什么就先画什么——我喜欢的缓存是**完整列表**（一个 payload），所以页面一进来就是完整的；
-2. 去上游取**完整**的那一份；
-3. 与屏幕上的一致就什么都不做；不一致才**一次性替换**。
-
-绝不逐页往正在显示的列表里塞、也绝不为了加载而清空页面。刷新时同样：替换用的是完整列表，
-拿第一页去替换会把 400 首的歌单缩成 100 首再长回来。
-
-**数据与缓存不和应用混放。** 在线数据放在资料库的 `QQMusic/`（与应用自身的 `Cache/` 平级且分开），
-组件凭据放在组件目录的 `Credential/`。
-
-**失败只写日志。** 曾经有一条挂在工具栏下方的提示条承载失败与各种确认，按用户要求整条删除
-（连设置里那两个开关一起）；失败仍可在日志里查，日志插值里的 `noteFailure(error)` 还负责记录限流退避。
-
-## 三、怎么构建
+精确组件版本、Release 资产与 SHA-256 只在
+[`integration/components.lock.json`](integration/components.lock.json) 保存。
 
 ```sh
-./scripts/bootstrap.sh              # 构建外部组件（AMLL / LDDC / SACAD / MediaRemote）
-./scripts/build_and_run.sh          # 构建并运行
-DEVELOPMENT_TEAM=<你的teamID> ./scripts/build_and_run.sh   # 本机需要覆盖签名 team
+./scripts/bootstrap.sh --component qqmusic
+./scripts/bootstrap.sh --check --component qqmusic
 ```
 
-应用的在线数据来自 **HelperNext 组件**，它是**构建产物**（`Tools/helper-next/qqmusic-helper-next`
-与 `Tools/helper-next/aria2-next`），源码在另一个仓库（见该目录的 README）。
-两个二进制随应用打包，也会被复制到外部目录 `…/QQMusicHelperNext/`（外部那份优先，便于单独替换而不重建应用）。
+bootstrap 会下载锁定资产、校验哈希并物化运行时许可证；生成文件不进入 Git。
+
+## Replayable Patch
+
+`integration/` 是本 fork 相对某个上游 commit 的可重放表示：
+
+- `BASE`：唯一上游基线；
+- `modules/`：新增文件的生成副本；
+- `patches/`：修改文件的生成 diff；
+- `removals.txt`：删除列表；
+- `sync.sh`：从当前工作树重新生成上述内容；
+- `apply.sh`：把补丁应用到干净上游；
+- `test-cycle.sh`：从干净基线重放、构建和测试。
+
+维护规则见 [integration/README.md](integration/README.md)。
+
+## 版本与发布
+
+QQ Music 功能版本由生产代码中的 `patchVersion` 定义；不要在长期文档里另抄当前版本。
+发布规则只看 [RELEASING.md](RELEASING.md)，历史变化见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 凭据与外部组件
+
+HelperNext 的凭据目录由宿主提供并位于用户 Application Support 下；凭据、cookie、token、
+真实账号响应和用户曲库内容不得进入仓库、日志或测试 fixture。
+
+Aria2 Next 缺席时宿主保留自己的下载 fallback；是否 bundled、版本为何，仍以组件 lock 和构建结果为准。

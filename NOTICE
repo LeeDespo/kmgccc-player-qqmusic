@@ -1,0 +1,25 @@
+kmgccc-player-qqmusic — source and third-party notice
+
+1. Upstream application
+   This repository is a maintained fork of https://github.com/kmgcc/kmgccc_player .
+   The application and fork source are distributed under the root LICENSE
+   (GNU Affero General Public License v3.0).
+
+2. QQ Music integration
+   This fork adds host-side QQ Music UI, state, playback/download integration
+   and a replayable patch representation. It is not an official Tencent /
+   QQ Music project.
+
+3. Runtime components
+   Exact versions and hashes are pinned in qqmusic/integration/components.lock.json.
+
+   QQMusicApi_HelperNext — https://github.com/LeeDespo/QQMusicApi_HelperNext
+   GPL-3.0-or-later. Formal packages include LICENSE, NOTICE and a generated
+   third-party license summary.
+
+   Aria2 Next — https://github.com/AnInsomniacy/aria2-next
+   GPL-2.0. Its locked COPYING text is materialized into distributed bundles.
+
+4. Other dependencies
+   Inherited dependency notices and license files from kmgccc_player remain
+   authoritative for the upstream components they describe.

@@ -1,85 +1,28 @@
-# 参与贡献
+# Contributing
 
-kmgccc_player 由个人维护，合并节奏和方向会受维护时间影响。改动前把问题范围收窄、把验证结果写清楚，通常比一次改动很多区域更容易审阅。
-感谢您的贡献和支持!
-## 开始之前
+这个仓库是 kmgccc_player 的 QQ Music 维护型 fork。
 
-新分支从最新 `main` 建立：
+## 先判断问题属于哪里
+
+- 未修改的 kmgccc_player 也能复现的问题：优先提交到 [上游](https://github.com/kmgcc/kmgccc_player)；
+- QQ Music、HelperNext 宿主集成或本 fork 回归：提交到本仓库；
+- QQ Music endpoint/签名/解析本身：提交到 [QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext)。
+
+## 开发
+
+实际实现只改根工作树。不要直接编辑 `qqmusic/integration/modules/` 或 `patches/`；
+完成代码和测试后运行 `qqmusic/integration/sync.sh` 生成发行表示。
+
+第三方运行组件通过 `components.lock.json` 更新，不提交下载后的二进制。
+
+提交前运行：
 
 ```sh
-git switch main
-git pull --ff-only origin main
-git switch -c your-branch-name
-```
-
-不要把与改动无关的本地文件、格式化结果或历史实验带入 PR。
-
-## 搭建开发环境
-
-```sh
-git clone --recurse-submodules https://github.com/kmgcc/kmgccc_player.git
-cd kmgccc_player
-./scripts/bootstrap.sh
+./qqmusic/check-repository-rules.sh
+./qqmusic/integration/sync.sh --check
 ./scripts/verify.sh
-open kmgccc_player.xcodeproj
 ```
 
-## 选择 Issue
+业务修改应测试生产行为，不要用只比较常量或日期的测试保存迁移故事。
 
-小修复、拼写修正和文档修正可以直接提交 PR。以下改动建议先开 Issue，说明使用场景和可能影响的模块：
-
-- 新功能、交互调整或会改变现有默认行为的改动；
-- 新增、替换或升级第三方依赖；
-- 修改 AMLL fork、歌词 timing、播放状态模型、曲库数据或导入流程；
-- 跨多个界面或服务重构的改动。
-
-安全问题不要开公开 Issue，处理方式见 `SECURITY.md`。
-
-## 验证改动
-
-`verify.sh` 是提交前的最低验证要求，包含依赖准备、ARM64 无签名 Debug 构建、LRC 回归、XCTest 和 App bundle 检查。如果只改了一个外部组件，可以先单独验证：
-
-```sh
-./scripts/bootstrap.sh --check --component mediaremote
-./scripts/bootstrap.sh --force --component mediaremote
-```
-
-组件名：`amll`、`lddc`、`mediaremote`、`sacad`。
-
-需要实际启动 App 时运行 `./scripts/build_and_run.sh`。需要验证 Release 产物时运行 `./scripts/build_app.sh Release`。
-
-正式版本发生崩溃后，再次启动 App 会显示报告弹窗。点击“保存报告…”即可把经过客户端脱敏的 `.crash-report.json` 保存到本机；保存不会发送报告，也不会关闭弹窗，之后仍可选择取消或发送。弹窗内已经填写的操作说明会一并写入本地副本。
-
-从对应的 [GitHub Release](https://github.com/kmgcc/kmgccc_player/releases) 下载 `kmgccc_player_<version>_<build>_<uuid-prefix>.symbols.zip`，确认 version、build、architecture 与 UUID 相符后，就可以在本地符号化。贡献者自己复现问题时也使用这套流程，无需访问项目的诊断后台。报告字段阅读、UUID 校验和 `atos` 命令见 [崩溃报告与分析](docs/crash-reporting.md)。公开 Issue 适合附上定位问题所需的最小报告内容；如果报告中带有操作说明，发布前可以再检查一次。
-
-## 提交 Pull Request
-
-PR 描述至少写清：
-
-- 要解决的问题和改动范围；
-- 关键实现选择和没有覆盖的边界；
-- 实际运行过的命令和结果；
-- 相关 Issue。
-
-UI 改动附修改前后截图。动画、全屏或歌词改动最好附短视频，并说明测试过的窗口状态和播放来源。新功能或新增文案需要检查现有本地化，不要把用户可见字符串直接散落在代码里。
-
-PR 会自动触发 macOS CI（复现 `verify.sh`）。CI 绿是合并前提；CI 失败时先本地 `./scripts/verify.sh` 复现，不要在远端反复试。
-
-## 高风险区域
-
-以下模块改动后需要额外验证：
-
-- **AMLL 与歌词 timing**：区分窗口歌词、全屏、cover blur、seek、暂停与恢复、重叠行和 lead-in。
-- **播放来源切换**：分别验证本地播放、Apple Music 和系统正在播放。
-- **外部 helper**：修改后单独检查对应组件和 App bundle 路径。
-- **曲库持久化与迁移**：验证 sidecar 读写和迁移逻辑。
-- **全屏与皮肤**：确认普通 Now Playing、全屏和主窗口内嵌三条路径。
-- **封面颜色和频谱**：验证主题切换和可视化状态。
-
-## 代码和仓库卫生
-
-- 只提交属于本仓库的代码、文档、配置和测试。
-- 不要提交 `.build/`、DerivedData、PyInstaller 中间目录、下载归档、App bundle、密钥、用户数据或本机绝对路径。
-- 不要做与改动无关的大规模格式化、改名或文件搬迁。
-- 不要手工修改 `kmgccc_player/Resources/AMLL/` 下的生成 bundle——AMLL 源码改动应在 submodule fork 完成，再由同步脚本生成。
-- QQ Music API 只能经 bundled helper 使用，不要在 Swift 中直接调用第三方 API。
+升级上游时先在真实工作树解决冲突并验证，再更新 BASE 和生成 patch。仓库治理、上游迁移与业务重构尽量分开提交。
