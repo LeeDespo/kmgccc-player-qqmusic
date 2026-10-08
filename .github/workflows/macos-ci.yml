@@ -72,5 +72,8 @@ jobs:
       - name: Replayable patch consistency
         run: ./qqmusic/integration/sync.sh --check
 
+      - name: Clean BASE replay verification
+        run: ./qqmusic/integration/verify-replay.sh
+
       - name: Quick verification
         run: KMGCCC_ARM_PYTHON="$(command -v python3.12)" ./scripts/verify.sh

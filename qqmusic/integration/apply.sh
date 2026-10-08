@@ -77,7 +77,7 @@ fi
 
 is_git_repo() { git -C "$1" rev-parse --git-dir >/dev/null 2>&1; }
 
-applied=0; skipped=0; conflicted=0; reverted=0
+applied=0; skipped=0; conflicted=0; reverted=0; bad=0
 conflict_files=()
 
 echo "== QQ Music integration =="
@@ -276,4 +276,10 @@ Next steps:
 
 See README.md for the verification checklist.
 NEXT
+fi
+
+# Never report success when a patch conflicted or a verification check failed.
+if (( conflicted > 0 || bad > 0 )); then
+  printf 'error: replay failed (%d conflicts, %d verification errors)\n' "$conflicted" "$bad" >&2
+  exit 1
 fi

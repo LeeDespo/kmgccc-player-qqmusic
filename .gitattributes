@@ -4,13 +4,8 @@
 # AMLL runtime resources
 kmgccc_player/Resources/AMLL/** linguist-vendored
 
-# AMLL full source project
-applemusic-like-lyrics-kmgcccplayer-integration/** linguist-vendored
-
-LDDC_Fetch_Core/** linguist-vendored
-
-# Vendor-supplied component binaries
-kmgccc_player/Resources/Tools/qqmusic-helper-next/** linguist-vendored
+# Retired vendor-source paths are no longer tracked by this fork.
+# QQ Music runtime binaries come from the locked upstream release assets.
 
 # Keep accidental private inputs out of source archives. The release audit
 # still rejects these paths in clones and in reachable Git history.

@@ -18,7 +18,7 @@
 ./qqmusic/integration/sync.sh --check
 ```
 
-CI 会执行 `--check`，生成表示与工作树漂移应直接失败。
+CI 会执行 `--check`，生成表示与工作树漂移应直接失败；同时运行 `verify-replay.sh`，在由 BASE 导出的干净上游树中应用补丁，并逐文件比对生产源码。
 
 ## 内容
 
@@ -31,6 +31,7 @@ integration/
 ├── removals.txt
 ├── sync.sh
 ├── apply.sh
+├── verify-replay.sh
 └── test-cycle.sh
 ```
 
@@ -45,6 +46,8 @@ integration/
 ```
 
 `apply.sh` 负责源码变化；bootstrap 根据 lock 获取第三方运行组件。补丁包不携带隐藏的手工二进制真源。
+
+在 fork 的完整 Git checkout 中运行 `./qqmusic/integration/verify-replay.sh`：从 BASE 导出干净上游树，重放模块、补丁和删除清单，逐字节比对相关生产文件。这项检查无需 Apple 签名；`test-cycle.sh` 则用于本地带签名的构建与启动验证。
 
 ## 普通维护
 
