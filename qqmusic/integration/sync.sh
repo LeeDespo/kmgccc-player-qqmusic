@@ -105,9 +105,10 @@ echo "base: $BASE ($(git -C "$FROM" log -1 --format=%s "$BASE" | cut -c1-60))"
 [[ $CHECK -eq 1 ]] && echo "mode: check only"
 echo
 
-# Files added by the feature go into modules/. Everything else that differs
-# goes into patches/. A file the base already has but the tree deleted is an
-# error: this toolkit cannot express deletions, so it must be resolved by hand.
+# Files added by the feature go into modules/, modified files into patches/,
+# and files removed relative to the upstream baseline into removals.txt.
+# Removed legacy Helper paths stay in the shippable allowlist solely so replay
+# can delete them; repository-rules checks prohibit restoring those paths.
 added=(); modified=(); deleted=()
 while IFS=$'\t' read -r st path; do
   is_shippable_path "$path" || continue
