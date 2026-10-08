@@ -1,94 +1,148 @@
-# kmgccc_player · QQ Music
+<div align="center">
+  <h1>kmgccc_player · QQ Music</h1>
+  <p>为 kmgccc_player 集成 QQ 音乐在线内容、播放与下载的维护型 Fork</p>
+  <a href="https://github.com/LeeDespo/kmgccc-player-qqmusic/actions/workflows/macos-ci.yml"><img src="https://github.com/LeeDespo/kmgccc-player-qqmusic/actions/workflows/macos-ci.yml/badge.svg?branch=main" alt="macOS CI"></a>
+  <a href="https://github.com/LeeDespo/kmgccc-player-qqmusic/releases"><img src="https://img.shields.io/github/v/release/LeeDespo/kmgccc-player-qqmusic?label=release" alt="Release"></a>
+  <a href="https://github.com/LeeDespo/kmgccc-player-qqmusic/blob/main/LICENSE.txt"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="AGPL-3.0"></a>
+  <a href="https://github.com/kmgcc/kmgccc_player"><img src="https://img.shields.io/badge/project-maintained%20fork-purple" alt="Maintained fork"></a>
+</div>
 
-这是 [kmgccc_player](https://github.com/kmgcc/kmgccc_player) 的 **QQ 音乐维护型 fork**。
+---
 
-本仓库保留上游播放器的完整源码与 GitHub fork 关系，在其基础上维护 QQ 音乐在线浏览、搜索、
-播放/下载入库、登录、缓存与设置集成；同时提供一套可重放的补丁包，方便审计本 fork 相对指定
-上游基线做了什么。
+> [!IMPORTANT]
+> **音乐平台不易，请尊重版权，支持正版。**
+>
+> 本项目是 [kmgccc_player](https://github.com/kmgcc/kmgccc_player) 的**非官方 QQ 音乐维护型 Fork**，与腾讯 / QQ 音乐无官方关系。当前提供的 macOS 安装包采用 ad-hoc 签名，**未经 Apple 公证**；首次启动请阅读对应 [Release 的安装说明](https://github.com/LeeDespo/kmgccc-player-qqmusic/releases)。
 
-> 本项目不是 kmgccc_player 官方发行版，也与腾讯 / QQ 音乐无官方关系。
+## 📖 项目介绍
 
-## 使用方式
+**本仓库是在 [kmgccc_player](https://github.com/kmgcc/kmgccc_player) 基础上维护的完整播放器应用**，不是只存放补丁的工具仓库。
 
-### 直接安装
+它保留上游播放器的源码与 GitHub Fork 关系，将 QQ 音乐在线浏览、登录、搜索、播放、下载入库、歌词及设置接入现有本地曲库与播放体验。同时提供 [可重放补丁包](qqmusic/integration/README.md)，以便审计并重建相对指定上游基线的改动。
 
-从本仓库的 [Releases](https://github.com/LeeDespo/kmgccc-player-qqmusic/releases) 下载最新 DMG。
-当前发行面向 **Apple Silicon / macOS 26+**，采用 ad-hoc 签名且未公证；首次启动需要按 Release
-说明在 macOS 中手动放行。
+项目的 QQ 音乐协议能力由独立的 [QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext) 提供；**本仓库只维护播放器的宿主集成与发行**，不复制其接口、签名或响应解析实现。
 
-QQ 音乐下载会进入播放器的本地曲库，因此需要使用可写的“托管”资料库。
+## ✨ 功能概要
+
+| 模块 | 功能 |
+|---|---|
+| 🧭 **在线浏览** | 首页推荐、歌单、专辑、歌手、排行榜、电台及在线搜索 |
+| 👤 **账号与收藏** | QQ / Web 登录、登录状态、账号相关曲库内容 |
+| 🎵 **播放与歌词** | 在线播放衔接播放器现有播放链，支持逐字歌词 |
+| 📥 **下载与入库** | 下载任务与进度、暂停 / 继续 / 取消、音质偏好；下载歌曲进入本地资料库 |
+| 🖼️ **封面与元数据** | 在线与本地曲目的封面、元数据补全 |
+| ⚙️ **宿主集成** | QQ 音乐设置、状态管理、缓存与运行组件管理 |
+
+功能范围及 Swift 宿主架构见 [QQ Music 集成文档](qqmusic/README.md)。具体接口行为与可用方法以 [HelperNext 仓库](https://github.com/LeeDespo/QQMusicApi_HelperNext) 为准。
+
+## 🚀 快速开始
+
+### 下载与安装
+
+前往 **[GitHub Releases](https://github.com/LeeDespo/kmgccc-player-qqmusic/releases)** 下载适合的 DMG 安装包。
+
+| 项目 | 当前交付范围 |
+|---|---|
+| **系统** | macOS 26 或更新版本 |
+| **架构** | Apple Silicon（ARM64） |
+| **分发形式** | DMG；ad-hoc 签名、未公证 |
+| **账号与资料库** | QQ 音乐内容下载入库需使用可写的托管资料库 |
+
+> [!NOTE]
+> 未经 Apple Developer ID 签名及公证不代表安装包已获系统信任。请按 [Release 说明](https://github.com/LeeDespo/kmgccc-player-qqmusic/releases) 进行首次启动操作，不要把手动放行理解为应用通过了 Apple 公证。
 
 ### 从源码构建
+
+需要 Apple Silicon Mac、macOS 26+ 及兼容的 Xcode（项目 CI 使用 Xcode 26 系列）。
 
 ```sh
 git clone --recurse-submodules https://github.com/LeeDespo/kmgccc-player-qqmusic.git
 cd kmgccc-player-qqmusic
+
 ./scripts/bootstrap.sh
 ./scripts/verify.sh
 ```
 
-`bootstrap.sh` 会按照仓库中的锁文件下载并校验 QQ Music 运行组件；这些可执行文件不是 Git 源码，
-也不会提交进仓库。
+[bootstrap](scripts/bootstrap.sh) 会根据 [组件锁文件](qqmusic/integration/components.lock.json) 下载、校验并准备运行时组件；[verify](scripts/verify.sh) 则执行 ARM64 构建、回归测试、XCTest 与 App bundle 完整性检查。第三方组件的下载产物**不进入 Git**。
 
-### 重放 QQ Music 补丁
+### 使用可重放补丁包
 
-Release 同时提供 replayable patch package。其上游基线只以
-[`qqmusic/integration/BASE`](qqmusic/integration/BASE) 为准，使用方法见
-[`qqmusic/integration/README.md`](qqmusic/integration/README.md)。
+除了直接安装 App，[Releases](https://github.com/LeeDespo/kmgccc-player-qqmusic/releases) 还提供供审计和重建使用的补丁包：
 
-## QQ 音乐功能
-
-- 在线首页、搜索、歌单、专辑、歌手、排行榜、电台与推荐；
-- QQ / Web 登录与登录状态管理；
-- 在线歌曲下载后进入本地资料库并沿用播放器播放链；
-- 下载队列、进度、暂停/继续/取消，以及质量偏好；
-- QQ Music 逐字歌词与现有歌词渲染链集成；
-- 在线/本地曲目的封面与元数据补全。
-
-功能边界与宿主架构见 [qqmusic/README.md](qqmusic/README.md)。
-
-## 仓库结构
-
-| 路径 | 角色 |
+| 资产 | 用途 |
 |---|---|
-| `kmgccc_player/` | 实际可构建的播放器工作树；QQ Music 宿主代码也在这里 |
-| `kmgccc_playerTests/` | 本 fork 的生产行为测试 |
-| `qqmusic/integration/BASE` | replayable patch 的唯一上游基线 |
-| `qqmusic/integration/modules/` | 相对基线新增文件的**生成副本** |
-| `qqmusic/integration/patches/` | 相对基线修改文件的**生成 diff** |
-| `qqmusic/integration/removals.txt` | 相对基线删除的文件 |
-| `qqmusic/integration/components.lock.json` | HelperNext / Aria2 Next 精确版本与 SHA-256 |
-| `qqmusic/RELEASING.md` | 本 fork 发布规则唯一真源 |
-| `AGENTS.md` | Agent 的仓库边界与真源路由 |
+| **DMG** | 直接安装播放器 |
+| **Patch tar.gz** | 将本 Fork 的改动重放到指定上游基线 |
+| **Component tar.gz** | 按锁定版本派生的便捷组件包，不是独立组件真源 |
 
-`modules/` 与 `patches/` 不是第二套手工源码。修改实际工作树后运行
-`qqmusic/integration/sync.sh` 生成它们，CI 会用 `--check` 阻止漂移。
+基线以 [integration/BASE](qqmusic/integration/BASE) 为准，应用方式见 [补丁使用说明](qqmusic/integration/README.md)。在本仓库的完整 Git checkout 中，可直接验证干净基线重放：
 
-## 组件边界
+```sh
+./qqmusic/integration/verify-replay.sh
+```
 
-本仓库是**消费端 / 宿主**：
+## 🧩 组件边界与真源
 
-- Swift 侧负责 UI、导航、缓存、下载入库、播放与设置；
-- [QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext) 负责 QQ 音乐协议请求、
-  签名、响应解析、凭据和上游保护；
-- [Aria2 Next](https://github.com/AnInsomniacy/aria2-next) 是可选下载引擎。
+```text
+kmgccc_player（Swift UI / 缓存 / 播放 / 下载入库）
+                       │
+                       ▼
+           QQMusicComponentProcess
+                       │ stdio / JSON lines
+                       ▼
+             QQMusicApi_HelperNext
+                       │
+                       ├── QQ 音乐请求、签名、解析与凭据
+                       └── Aria2 Next（可选下载引擎）
+```
 
-HelperNext 的端点、queryId/module/method、解析规则不在本仓库复制维护。精确组件版本与哈希只在
-`components.lock.json` 中保存。
+| 内容 | 权威位置 |
+|---|---|
+| **播放器与宿主实现** | [kmgccc_player/](kmgccc_player/) |
+| **QQ 音乐行为测试** | [kmgccc_playerTests/](kmgccc_playerTests/) |
+| **协议与组件实现** | [QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext) |
+| **可选下载引擎** | [Aria2 Next](https://github.com/AnInsomniacy/aria2-next) |
+| **组件版本与 SHA-256** | [components.lock.json](qqmusic/integration/components.lock.json) |
+| **上游补丁基线** | [integration/BASE](qqmusic/integration/BASE) |
+| **发布与版本规则** | [qqmusic/RELEASING.md](qqmusic/RELEASING.md) |
 
-## 上游与更新
+[modules/](qqmusic/integration/modules/) 与 [patches/](qqmusic/integration/patches/) 是从生产工作树生成的发行表示，**不是第二套需要手工维护的源码**。修改应用后通过 [sync.sh](qqmusic/integration/sync.sh) 更新，CI 同时检查内容一致性和干净基线重放。
 
-保留 GitHub fork 身份是有意的：本项目仍然建立在 kmgccc_player 之上。升级上游时，先迁移实际工作树，
-完成构建/测试后再以新的上游 commit 重新生成 replayable patch；不要直接在 `patches/` 里手改冲突。
+## 🛠️ 开发与质量验证
 
-贡献流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+开发和贡献前请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)；问题应提交到负责该行为的仓库。
 
-## 许可证
+```sh
+./qqmusic/check-repository-rules.sh
+./qqmusic/integration/sync.sh --check
+./qqmusic/integration/verify-replay.sh
+./scripts/verify.sh
+```
 
-播放器及本 fork 源码遵循根目录 [LICENSE](LICENSE.txt) 中的 **AGPL-3.0**。运行时第三方组件有各自许可证：
+[macOS CI](https://github.com/LeeDespo/kmgccc-player-qqmusic/actions/workflows/macos-ci.yml) 会自动检查仓库边界、补丁一致性、全仓残留、干净上游重放，以及构建、测试和 App bundle 完整性。上游播放器的通用问题请优先反馈至 [kmgccc_player 上游仓库](https://github.com/kmgcc/kmgccc_player)；本 Fork 的集成问题可通过 [Issues](https://github.com/LeeDespo/kmgccc-player-qqmusic/issues) 反馈。
 
-- QQMusicApi_HelperNext：GPL-3.0-or-later；
-- Aria2 Next：GPL-2.0；
-- 其他上游依赖与运行资源沿用 kmgccc_player 的许可证文件和声明。
+## 📚 文档导航
 
-来源与分发边界见 [NOTICE](NOTICE)。
+* **[qqmusic/README.md](qqmusic/README.md)** —— QQ 音乐宿主架构、组件职责和功能边界
+* **[qqmusic/integration/README.md](qqmusic/integration/README.md)** —— 可重放补丁的生成、应用与验证
+* **[qqmusic/RELEASING.md](qqmusic/RELEASING.md)** —— 版本、组件资产、许可证与发布规则唯一真源
+* **[qqmusic/CHANGELOG.md](qqmusic/CHANGELOG.md)** —— QQ 音乐长期变更记录
+* **[docs/README.md](docs/README.md)** —— 播放器通用技术文档入口
+* **[CONTRIBUTING.md](CONTRIBUTING.md)** —— 贡献流程和问题归属
+* **[SECURITY.md](SECURITY.md)** —— 安全问题报告方式
+* **[AGENTS.md](AGENTS.md)** —— Agent 的仓库边界与真源路由
+
+## ⚠️ 用途与版权声明
+
+QQ 音乐相关能力用于个人使用、技术研究与互操作性验证。请尊重平台服务条款、版权及其他权利人的合法权益；不要将本项目视为腾讯或 QQ 音乐官方客户端。
+
+本声明说明项目定位，**不构成对开源许可证的额外限制**。具体源码授权以仓库许可证为准。
+
+## 📄 许可证与致谢
+
+* **本项目及上游应用源码**：[AGPL-3.0](LICENSE.txt)。
+* **QQMusicApi_HelperNext**：[GPL-3.0-or-later](https://github.com/LeeDespo/QQMusicApi_HelperNext/blob/main/LICENSE)。
+* **Aria2 Next**：[GPL-2.0](https://github.com/AnInsomniacy/aria2-next/blob/main/COPYING)。
+* 其他第三方来源与分发边界见 [NOTICE](NOTICE)，具体构建产物的许可证随运行组件打包。
+
+感谢 [kmgcc/kmgccc_player](https://github.com/kmgcc/kmgccc_player) 的播放器基础，以及 [QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext) 与 [Aria2 Next](https://github.com/AnInsomniacy/aria2-next) 的独立组件维护。
