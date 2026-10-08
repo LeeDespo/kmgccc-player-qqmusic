@@ -28,11 +28,12 @@ qqmusic_require_lock() {
 
 qqmusic_check() {
   qqmusic_require_lock
-  local helper_version protocol aria_version aria_sha helper_answer
+  local helper_version protocol aria_version aria_sha notice_blob helper_answer
   helper_version="$(qqmusic_lock_value helperNext.version)"
   protocol="$(qqmusic_lock_value helperNext.protocolVersion)"
   aria_version="$(qqmusic_lock_value aria2Next.version)"
   aria_sha="$(qqmusic_lock_value aria2Next.sha256)"
+  notice_blob="$(qqmusic_lock_value helperNext.noticeGitBlobSha)"
 
   [[ -x "$QQMUSIC_TOOLS/qqmusic-helper-next" ]] || bootstrap_fail QQMusic "HelperNext is not materialized." "Run ./scripts/bootstrap.sh --component qqmusic"
   [[ -x "$QQMUSIC_TOOLS/aria2-next" ]] || bootstrap_fail QQMusic "Aria2 Next is not materialized." "Run ./scripts/bootstrap.sh --component qqmusic"
@@ -46,6 +47,7 @@ qqmusic_check() {
   for file in QQMusicApi_HelperNext-GPL-3.0.txt QQMusicApi_HelperNext-NOTICE.txt QQMusicApi_HelperNext-THIRD-PARTY-LICENSES.txt Aria2Next-GPL-2.0.txt; do
     [[ -s "$QQMUSIC_LICENSES/$file" ]] || bootstrap_fail QQMusic "Generated license file missing: $file"
   done
+  [[ "$(git hash-object "$QQMUSIC_LICENSES/QQMusicApi_HelperNext-NOTICE.txt")" == "$notice_blob" ]] || bootstrap_fail QQMusic "HelperNext NOTICE content does not match the locked Git blob."
   [[ -f "$QQMUSIC_TOOLS/manifest.json" ]] || bootstrap_fail QQMusic "HelperNext release manifest is missing."
   [[ -f "$QQMUSIC_TOOLS/components.lock.json" ]] && /usr/bin/cmp -s "$QQMUSIC_LOCK" "$QQMUSIC_TOOLS/components.lock.json" || bootstrap_fail QQMusic "Materialized component lock is stale."
 
@@ -55,7 +57,7 @@ qqmusic_check() {
 qqmusic_prepare() {
   qqmusic_require_lock
 
-  local helper_asset helper_sha helper_url aria_asset aria_sha aria_url aria_license_url aria_license_blob
+  local helper_asset helper_sha helper_url aria_asset aria_sha aria_url aria_license_url aria_license_blob notice_url notice_blob
   helper_asset="$(qqmusic_lock_value helperNext.asset)"
   helper_sha="$(qqmusic_lock_value helperNext.sha256)"
   helper_url="$(qqmusic_lock_value helperNext.url)"
@@ -64,6 +66,8 @@ qqmusic_prepare() {
   aria_url="$(qqmusic_lock_value aria2Next.url)"
   aria_license_url="$(qqmusic_lock_value aria2Next.licenseUrl)"
   aria_license_blob="$(qqmusic_lock_value aria2Next.licenseGitBlobSha)"
+  notice_url="$(qqmusic_lock_value helperNext.noticeUrl)"
+  notice_blob="$(qqmusic_lock_value helperNext.noticeGitBlobSha)"
 
   local helper_archive="$DOWNLOADS_DIR/$helper_asset"
   local aria_download="$DOWNLOADS_DIR/$aria_asset"
@@ -86,16 +90,28 @@ qqmusic_prepare() {
   helper_binary="$(/usr/bin/find "$QQMUSIC_WORK" -type f -name qqmusic-helper-next -print -quit)"
   [[ -n "$helper_binary" ]] || bootstrap_fail QQMusic "HelperNext archive contains no qqmusic-helper-next binary."
   helper_stage="$(dirname "$helper_binary")"
-  for file in LICENSE NOTICE THIRD-PARTY-LICENSES.txt manifest.json; do
+  for file in LICENSE THIRD-PARTY-LICENSES.txt manifest.json; do
     [[ -f "$helper_stage/$file" ]] || bootstrap_fail QQMusic "HelperNext archive missing $file."
   done
+
+  # Older published HelperNext packages predate the upstream NOTICE file.
+  # Supplement only from a commit-pinned source and verify its Git blob hash.
+  local helper_notice="$helper_stage/NOTICE"
+  if [[ ! -f "$helper_notice" ]]; then
+    helper_notice="$DOWNLOADS_DIR/qqmusic-helper-next-NOTICE-$notice_blob"
+    if [[ ! -f "$helper_notice" ]] || [[ "$(git hash-object "$helper_notice" 2>/dev/null || true)" != "$notice_blob" ]]; then
+      rm -f "$helper_notice"
+      run_logged QQMusic notice 120 /usr/bin/curl --fail --location --retry 3 --retry-delay 2 --connect-timeout 15 --max-time 110 --silent --show-error "$notice_url" -o "$helper_notice"
+    fi
+  fi
+  [[ "$(git hash-object "$helper_notice")" == "$notice_blob" ]] || bootstrap_fail QQMusic "HelperNext NOTICE source does not match the locked Git blob."
 
   install_if_changed "$helper_binary" "$QQMUSIC_TOOLS/qqmusic-helper-next"
   install_if_changed "$aria_download" "$QQMUSIC_TOOLS/aria2-next"
   install_if_changed "$helper_stage/manifest.json" "$QQMUSIC_TOOLS/manifest.json"
   install_if_changed "$QQMUSIC_LOCK" "$QQMUSIC_TOOLS/components.lock.json"
   install_if_changed "$helper_stage/LICENSE" "$QQMUSIC_LICENSES/QQMusicApi_HelperNext-GPL-3.0.txt"
-  install_if_changed "$helper_stage/NOTICE" "$QQMUSIC_LICENSES/QQMusicApi_HelperNext-NOTICE.txt"
+  install_if_changed "$helper_notice" "$QQMUSIC_LICENSES/QQMusicApi_HelperNext-NOTICE.txt"
   install_if_changed "$helper_stage/THIRD-PARTY-LICENSES.txt" "$QQMUSIC_LICENSES/QQMusicApi_HelperNext-THIRD-PARTY-LICENSES.txt"
   install_if_changed "$aria_license" "$QQMUSIC_LICENSES/Aria2Next-GPL-2.0.txt"
   /bin/chmod 755 "$QQMUSIC_TOOLS/qqmusic-helper-next" "$QQMUSIC_TOOLS/aria2-next"

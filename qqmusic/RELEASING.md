@@ -23,6 +23,8 @@
 
 component tar 不是第三方组件第二真源：它必须从 lock 指向的正式 Release 资产生成，并携带 lock、
 HelperNext manifest/NOTICE/第三方许可证以及 Aria2 Next GPL 文本。
+如果锁定的较早组件资产未包含 NOTICE，只允许按 lock 中固定的补充来源 URL 与 Git blob 哈希下载并核验，
+不得静默省略或使用未经锁定的最新文本。
 
 Tag 使用 `v<upstream-version>+QQMusic.<patch-version>`，并与应用报告的 patchVersion 对齐。
 
