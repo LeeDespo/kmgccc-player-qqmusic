@@ -191,7 +191,6 @@ PKG="$OUT_DIR/patch/kmgccc_player-${SLUG}-patch"
 rm -rf "$OUT_DIR/patch"
 mkdir -p "$PKG"
 cp -R "$REPO_ROOT/qqmusic/integration" "$PKG/integration"
-rm -f "$PKG/integration/GUIDE.md"
 cp "$REPO_ROOT/qqmusic/README.md" "$PKG/FEATURES.md"
 sed \
   -e "s|@UPSTREAM_VERSION@|$UPSTREAM_VERSION|g" \
