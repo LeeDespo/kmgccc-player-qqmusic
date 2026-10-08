@@ -3,7 +3,7 @@
 # Package a release: the built app as a DMG, plus the patch package as a tarball.
 #
 # Usage:
-#   ./qqmusic/release.sh [--patch-version 1.0.0] [--out DIR] [--skip-build]
+#   ./qqmusic/release.sh [--patch-version VERSION] [--out DIR] [--skip-build]
 #
 # What it does, in order:
 #
@@ -50,15 +50,17 @@ done
 fail() { printf 'error: %s\n' "$1" >&2; exit 1; }
 step() { printf '\n== %s ==\n' "$1"; }
 
-# The patch's own version is a constant in the source, so the DMG's name, the
-# tarball's name and what the app reports under 本功能版本 cannot disagree.
-if [[ -z "$PATCH_VERSION" ]]; then
-    PATCH_VERSION="$(
-        sed -n 's/.*static let patchVersion = "\([^"]*\)".*/\1/p' \
-            "$REPO_ROOT/kmgccc_player/Services/QQMusic/QQMusicComponentProcess.swift" | head -1
-    )"
+# The production patchVersion is authoritative. An optional CLI value may only
+# confirm it, never override it in a release asset name.
+SOURCE_PATCH_VERSION="$(
+    sed -n 's/.*static let patchVersion = "\([^"]*\)".*/\1/p' \
+        "$REPO_ROOT/kmgccc_player/Services/QQMusic/QQMusicComponentProcess.swift" | head -1
+)"
+[[ -n "$SOURCE_PATCH_VERSION" ]] || fail "could not read patchVersion from the production source"
+if [[ -n "$PATCH_VERSION" && "$PATCH_VERSION" != "$SOURCE_PATCH_VERSION" ]]; then
+    fail "--patch-version $PATCH_VERSION disagrees with production $SOURCE_PATCH_VERSION"
 fi
-[[ -n "$PATCH_VERSION" ]] || fail "could not read patchVersion from the source; pass --patch-version"
+PATCH_VERSION="$SOURCE_PATCH_VERSION"
 
 # The app's own version is upstream's; read it so the release name states the
 # baseline honestly ("2.3.1 + QQMusic 1.0.0").
@@ -77,9 +79,16 @@ step "release ${RELEASE_NAME}"
 printf 'repo:    %s\n' "$REPO_ROOT"
 printf 'out:     %s\n' "$OUT_DIR"
 
+# A formal release must be attributable to one committed tree. Do not silently
+# publish a local working copy or auto-repaired generated patch files.
+[[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal)" ]] \
+    || fail "release requires a clean Git worktree; commit your changes before packaging"
+
 step "sync patch toolkit"
 "$REPO_ROOT/qqmusic/integration/sync.sh"
 "$REPO_ROOT/qqmusic/integration/sync.sh" --check
+[[ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=normal)" ]] \
+    || fail "patch sync changed tracked files; commit the generated patch before release"
 
 step "materialize locked QQ Music components"
 "$REPO_ROOT/scripts/bootstrap.sh" --component qqmusic
