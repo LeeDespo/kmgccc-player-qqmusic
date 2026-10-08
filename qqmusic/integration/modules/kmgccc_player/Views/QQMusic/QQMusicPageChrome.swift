@@ -84,6 +84,18 @@ struct QQMusicPageCanvas<Content: View>: View {
     var scrollResetKey: String?
     @ViewBuilder var content: (_ insets: QQMusicColumnInsets, _ mode: HomeLayoutMode) -> Content
 
+    // Keep construction available to page routers even though SwiftUI state
+    // wrappers make the synthesized memberwise initializer private.
+    init(
+        onScroll: ((CGFloat) -> Void)? = nil,
+        scrollResetKey: String? = nil,
+        @ViewBuilder content: @escaping (QQMusicColumnInsets, HomeLayoutMode) -> Content
+    ) {
+        self.onScroll = onScroll
+        self.scrollResetKey = scrollResetKey
+        self.content = content
+    }
+
     /// Anchor for the scroll reset. A hairline rather than a zero-height view:
     /// a zero-height one can be optimised out of the layout, and then there is
     /// nothing to scroll to.
