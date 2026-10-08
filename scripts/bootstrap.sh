@@ -10,7 +10,7 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/bootstrap.sh [--check] [--force] [--component NAME]
 
-Components: amll, lddc, mediaremote, sacad
+Components: amll, lddc, qqmusic, mediaremote, sacad
   --check           Validate products without downloading or building.
   --force           Rebuild selected generated products.
   --component NAME  Prepare or check only one component.
@@ -44,7 +44,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$SELECTED_COMPONENT" in
-  ""|amll|lddc|mediaremote|sacad) ;;
+  ""|amll|lddc|qqmusic|mediaremote|sacad) ;;
   *)
     echo "error: unknown component: $SELECTED_COMPONENT" >&2
     usage >&2
@@ -86,6 +86,11 @@ check_environment() {
     [[ "$($PYTHON_BIN -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')" == "3.12" ]] \
       || bootstrap_fail Environment "Python 3.12 is required: $PYTHON_BIN"
   fi
+  if component_selected qqmusic; then
+    require_command curl "Install curl."
+    require_command git "Install the Xcode command line tools."
+    require_command tar "Install the Xcode command line tools."
+  fi
   if component_selected mediaremote; then
     require_command cmake "Install CMake 3.15 or newer."
     require_command xcodebuild "Install Xcode 26 or newer."
@@ -102,6 +107,8 @@ check_environment() {
 source "$ROOT/scripts/components/amll.sh"
 # shellcheck source=scripts/components/lddc.sh
 source "$ROOT/scripts/components/lddc.sh"
+# shellcheck source=scripts/components/qqmusic.sh
+source "$ROOT/scripts/components/qqmusic.sh"
 # shellcheck source=scripts/components/mediaremote.sh
 source "$ROOT/scripts/components/mediaremote.sh"
 # shellcheck source=scripts/components/sacad.sh
@@ -121,6 +128,7 @@ run_component() {
 check_environment
 run_component amll amll
 run_component lddc lddc
+run_component qqmusic qqmusic
 run_component mediaremote mediaremote
 run_component sacad sacad
 

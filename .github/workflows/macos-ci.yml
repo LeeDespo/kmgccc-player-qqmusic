@@ -64,5 +64,8 @@ jobs:
           corepack --version
           cmake --version | head -1
 
+      - name: Replayable patch consistency
+        run: ./qqmusic/integration/sync.sh --check
+
       - name: Quick verification
         run: KMGCCC_ARM_PYTHON="$(command -v python3.12)" ./scripts/verify.sh

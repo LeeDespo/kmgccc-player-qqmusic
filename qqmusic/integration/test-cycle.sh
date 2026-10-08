@@ -166,9 +166,9 @@ if has_step apply; then
 fi
 
 # --- build -------------------------------------------------------------------
-# Nothing to build for the online source: its data component and download engine
-# are vendored binaries that travel with the patch package. bootstrap is still
-# needed for the other components, and it resolves the AMLL submodule through
+# HelperNext and Aria2 Next are not stored in Git. The lock pins exact Release
+# assets, and the reconstructed tree materializes them before build. The other
+# components still reuse the development tree's products; its bootstrap resolves
 # git, which the test area deliberately does not have — so it runs here, against
 # the development tree, and the products land in the shared .build.
 APP_BUNDLE="${TESTAREA}/build/DerivedData/Build/Products/${CONFIGURATION}/kmgccc_player.app"
@@ -181,7 +181,9 @@ COMPONENT_EXTERNAL="${HOME}/Library/Application Support/kmgccc.player/QQMusicHel
 
 if has_step build; then
   echo "-- components --"
-  # Not rebuilt here. The other components (LDDC, SACAD, MediaRemote, the AMLL
+  (cd "$TESTAREA" && QQMUSIC_COMPONENT_LOCK="$HERE/components.lock.json" ./scripts/bootstrap.sh --component qqmusic) \
+    || fail "failed to materialize locked QQ Music components in reconstructed tree"
+  # The other components (LDDC, SACAD, MediaRemote, the AMLL
   # runtime) come from the development tree's .build/products, and bootstrap
   # would insist on a Node toolchain to refresh them — which a cycle is not the
   # place for. What this step does is make sure they are present, so a missing

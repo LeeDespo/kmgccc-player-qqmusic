@@ -50,11 +50,9 @@ require_file "$RESOURCES/AMLL/style.css" "AMLL stylesheet"
 
 require_executable "$RESOURCES/Tools/lddc-server/lddc-server" "LDDC server"
 require_directory "$RESOURCES/Tools/lddc-server/_internal" "LDDC runtime directory"
-# The online source's data component: one self-contained binary, no runtime
-# directory (it replaced the Python helper, which shipped a whole interpreter).
+# QQ Music runtime components are materialized from the integration lock before build.
 require_executable "$RESOURCES/Tools/qqmusic-helper-next/qqmusic-helper-next" "QQMusic data component"
-# The download engine the component starts; the app still works without it (it
-# falls back to its own streaming download), so this is a warning, not a failure.
+# Aria2 Next is optional at runtime because the app has a fallback downloader.
 if [[ ! -x "$RESOURCES/Tools/qqmusic-helper-next/aria2-next" ]]; then
   echo "[warn] Aria2 Next is not bundled; downloads will use the app's own path."
 fi
@@ -81,6 +79,13 @@ done
 require_file \
   "$RESOURCES/Licenses/MediaRemoteAdapter-BSD-3-Clause.txt" \
   "MediaRemoteAdapter license"
+for license in \
+  QQMusicApi_HelperNext-GPL-3.0.txt \
+  QQMusicApi_HelperNext-NOTICE.txt \
+  QQMusicApi_HelperNext-THIRD-PARTY-LICENSES.txt \
+  Aria2Next-GPL-2.0.txt; do
+  require_file "$RESOURCES/Licenses/$license" "QQ Music runtime license"
+done
 
 for forbidden_name in .DS_Store .git DerivedData __pycache__ .pytest_cache; do
   if /usr/bin/find "$CONTENTS" -name "$forbidden_name" -print -quit | /usr/bin/grep -q .; then

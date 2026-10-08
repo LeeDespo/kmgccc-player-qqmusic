@@ -34,7 +34,8 @@ PATCH_VERSION=""
 # this script is about to package, which `rm -rf $OUT_DIR` would delete.
 OUT_DIR="$REPO_ROOT/build/dist"
 SKIP_BUILD=0
-UPSTREAM_BASE="b0de7aa6"
+UPSTREAM_BASE="$(head -1 "$REPO_ROOT/qqmusic/integration/BASE" | awk '{print $1}')"
+[[ -n "$UPSTREAM_BASE" ]] || { echo "error: integration BASE is empty" >&2; exit 1; }
 
 while (($# > 0)); do
     case "$1" in
@@ -79,6 +80,9 @@ printf 'out:     %s\n' "$OUT_DIR"
 step "sync patch toolkit"
 "$REPO_ROOT/qqmusic/integration/sync.sh"
 "$REPO_ROOT/qqmusic/integration/sync.sh" --check
+
+step "materialize locked QQ Music components"
+"$REPO_ROOT/scripts/bootstrap.sh" --component qqmusic
 
 if ((SKIP_BUILD == 0)); then
     step "build (Release, arm64, unsigned)"
@@ -195,6 +199,12 @@ rm -rf "$OUT_DIR/component"
 mkdir -p "$COMP"
 cp "$REPO_ROOT/Tools/helper-next/qqmusic-helper-next" "$COMP/"
 cp "$REPO_ROOT/Tools/helper-next/aria2-next" "$COMP/"
+cp "$REPO_ROOT/Tools/helper-next/manifest.json" "$COMP/helpernext-manifest.json"
+cp "$REPO_ROOT/qqmusic/integration/components.lock.json" "$COMP/components.lock.json"
+cp "$REPO_ROOT/kmgccc_player/Resources/Licenses/QQMusicApi_HelperNext-GPL-3.0.txt" "$COMP/"
+cp "$REPO_ROOT/kmgccc_player/Resources/Licenses/QQMusicApi_HelperNext-NOTICE.txt" "$COMP/"
+cp "$REPO_ROOT/kmgccc_player/Resources/Licenses/QQMusicApi_HelperNext-THIRD-PARTY-LICENSES.txt" "$COMP/"
+cp "$REPO_ROOT/kmgccc_player/Resources/Licenses/Aria2Next-GPL-2.0.txt" "$COMP/"
 cp "$REPO_ROOT/qqmusic/release/component-README.md" "$COMP/README.md"
 find "$COMP" -name '.DS_Store' -delete
 ( cd "$OUT_DIR/component" && COPYFILE_DISABLE=1 tar -czf "../kmgccc_player-${SLUG}-component.tar.gz" "$(basename "$COMP")" )

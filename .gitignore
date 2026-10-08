@@ -26,7 +26,6 @@ LDDC-main/
 skills/
 .claude/
 /ARCHITECTURE.md
-/AGENTS.md
 /CLAUDE.md
 /GEMINI.md
 
@@ -114,9 +113,17 @@ superteam/
 /upstream/
 /testarea/
 # The maintenance guide describes this machine's flow, not the deliverable.
-/qqmusic/integration/GUIDE.md
 
 # Local development notes for the QQ Music source (design docs, plans, API notes,
 # logs). Working notes, kept out of the published source; they live beside the
 # plan documents they belong with rather than scattered at the repo root.
-/docs/qqmusic/
+
+# QQ Music runtime components are materialized from the checked-in lock file.
+/Tools/helper-next/qqmusic-helper-next
+/Tools/helper-next/aria2-next
+/Tools/helper-next/manifest.json
+/Tools/helper-next/components.lock.json
+/kmgccc_player/Resources/Licenses/QQMusicApi_HelperNext-GPL-3.0.txt
+/kmgccc_player/Resources/Licenses/QQMusicApi_HelperNext-NOTICE.txt
+/kmgccc_player/Resources/Licenses/QQMusicApi_HelperNext-THIRD-PARTY-LICENSES.txt
+/kmgccc_player/Resources/Licenses/Aria2Next-GPL-2.0.txt

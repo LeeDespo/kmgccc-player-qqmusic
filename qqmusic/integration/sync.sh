@@ -85,16 +85,15 @@ is_shippable_path() {
     # package: `build_and_run.sh` is the command upstream's own docs tell people
     # to run, and without the patch following this package's README hits a
     # signing error instead of a build.
-    scripts/build_and_run.sh|scripts/components/qqmusic-helper.sh) return 0 ;;
-    # The component itself, vendored as a built binary so applying the patch
-    # package needs no Rust toolchain. Its source lives in the
-    # QQMusicApi_HelperNext repository; `Tools/helper-next/README.md` says so.
+    scripts/bootstrap.sh|scripts/build_and_run.sh|scripts/check-app-bundle.sh|scripts/components/qqmusic-helper.sh|scripts/components/qqmusic.sh) return 0 ;;
+    # The component README ships with the patch. Executables are materialized from
+    # components.lock.json and ignored by Git, so they never become source.
     Tools/helper-next/*) return 0 ;;
     # The app's sources live in file-system-synchronized folders, so they need
     # no project entries — but the TEST target is an explicit file list. Without
     # this file the package would copy the test files into a tree that never
     # compiles them: `xcodebuild test` prints TEST SUCCEEDED while skipping every
-    # one, which is the exact silent failure described in AGENTS.md.
+    # one, which is a silent failure the toolkit must catch.
     kmgccc_player.xcodeproj/project.pbxproj) return 0 ;;
     *) return 1 ;;
   esac

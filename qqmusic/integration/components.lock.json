@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "helperNext": {
+    "repository": "LeeDespo/QQMusicApi_HelperNext",
+    "tag": "v0.2.0",
+    "version": "0.2.0",
+    "protocolVersion": 2,
+    "asset": "qqmusic-helper-next-v0.2.0-macos-arm64.tar.gz",
+    "sha256": "3ca8450338176965c83ef80950b2f1a17b3a37679c5a57da21de748aa8ed90a8",
+    "url": "https://github.com/LeeDespo/QQMusicApi_HelperNext/releases/download/v0.2.0/qqmusic-helper-next-v0.2.0-macos-arm64.tar.gz"
+  },
+  "aria2Next": {
+    "repository": "AnInsomniacy/aria2-next",
+    "tag": "v2.7.5",
+    "version": "2.7.5",
+    "asset": "aria2-next-2.7.5-macos-arm64",
+    "sha256": "c36268f2ab67614ad8737586adab7fc1e1df85e0aef55421bd45f778f0868343",
+    "url": "https://github.com/AnInsomniacy/aria2-next/releases/download/v2.7.5/aria2-next-2.7.5-macos-arm64",
+    "licenseUrl": "https://raw.githubusercontent.com/AnInsomniacy/aria2-next/v2.7.5/COPYING",
+    "licenseGitBlobSha": "d159169d1050894d3ea3b98e1c965c4058208fe1"
+  }
+}

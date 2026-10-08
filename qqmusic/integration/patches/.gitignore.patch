@@ -1,8 +1,16 @@
 diff --git a/.gitignore b/.gitignore
-index c3238624..57a4cb58 100644
+index c3238624..3a781e52 100644
 --- a/.gitignore
 +++ b/.gitignore
-@@ -42,6 +42,7 @@ kmgccc_player/Assets.xcassets/
+@@ -26,7 +26,6 @@ LDDC-main/
+ skills/
+ .claude/
+ /ARCHITECTURE.md
+-/AGENTS.md
+ /CLAUDE.md
+ /GEMINI.md
+ 
+@@ -42,6 +41,7 @@ kmgccc_player/Assets.xcassets/
  
  # Local diagnostic tools with machine-specific paths
  Tools/ColorGoldenMaster/
@@ -10,7 +18,7 @@ index c3238624..57a4cb58 100644
  
  # Tool working directories
  .opencode/
-@@ -88,7 +89,6 @@ __pycache__/
+@@ -88,7 +88,6 @@ __pycache__/
  env/
  dist/
  *.spec
@@ -18,7 +26,7 @@ index c3238624..57a4cb58 100644
  
  # Local build outputs
  .derivedDataLocalBuild/
-@@ -102,3 +102,21 @@ superteam/
+@@ -102,3 +101,29 @@ superteam/
  
  # Repo-root reference screenshots (kept locally, not published)
  /screenshots/
@@ -34,9 +42,17 @@ index c3238624..57a4cb58 100644
 +/upstream/
 +/testarea/
 +# The maintenance guide describes this machine's flow, not the deliverable.
-+/qqmusic/integration/GUIDE.md
 +
 +# Local development notes for the QQ Music source (design docs, plans, API notes,
 +# logs). Working notes, kept out of the published source; they live beside the
 +# plan documents they belong with rather than scattered at the repo root.
-+/docs/qqmusic/
++
++# QQ Music runtime components are materialized from the checked-in lock file.
++/Tools/helper-next/qqmusic-helper-next
++/Tools/helper-next/aria2-next
++/Tools/helper-next/manifest.json
++/Tools/helper-next/components.lock.json
++/kmgccc_player/Resources/Licenses/QQMusicApi_HelperNext-GPL-3.0.txt
++/kmgccc_player/Resources/Licenses/QQMusicApi_HelperNext-NOTICE.txt
++/kmgccc_player/Resources/Licenses/QQMusicApi_HelperNext-THIRD-PARTY-LICENSES.txt
++/kmgccc_player/Resources/Licenses/Aria2Next-GPL-2.0.txt
