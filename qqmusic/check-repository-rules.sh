@@ -7,7 +7,7 @@ fail() { printf 'FAIL %s\n' "$1"; failures=$((failures + 1)); }
 active_docs=(README.md AGENTS.md CONTRIBUTING.md SECURITY.md NOTICE docs/README.md docs/dependencies.md docs/PITFALLS.md qqmusic/README.md qqmusic/RELEASING.md qqmusic/integration/README.md qqmusic/release/patch-README.template.md qqmusic/release/component-README.md Tools/helper-next/README.md)
 
 if [[ -f AGENTS.md ]] && ! git check-ignore -q AGENTS.md; then pass 'root AGENTS.md is present and not ignored'; else fail 'root AGENTS.md is missing or ignored'; fi
-if [[ -f LICENSE.txt ]] && grep -Fq '[LICENSE](LICENSE.txt)' README.md; then pass 'README links the tracked root license'; else fail 'README license link is broken'; fi
+if [[ -f LICENSE.txt ]] && grep -Eq '\[[^]]+\]\(LICENSE\.txt\)' README.md; then pass 'README links the tracked root license'; else fail 'README license link is broken'; fi
 
 tracked_bins="$(git ls-files -- Tools/helper-next/qqmusic-helper-next Tools/helper-next/aria2-next qqmusic/integration/modules/Tools/helper-next/qqmusic-helper-next qqmusic/integration/modules/Tools/helper-next/aria2-next)"
 [[ -z "$tracked_bins" ]] && pass 'runtime component binaries are not tracked' || { fail 'runtime component binaries are tracked:'; printf '%s\n' "$tracked_bins"; }
