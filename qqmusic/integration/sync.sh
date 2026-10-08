@@ -215,8 +215,11 @@ if [[ $CHECK -eq 1 ]]; then
   # missing one: it applies cleanly and writes the wrong code.
   for f in "${expected[@]}"; do
     [[ -f "$HERE/patches/$f" ]] || continue
-    cmp -s "$tmp_patches/$f" "$HERE/patches/$f" \
-      || { echo "     content differs: $f"; issues=1; }
+    if ! cmp -s "$tmp_patches/$f" "$HERE/patches/$f"; then
+      echo "     content differs: $f"
+      diff -u "$HERE/patches/$f" "$tmp_patches/$f" | head -60 || true
+      issues=1
+    fi
   done
   if (( issues )); then
     echo "-- patches/: STALE (${#modified[@]} expected)"
