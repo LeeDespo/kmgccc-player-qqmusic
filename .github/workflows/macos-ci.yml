@@ -72,11 +72,11 @@ jobs:
       - name: Replayable patch consistency
         run: ./qqmusic/integration/sync.sh --check
 
-      - name: Private-source textual hygiene
-        run: bash ./scripts/verify_textual_hygiene.sh
-
       - name: Full tracked-file residue audit
         run: python3 ./qqmusic/audit-residue.py
+
+      - name: Private-source textual hygiene
+        run: bash ./scripts/verify_textual_hygiene.sh
 
       - name: Clean BASE replay verification
         run: ./qqmusic/integration/verify-replay.sh

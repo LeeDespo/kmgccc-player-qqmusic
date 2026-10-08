@@ -40,6 +40,8 @@ allowlist=(
   'scripts/audit_release_contents.sh'
   'scripts/build_app.sh'
   'scripts/verify_textual_hygiene.sh'
+  # Generated diff quotes an obsolete name only to remove it from upstream.
+  'qqmusic/integration/patches/.gitignore.patch'
 )
 
 pat="$(IFS='|'; printf '%s' "${patterns[*]}")"
