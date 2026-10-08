@@ -6,13 +6,24 @@ QQMUSIC_TOOLS="$ROOT/Tools/helper-next"
 QQMUSIC_LICENSES="$ROOT/kmgccc_player/Resources/Licenses"
 QQMUSIC_WORK="$WORK_DIR/qqmusic"
 
+# The lock is JSON, not an Apple plist. Parse it with the Python standard
+# library (already required by the complete macOS build), not plutil.
 qqmusic_lock_value() {
-  /usr/bin/plutil -extract "$1" raw -o - "$QQMUSIC_LOCK"
+  python3 - "$QQMUSIC_LOCK" "$1" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as lock_file:
+    value = json.load(lock_file)
+for key in sys.argv[2].split("."):
+    value = value[key]
+print(value)
+PY
 }
 
 qqmusic_require_lock() {
   [[ -f "$QQMUSIC_LOCK" ]] || bootstrap_fail QQMusic "Component lock missing: $QQMUSIC_LOCK"
-  /usr/bin/plutil -lint "$QQMUSIC_LOCK" >/dev/null || bootstrap_fail QQMusic "Component lock is not valid JSON."
+  python3 -m json.tool "$QQMUSIC_LOCK" >/dev/null || bootstrap_fail QQMusic "Component lock is not valid JSON."
 }
 
 qqmusic_check() {
