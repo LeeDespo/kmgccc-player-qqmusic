@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/ViewModels/AppSessionHost.swift b/kmgccc_player/ViewModels/AppSessionHost.swift
-index 425749ce..649394ae 100644
+index eaa3d286..c6886ad7 100644
 --- a/kmgccc_player/ViewModels/AppSessionHost.swift
 +++ b/kmgccc_player/ViewModels/AppSessionHost.swift
-@@ -55,6 +55,12 @@ final class AppSessionHost: ObservableObject {
+@@ -59,6 +59,12 @@ final class AppSessionHost: ObservableObject {
          activeLibraryBinding.activeSession?.cacheServices
      }
  
@@ -15,7 +15,7 @@ index 425749ce..649394ae 100644
      var homeVM: HomeViewModel {
          activeLibraryBinding.activeSession?.homeViewModel ?? placeholderHomeViewModel
      }
-@@ -936,6 +942,20 @@ final class AppSessionHost: ObservableObject {
+@@ -1199,6 +1205,20 @@ final class AppSessionHost: ObservableObject {
          } else {
              scheduleDeferredLaunchPromptsIfNeeded()
          }
@@ -34,9 +34,9 @@ index 425749ce..649394ae 100644
 +        }
 +
          hasCompletedInitialSetup = true
-         do {
-             try await automationIPCServer?.start()
-@@ -1363,7 +1383,7 @@ final class AppSessionHost: ObservableObject {
+         if AppSettings.shared.automationEndpointEnabled {
+             do {
+@@ -1647,7 +1667,7 @@ final class AppSessionHost: ObservableObject {
                  if let monitor = self.activeLibraryBinding.activeSession?.libraryChangeMonitor {
                      await monitor.stopAndWait()
                  }
@@ -45,7 +45,7 @@ index 425749ce..649394ae 100644
              }
          }
      }
-@@ -1461,7 +1481,7 @@ final class AppSessionHost: ObservableObject {
+@@ -1764,7 +1784,7 @@ final class AppSessionHost: ObservableObject {
          let libraryVM = self.libraryVM
          let preferenceStatsService = activeLibraryBinding.activeSession?.preferenceStatsService
          Task { @MainActor [weak self, weak libraryVM] in

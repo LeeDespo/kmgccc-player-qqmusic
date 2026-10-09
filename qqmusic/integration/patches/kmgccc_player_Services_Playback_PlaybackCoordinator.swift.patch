@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Services/Playback/PlaybackCoordinator.swift b/kmgccc_player/Services/Playback/PlaybackCoordinator.swift
-index 563862f7..a36318d6 100644
+index e0072a82..3f86a386 100644
 --- a/kmgccc_player/Services/Playback/PlaybackCoordinator.swift
 +++ b/kmgccc_player/Services/Playback/PlaybackCoordinator.swift
 @@ -41,6 +41,9 @@ protocol LocalPlaybackControlling: AnyObject {

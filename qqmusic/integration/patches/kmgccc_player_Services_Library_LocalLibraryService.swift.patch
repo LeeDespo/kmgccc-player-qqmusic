@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Services/Library/LocalLibraryService.swift b/kmgccc_player/Services/Library/LocalLibraryService.swift
-index 742aad3d..50292228 100644
+index 4e407c0d..d3112224 100644
 --- a/kmgccc_player/Services/Library/LocalLibraryService.swift
 +++ b/kmgccc_player/Services/Library/LocalLibraryService.swift
 @@ -112,6 +112,8 @@ nonisolated struct TrackPersistenceSnapshot: Sendable {
@@ -38,7 +38,7 @@ index 742aad3d..50292228 100644
              metadataSource: snapshot.metadataSource,
              metadataFetchedAt: snapshot.metadataFetchedAt,
              metadataConfidence: snapshot.metadataConfidence,
-@@ -2381,6 +2389,8 @@ final class LocalLibraryService {
+@@ -2435,6 +2443,8 @@ final class LocalLibraryService {
                  labelOrCompany: sidecar.labelOrCompany ?? "",
                  releaseDate: sidecar.releaseDate,
                  qqMusicSongMid: sidecar.qqMusicSongMid,

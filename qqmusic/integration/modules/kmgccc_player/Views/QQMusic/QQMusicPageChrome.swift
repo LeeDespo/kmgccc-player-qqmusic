@@ -20,6 +20,7 @@
 //
 
 import AppKit
+import MotionKit
 import SwiftUI
 
 // MARK: - Page canvas
@@ -103,6 +104,13 @@ struct QQMusicPageCanvas<Content: View>: View {
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.motionPolicy) private var configuredMotionPolicy
+
+    /// The ambient background animates only when motion is fully allowed, which
+    /// is the same rule the app's own home surface follows.
+    private var motionPolicy: MotionPolicy {
+        configuredMotionPolicy.resolving(accessibilityReduceMotion: reduceMotion)
+    }
     /// Observed rather than read from the singleton directly: the ambient
     /// background is driven by the current palette, so it has to be rebuilt when
     /// the palette changes (switching tracks re-extracts it).
@@ -146,7 +154,7 @@ struct QQMusicPageCanvas<Content: View>: View {
                     sourceColor: themeStore.semanticPalette.ambientSurface,
                     sourceAnalysis: themeStore.semanticPalette.analysis,
                     colorScheme: colorScheme,
-                    reduceMotion: reduceMotion
+                    motionEnabled: motionPolicy == .full
                 )
 
                 ScrollViewReader { proxy in

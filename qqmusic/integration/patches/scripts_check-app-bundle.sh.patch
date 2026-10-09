@@ -1,8 +1,8 @@
 diff --git a/scripts/check-app-bundle.sh b/scripts/check-app-bundle.sh
-index f5f23866..5314dcb4 100755
+index b20ec9df..8e5dd390 100755
 --- a/scripts/check-app-bundle.sh
 +++ b/scripts/check-app-bundle.sh
-@@ -50,8 +50,12 @@ require_file "$RESOURCES/AMLL/style.css" "AMLL stylesheet"
+@@ -46,8 +46,12 @@ require_file "$RESOURCES/AMLL/amll-background.js" "AMLL background runtime"
  
  require_executable "$RESOURCES/Tools/lddc-server/lddc-server" "LDDC server"
  require_directory "$RESOURCES/Tools/lddc-server/_internal" "LDDC runtime directory"
@@ -17,7 +17,7 @@ index f5f23866..5314dcb4 100755
  require_executable "$RESOURCES/Tools/sacad/sacad" "SACAD helper"
  
  require_file "$RESOURCES/mediaremote-adapter/bin/mediaremote-adapter.pl" "MediaRemoteAdapter launcher"
-@@ -75,6 +79,13 @@ done
+@@ -71,6 +75,13 @@ done
  require_file \
    "$RESOURCES/Licenses/MediaRemoteAdapter-BSD-3-Clause.txt" \
    "MediaRemoteAdapter license"

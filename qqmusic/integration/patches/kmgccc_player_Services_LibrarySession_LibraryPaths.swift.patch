@@ -1,9 +1,9 @@
 diff --git a/kmgccc_player/Services/LibrarySession/LibraryPaths.swift b/kmgccc_player/Services/LibrarySession/LibraryPaths.swift
-index 143ae6ff..b9bda815 100644
+index c2d38c1e..b8b140a1 100644
 --- a/kmgccc_player/Services/LibrarySession/LibraryPaths.swift
 +++ b/kmgccc_player/Services/LibrarySession/LibraryPaths.swift
-@@ -26,6 +26,21 @@ nonisolated struct LibraryPaths: Sendable, Equatable {
-     var upgradeJournalURL: URL { settingsRootURL.appendingPathComponent("library-upgrade.json") }
+@@ -30,6 +30,21 @@ nonisolated struct LibraryPaths: Sendable, Equatable {
+     var automationJobsURL: URL { settingsRootURL.appendingPathComponent("automation-jobs.json") }
      var writerLockURL: URL { settingsRootURL.appendingPathComponent(".writer.lock") }
  
 +    /// Data produced by the online QQ Music source.
@@ -24,7 +24,7 @@ index 143ae6ff..b9bda815 100644
      var transactionsRootURL: URL { directory("Transactions") }
      var pendingTransactionsRootURL: URL {
          transactionsRootURL.appendingPathComponent("Pending", isDirectory: true)
-@@ -209,6 +224,9 @@ nonisolated struct LibraryPaths: Sendable, Equatable {
+@@ -213,6 +228,9 @@ nonisolated struct LibraryPaths: Sendable, Equatable {
              importStagingRootURL,
              libraryScanCacheRootURL,
              sourceScanCacheRootURL,

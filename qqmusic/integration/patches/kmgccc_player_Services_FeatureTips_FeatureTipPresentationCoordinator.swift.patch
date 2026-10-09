@@ -1,0 +1,13 @@
+diff --git a/kmgccc_player/Services/FeatureTips/FeatureTipPresentationCoordinator.swift b/kmgccc_player/Services/FeatureTips/FeatureTipPresentationCoordinator.swift
+index b360c4dc..5c93ab3e 100644
+--- a/kmgccc_player/Services/FeatureTips/FeatureTipPresentationCoordinator.swift
++++ b/kmgccc_player/Services/FeatureTips/FeatureTipPresentationCoordinator.swift
+@@ -23,6 +23,8 @@ final class FeatureTipPresentationCoordinator {
+     enum SuspensionReason: Hashable {
+         case settingsSheet
+         case whatsNew
++        /// The online-source window (and its settings sheet) is open.
++        case qqMusicWindow
+     }
+ 
+     private struct PendingTip {

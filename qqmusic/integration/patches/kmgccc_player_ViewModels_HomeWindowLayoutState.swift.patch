@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/ViewModels/HomeWindowLayoutState.swift b/kmgccc_player/ViewModels/HomeWindowLayoutState.swift
-index e1b4305e..36b971f3 100644
+index 4608ae93..2e803cc5 100644
 --- a/kmgccc_player/ViewModels/HomeWindowLayoutState.swift
 +++ b/kmgccc_player/ViewModels/HomeWindowLayoutState.swift
 @@ -251,8 +251,30 @@ final class HomeWindowLayoutState {
@@ -33,9 +33,9 @@ index e1b4305e..36b971f3 100644
 +        return isQQMusicMode || (isHomeMode && !isHomeSearchActive)
      }
  
-     /// Live frame of the Mini Player view in SwiftUI `.global` coordinates
-@@ -352,6 +374,11 @@ final class HomeWindowLayoutState {
-         isHomeMode = active
+     @ObservationIgnored
+@@ -361,6 +383,11 @@ final class HomeWindowLayoutState {
+         }
      }
  
 +    func setQQMusicMode(_ active: Bool) {

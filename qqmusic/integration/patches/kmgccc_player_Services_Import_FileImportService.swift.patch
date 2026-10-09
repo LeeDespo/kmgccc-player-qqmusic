@@ -1,9 +1,9 @@
 diff --git a/kmgccc_player/Services/Import/FileImportService.swift b/kmgccc_player/Services/Import/FileImportService.swift
-index 0fc6e17a..d5471906 100644
+index 2914c571..e6c256ba 100644
 --- a/kmgccc_player/Services/Import/FileImportService.swift
 +++ b/kmgccc_player/Services/Import/FileImportService.swift
-@@ -381,6 +381,68 @@ final class FileImportService: FileImportServiceProtocol {
-         return tracks
+@@ -393,6 +393,68 @@ final class FileImportService: FileImportServiceProtocol {
+         return importOutcome.tracks
      }
  
 +    /// Import audio this app produced itself into managed storage.
@@ -31,7 +31,7 @@ index 0fc6e17a..d5471906 100644
 +            )
 +            return []
 +        }
-+        let tracks = await importURLs(
++        let outcome = await importURLs(
 +            [audioURL],
 +            to: nil,
 +            metadataOverride: metadataOverride,
@@ -40,7 +40,7 @@ index 0fc6e17a..d5471906 100644
 +            origin: origin
 +        )
 +        publishImportFailuresIfNeeded(lastImportFailures, origin: origin)
-+        return tracks
++        return outcome.tracks
 +    }
 +
 +    /// Record which online source a track came from and persist it.

@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/Services/LibrarySession/LibrarySession.swift b/kmgccc_player/Services/LibrarySession/LibrarySession.swift
-index 8f975be4..e0229c69 100644
+index 75feb568..cfd8cb7a 100644
 --- a/kmgccc_player/Services/LibrarySession/LibrarySession.swift
 +++ b/kmgccc_player/Services/LibrarySession/LibrarySession.swift
-@@ -19,6 +19,9 @@ final class LibrarySession: LibrarySessionLifecycle {
+@@ -57,6 +57,9 @@ final class LibrarySession: LibrarySessionLifecycle {
      let libraryViewModel: LibraryViewModel
      let importEnrichmentService: ImportEnrichmentService
      let fileImportService: FileImportService
@@ -12,7 +12,7 @@ index 8f975be4..e0229c69 100644
      let storageBackend: any LibraryStorageBackend
      let referencedSourceStore: ReferencedSourceStore?
      let referencedSourceScope: ReferencedSourceScope?
-@@ -98,6 +101,46 @@ final class LibrarySession: LibrarySessionLifecycle {
+@@ -136,6 +139,46 @@ final class LibrarySession: LibrarySessionLifecycle {
          self.playbackCoordinator = playbackCoordinator
          self.lyricsViewModel = lyricsViewModel
          self.ledMeterProvider = ledMeterProvider
@@ -59,7 +59,7 @@ index 8f975be4..e0229c69 100644
      }
  
      func load() async throws {
-@@ -135,6 +178,10 @@ final class LibrarySession: LibrarySessionLifecycle {
+@@ -173,6 +216,10 @@ final class LibrarySession: LibrarySessionLifecycle {
              try await startManagedLibraryMonitor(libraryChangeMonitor)
          }
          isLoaded = true

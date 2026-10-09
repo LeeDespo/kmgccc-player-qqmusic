@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Services/UpdateCheck/UpdatePolicy.swift b/kmgccc_player/Services/UpdateCheck/UpdatePolicy.swift
-index 0e22266f..e33c1394 100644
+index 012c48b5..2af69004 100644
 --- a/kmgccc_player/Services/UpdateCheck/UpdatePolicy.swift
 +++ b/kmgccc_player/Services/UpdateCheck/UpdatePolicy.swift
 @@ -165,27 +165,30 @@ enum UpdatePreferences {

@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/ViewModels/PlayerViewModel.swift b/kmgccc_player/ViewModels/PlayerViewModel.swift
-index df2db8f0..d9e809ec 100644
+index 0bc66a34..40a6d31e 100644
 --- a/kmgccc_player/ViewModels/PlayerViewModel.swift
 +++ b/kmgccc_player/ViewModels/PlayerViewModel.swift
-@@ -146,6 +146,18 @@ final class PlayerViewModel {
+@@ -148,6 +148,18 @@ final class PlayerViewModel {
          return insertedCount
      }
  

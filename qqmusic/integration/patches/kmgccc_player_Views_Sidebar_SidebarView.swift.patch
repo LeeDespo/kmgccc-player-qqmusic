@@ -1,24 +1,24 @@
 diff --git a/kmgccc_player/Views/Sidebar/SidebarView.swift b/kmgccc_player/Views/Sidebar/SidebarView.swift
-index b5fdaf2c..401a8270 100644
+index b37fcd55..678043ff 100644
 --- a/kmgccc_player/Views/Sidebar/SidebarView.swift
 +++ b/kmgccc_player/Views/Sidebar/SidebarView.swift
-@@ -33,6 +33,7 @@ struct SidebarView: View {
-     @EnvironmentObject private var themeStore: ThemeStore
-     @Environment(\.colorScheme) private var currentColorScheme
+@@ -37,6 +37,7 @@ struct SidebarView: View {
+     @Environment(\.motionTokens) private var motionTokens
+     @Environment(\.motionPolicy) private var configuredMotionPolicy
      @ObservedObject private var updateCoordinator = UpdateCoordinator.shared
 +    /// `@Observable`, so it is read directly rather than through `@ObservedObject`.
      @ObservedObject private var crashReportService = CrashReportService.shared
  
      @State private var showSettings = false
-@@ -405,6 +406,7 @@ struct SidebarView: View {
-             // Bottom controls
-             HStack(spacing: 8) {
-                 settingsButton
-+                qqMusicButton
-                 appearanceSwitchButton
-                 fullscreenButton
-                 Spacer(minLength: 0)
-@@ -459,6 +461,16 @@ struct SidebarView: View {
+@@ -422,6 +423,7 @@ struct SidebarView: View {
+             GlassEffectContainer(spacing: 8) {
+                 HStack(spacing: 8) {
+                     settingsButton
++                    qqMusicButton
+                     appearanceSwitchButton
+                     fullscreenButton
+                     Spacer(minLength: 0)
+@@ -477,6 +479,16 @@ struct SidebarView: View {
                  finishCrashReportTipPresentation()
              }
          }
@@ -26,16 +26,16 @@ index b5fdaf2c..401a8270 100644
 +            get: { QQMusicWindowManager.shared.isPresented },
 +            set: { QQMusicWindowManager.shared.isPresented = $0 }
 +        ), onDismiss: {
-+            FeatureTipPresentationCoordinator.shared.setSuspended(false)
++            FeatureTipPresentationCoordinator.shared.setSuspended(false, reason: .qqMusicWindow)
 +        }) {
 +            QQMusicSettingsView(coordinator: appSession.qqMusicOnlineCoordinator)
 +                .environment(AppSettings.shared)
 +                .environmentObject(themeStore)
 +        }
          .sheet(isPresented: $showSettings, onDismiss: {
-             FeatureTipPresentationCoordinator.shared.setSuspended(false)
+             FeatureTipPresentationCoordinator.shared.setSuspended(false, reason: .settingsSheet)
          }) {
-@@ -586,6 +598,18 @@ struct SidebarView: View {
+@@ -605,6 +617,18 @@ struct SidebarView: View {
                  uiState.clearHomeNavigationContext()
                  uiState.showPlaybackHistory()
              }
@@ -54,7 +54,7 @@ index b5fdaf2c..401a8270 100644
          }
          .padding(.top, 4)
          .padding(.bottom, 12)
-@@ -935,6 +959,23 @@ struct SidebarView: View {
+@@ -964,6 +988,23 @@ struct SidebarView: View {
          }
      }
  
@@ -70,15 +70,15 @@ index b5fdaf2c..401a8270 100644
 +            help: "QQ 音乐",
 +            surfaceVariant: .sidebarBottom
 +        ) {
-+            FeatureTipPresentationCoordinator.shared.setSuspended(true)
++            FeatureTipPresentationCoordinator.shared.setSuspended(true, reason: .qqMusicWindow)
 +            QQMusicWindowManager.shared.present()
 +        }
 +    }
 +
      private func openSettings() {
-         FeatureTipPresentationCoordinator.shared.setSuspended(true)
+         FeatureTipPresentationCoordinator.shared.setSuspended(true, reason: .settingsSheet)
          settingsRotateTrigger += 1
-@@ -1070,6 +1111,10 @@ struct SidebarView: View {
+@@ -1099,6 +1140,10 @@ struct SidebarView: View {
          case .history:
              uiState.showPlaybackHistory()
              return
@@ -89,7 +89,7 @@ index b5fdaf2c..401a8270 100644
          case .allPlaylists:
              uiState.pushSelectionInHomeContext(.allPlaylists, libraryVM: libraryVM)
              return
-@@ -1241,6 +1286,9 @@ struct SidebarView: View {
+@@ -1270,6 +1315,9 @@ struct SidebarView: View {
          if uiState.contentMode == .playbackHistory {
              return .history
          }
@@ -99,7 +99,7 @@ index b5fdaf2c..401a8270 100644
  
          // Use the explicit currentSelection from LibraryViewModel
          switch libraryVM.currentSelection {
-@@ -1406,6 +1454,7 @@ private enum SidebarSelection: Hashable {
+@@ -1440,6 +1488,7 @@ private enum SidebarSelection: Hashable {
      case allSongs
      case folders
      case history

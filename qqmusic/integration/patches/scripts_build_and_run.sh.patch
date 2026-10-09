@@ -1,8 +1,8 @@
 diff --git a/scripts/build_and_run.sh b/scripts/build_and_run.sh
-index fcc72617..9162ab09 100755
+index 5f12faf6..940b11b9 100755
 --- a/scripts/build_and_run.sh
 +++ b/scripts/build_and_run.sh
-@@ -24,12 +24,24 @@ echo "========================================"
+@@ -152,6 +152,17 @@ echo "========================================"
  echo "Building $APP_NAME ($CONFIGURATION) via xcodebuild..."
  echo "========================================"
  
@@ -17,13 +17,14 @@ index fcc72617..9162ab09 100755
 +    TEAM_ARGUMENT=("DEVELOPMENT_TEAM=$DEVELOPMENT_TEAM")
 +fi
 +
- xcodebuild \
+ mkdir -p "$(dirname "$BUILD_LOG")"
+ if ! xcodebuild \
      -project "$REPO_ROOT/kmgccc_player.xcodeproj" \
-     -scheme "$APP_NAME" \
+@@ -159,6 +170,7 @@ if ! xcodebuild \
      -configuration "$CONFIGURATION" \
      -destination 'platform=macOS' \
      -derivedDataPath "$DERIVED_DATA_PATH" \
-+    "${TEAM_ARGUMENT[@]}" \
++    ${TEAM_ARGUMENT[@]+"${TEAM_ARGUMENT[@]}"} \
      CODE_SIGNING_ALLOWED="${CODE_SIGNING_ALLOWED:-YES}" \
-     build
- 
+     -verbose \
+     build >"$BUILD_LOG" 2>&1; then

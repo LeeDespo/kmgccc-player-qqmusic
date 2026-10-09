@@ -1,16 +1,16 @@
 diff --git a/.gitignore b/.gitignore
-index c3238624..3a781e52 100644
+index 8dd862a2..2a8bb578 100644
 --- a/.gitignore
 +++ b/.gitignore
-@@ -26,7 +26,6 @@ LDDC-main/
- skills/
+@@ -29,7 +29,6 @@ skills/
+ !docs/skills/kmgccc-player-automation/SKILL.md
  .claude/
  /ARCHITECTURE.md
 -/AGENTS.md
  /CLAUDE.md
  /GEMINI.md
  
-@@ -42,6 +41,7 @@ kmgccc_player/Assets.xcassets/
+@@ -45,6 +44,7 @@ kmgccc_player/Assets.xcassets/
  
  # Local diagnostic tools with machine-specific paths
  Tools/ColorGoldenMaster/
@@ -18,7 +18,7 @@ index c3238624..3a781e52 100644
  
  # Tool working directories
  .opencode/
-@@ -88,7 +88,6 @@ __pycache__/
+@@ -93,7 +93,6 @@ __pycache__/
  env/
  dist/
  *.spec
@@ -26,7 +26,7 @@ index c3238624..3a781e52 100644
  
  # Local build outputs
  .derivedDataLocalBuild/
-@@ -102,3 +101,29 @@ superteam/
+@@ -107,3 +106,29 @@ superteam/
  
  # Repo-root reference screenshots (kept locally, not published)
  /screenshots/

@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/ViewModels/LibraryViewModel.swift b/kmgccc_player/ViewModels/LibraryViewModel.swift
-index 8a3a5830..f5ca20c6 100644
+index cb70bd71..afdbe987 100644
 --- a/kmgccc_player/ViewModels/LibraryViewModel.swift
 +++ b/kmgccc_player/ViewModels/LibraryViewModel.swift
-@@ -2472,7 +2472,7 @@ final class LibraryViewModel {
+@@ -3582,7 +3582,7 @@ final class LibraryViewModel {
      ) async -> [QQMusicArtworkCandidate] {
          let durationInt = duration.map { Int($0.rounded()) }
          do {
@@ -11,3 +11,12 @@ index 8a3a5830..f5ca20c6 100644
                  title: title,
                  artist: artist,
                  album: album,
+@@ -3604,7 +3604,7 @@ final class LibraryViewModel {
+         album: String,
+         duration: Double?
+     ) async throws -> [QQMusicArtworkCandidate] {
+-        try await QQMusicHelperProcess.shared.searchTrackArtwork(
++        try await QQMusicComponentProcess.shared.searchTrackArtwork(
+             title: title,
+             artist: artist,
+             album: album,

@@ -1,9 +1,9 @@
 diff --git a/kmgccc_player/Views/Home/HomeHeroView.swift b/kmgccc_player/Views/Home/HomeHeroView.swift
-index 6d3b1657..cf4a5359 100644
+index 0f1a95e1..2eade6ef 100644
 --- a/kmgccc_player/Views/Home/HomeHeroView.swift
 +++ b/kmgccc_player/Views/Home/HomeHeroView.swift
-@@ -987,7 +987,11 @@ private final class HomeHeroBackdropCache {
-     }
+@@ -1114,7 +1114,11 @@ func clearHomeHeroArtworkMemoryCaches() {
+     HomeHeroBackdropCache.shared.clearMemory()
  }
  
 -private extension View {

@@ -1,11 +1,11 @@
 diff --git a/kmgccc_player/Views/Settings/DataManagement/DataManagementSettingsView.swift b/kmgccc_player/Views/Settings/DataManagement/DataManagementSettingsView.swift
-index c6ea6d5b..42d69d66 100644
+index 03cdfdf1..7ef95b99 100644
 --- a/kmgccc_player/Views/Settings/DataManagement/DataManagementSettingsView.swift
 +++ b/kmgccc_player/Views/Settings/DataManagement/DataManagementSettingsView.swift
-@@ -35,8 +35,8 @@ private struct ApplicationDataSettingsView: View {
-     @Environment(PlayerViewModel.self) private var playerVM
-     @Environment(PlaybackCoordinator.self) private var playbackCoordinator
-     @Environment(LibraryCacheServices.self) private var cacheServices
+@@ -39,8 +39,8 @@ private struct ApplicationDataSettingsView: View {
+     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+     @Environment(\.motionTokens) private var motionTokens
+     @Environment(\.motionPolicy) private var configuredMotionPolicy
 -    @AppStorage("telemetry.anonymousUsageEnabled") private var telemetryEnabled: Bool = true
 -    @AppStorage(CrashReportPreferences.automaticUploadKey) private var automaticCrashReportUploadEnabled = true
 +    @AppStorage("telemetry.anonymousUsageEnabled") private var telemetryEnabled: Bool = false
@@ -13,7 +13,7 @@ index c6ea6d5b..42d69d66 100644
  
      @State private var showResetDataAlert: Bool = false
      @State private var showClearIndexCacheAlert: Bool = false
-@@ -123,15 +123,17 @@ private struct ApplicationDataSettingsView: View {
+@@ -131,15 +131,17 @@ private struct ApplicationDataSettingsView: View {
  
              SettingsSection("数据共享") {
                  VStack(alignment: .leading, spacing: 16) {
@@ -37,7 +37,7 @@ index c6ea6d5b..42d69d66 100644
                      )
                  }
              }
-@@ -189,6 +191,23 @@ private struct ApplicationDataSettingsView: View {
+@@ -198,6 +200,23 @@ private struct ApplicationDataSettingsView: View {
          }
      }
  
@@ -58,6 +58,6 @@ index c6ea6d5b..42d69d66 100644
 +        }
 +    }
 +
-     private var telemetryEnabledBinding: Binding<Bool> {
-         Binding(
-             get: { telemetryEnabled },
+     private func refreshCacheUsage() async {
+         let summary = await CacheManager.calculateLibraryDiskCacheUsage(storage: cacheServices.storageLocations)
+         await MainActor.run {

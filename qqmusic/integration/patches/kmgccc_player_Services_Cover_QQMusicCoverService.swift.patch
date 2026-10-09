@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/Services/Cover/QQMusicCoverService.swift b/kmgccc_player/Services/Cover/QQMusicCoverService.swift
-index 7567322e..2810b782 100644
+index 10e2ab71..a8af8ea2 100644
 --- a/kmgccc_player/Services/Cover/QQMusicCoverService.swift
 +++ b/kmgccc_player/Services/Cover/QQMusicCoverService.swift
-@@ -28,14 +28,14 @@ actor QQMusicCoverService {
+@@ -28,7 +28,7 @@ actor QQMusicCoverService {
          let limit: Int
      }
  
@@ -11,7 +11,8 @@ index 7567322e..2810b782 100644
      private let session: URLSession
      private let cacheRootURL: URL
      private let metadataTTL: TimeInterval = 7 * 24 * 60 * 60
-     private var inFlightMetadata: [String: Task<[QQMusicArtworkCandidate], Error>] = [:]
+@@ -37,7 +37,7 @@ actor QQMusicCoverService {
+     private var didScheduleInitialTrim = false
  
      init(
 -        helper: QQMusicHelperProcess = .shared,

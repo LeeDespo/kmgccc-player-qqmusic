@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/Services/Import/ImportPlanner.swift b/kmgccc_player/Services/Import/ImportPlanner.swift
-index bf636c5e..eb5c7b22 100644
+index 71d54ef9..aaf5ee1b 100644
 --- a/kmgccc_player/Services/Import/ImportPlanner.swift
 +++ b/kmgccc_player/Services/Import/ImportPlanner.swift
-@@ -1222,14 +1222,25 @@ final class ImportPlanner {
+@@ -1266,14 +1266,25 @@ final class ImportPlanner {
              effectiveAlbum = preview.album
          }
  

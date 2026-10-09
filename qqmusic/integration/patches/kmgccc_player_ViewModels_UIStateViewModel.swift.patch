@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/ViewModels/UIStateViewModel.swift b/kmgccc_player/ViewModels/UIStateViewModel.swift
-index 827cfacf..82c71414 100644
+index f8658d27..b63dc5ad 100644
 --- a/kmgccc_player/ViewModels/UIStateViewModel.swift
 +++ b/kmgccc_player/ViewModels/UIStateViewModel.swift
-@@ -19,6 +19,10 @@ enum ContentMode: Equatable {
+@@ -21,6 +21,10 @@ enum ContentMode: Equatable {
      case library
      case playbackHistory
      case nowPlaying
@@ -13,16 +13,16 @@ index 827cfacf..82c71414 100644
  }
  
  enum SidebarNoticeStyle: Sendable {
-@@ -376,6 +380,7 @@ final class UIStateViewModel {
+@@ -393,6 +397,7 @@ final class UIStateViewModel {
      }
  
      func showLibrary() {
 +        HomeWindowLayoutState.shared.setQQMusicMode(false)
-         withAnimation(.easeInOut(duration: 0.3)) {
-             playbackHistoryDate = nil
-             contentMode = .library
-@@ -389,6 +394,20 @@ final class UIStateViewModel {
-         }
+         playbackHistoryDate = nil
+         contentMode = .library
+     }
+@@ -402,6 +407,20 @@ final class UIStateViewModel {
+         contentMode = .playbackHistory
      }
  
 +    func showQQMusicOnline() {

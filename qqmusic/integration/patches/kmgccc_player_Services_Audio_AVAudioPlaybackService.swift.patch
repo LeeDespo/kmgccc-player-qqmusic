@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Services/Audio/AVAudioPlaybackService.swift b/kmgccc_player/Services/Audio/AVAudioPlaybackService.swift
-index e4fa1ce6..14df1ceb 100644
+index 3a74e21f..a823fdfc 100644
 --- a/kmgccc_player/Services/Audio/AVAudioPlaybackService.swift
 +++ b/kmgccc_player/Services/Audio/AVAudioPlaybackService.swift
 @@ -151,6 +151,16 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
@@ -19,7 +19,7 @@ index e4fa1ce6..14df1ceb 100644
      private static let fixedAudioOutputDelaySeconds: Double = 0.18
      private static let outputLatencyRefreshInterval: TimeInterval = 0.25
      private var outputLatencySnapshot = AudioOutputLatencySnapshot.zero
-@@ -172,7 +182,11 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
+@@ -173,7 +183,11 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
      }
  
      var currentPlaybackOrderMode: PlaybackOrderMode {
@@ -32,7 +32,7 @@ index e4fa1ce6..14df1ceb 100644
      }
  
      // MARK: - Off-Main Preparation
-@@ -1069,11 +1083,23 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
+@@ -1083,11 +1097,23 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
      private func applyPlaybackStartPolicy(_ policy: PlaybackStartPolicy) -> PlaybackOrderMode {
          let mode = policy.resolvedMode()
          activePlaybackOrderModeOverride = policy.isTemporaryOverride ? mode : nil
@@ -56,7 +56,7 @@ index e4fa1ce6..14df1ceb 100644
          activePlaybackOrderModeOverride ?? AppSettings.shared.playbackOrderMode
      }
  
-@@ -1637,6 +1663,11 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
+@@ -1650,6 +1676,11 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
          smartController.insertTracksAfterCurrent(tracks)
      }
  
@@ -68,7 +68,7 @@ index e4fa1ce6..14df1ceb 100644
      func refreshTracks(_ tracks: [Track]) {
          let refreshedByID = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
          guard !refreshedByID.isEmpty else { return }
-@@ -1668,6 +1699,9 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
+@@ -1681,6 +1712,9 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
  
      private func syncShuffleStateIfNeeded() {
          guard activePlaybackOrderModeOverride == nil else { return }
@@ -78,7 +78,7 @@ index e4fa1ce6..14df1ceb 100644
          let enabled = AppSettings.shared.shuffleEnabled
          guard enabled != lastKnownShuffleEnabled else { return }
  
-@@ -2529,7 +2563,12 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
+@@ -2542,7 +2576,12 @@ final class AVAudioPlaybackService: AudioPlaybackServiceProtocol {
          activePlaybackOrderModeOverride = nil
          AppSettings.shared.shuffleEnabled = enabled
          lastKnownShuffleEnabled = enabled

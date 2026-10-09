@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/AppKit/AppKitMainSplitPanes.swift b/kmgccc_player/AppKit/AppKitMainSplitPanes.swift
-index 48ab26f6..28963fe9 100644
+index fc1491e7..2be92bdb 100644
 --- a/kmgccc_player/AppKit/AppKitMainSplitPanes.swift
 +++ b/kmgccc_player/AppKit/AppKitMainSplitPanes.swift
-@@ -202,6 +202,14 @@ struct AppKitMainContentPaneRoot: View {
+@@ -197,12 +197,24 @@ struct AppKitMainContentPaneRoot: View {
          uiState.contentMode == .library && libraryVM.currentSelection == .home
      }
  
@@ -14,18 +14,28 @@ index 48ab26f6..28963fe9 100644
 +        uiState.contentMode == .qqMusicOnline
 +    }
 +
-     private func contentView(
+     private func pageDestinationIdentity(
          uiState: UIStateViewModel,
          libraryVM: LibraryViewModel,
-@@ -214,6 +222,7 @@ struct AppKitMainContentPaneRoot: View {
+         homeSearchActive: Bool
+     ) -> String {
+         switch uiState.contentMode {
++        case .qqMusicOnline:
++            // The online surface is its own full-window host, like Home: entering
++            // or leaving it replaces the center pane instead of reusing it.
++            return "qqmusic-online"
+         case .playbackHistory:
+             return "playback-history"
+         case .nowPlaying:
+@@ -239,6 +251,7 @@ struct AppKitMainContentPaneRoot: View {
          skinManager: SkinManager
      ) -> some View {
          let homeMode = isHomeMode(uiState: uiState, libraryVM: libraryVM)
 +        let qqMusicMode = isQQMusicMode(uiState: uiState)
          let homeSearchActive = homeMode
              && !pageController.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
- 
-@@ -293,6 +302,18 @@ struct AppKitMainContentPaneRoot: View {
+         let destinationIdentity = pageDestinationIdentity(
+@@ -324,6 +337,18 @@ struct AppKitMainContentPaneRoot: View {
                      }
                      .ignoresSafeArea(.container, edges: .top)
                      .id("appkit-main-nowplaying")
@@ -43,16 +53,16 @@ index 48ab26f6..28963fe9 100644
 +                        .id("appkit-main-qqmusic-online")
                  }
                }
-             }
-@@ -300,6 +321,7 @@ struct AppKitMainContentPaneRoot: View {
-             if !FullscreenWindowManager.shared.isWindowedFullscreenActive {
+             } placeholder: {
+@@ -335,6 +360,7 @@ struct AppKitMainContentPaneRoot: View {
+             if !uiState.usesSkinScene {
                  GeometryReader { proxy in
                      MiniPlayerView()
 +                        .environment(appSession.qqMusicOnlineCoordinator)
                          .onGeometryChange(for: CGRect.self) { geometry in
                              geometry.frame(in: .global)
                          } action: { newRect in
-@@ -348,6 +370,7 @@ struct AppKitMainContentPaneRoot: View {
+@@ -386,6 +412,7 @@ struct AppKitMainContentPaneRoot: View {
                      fullscreenWindowManager.isWindowedFullscreenActive
                  )
                  HomeWindowLayoutState.shared.setHomeMode(homeMode)
@@ -60,7 +70,7 @@ index 48ab26f6..28963fe9 100644
                  HomeWindowLayoutState.shared.setHomeSearchActive(homeSearchActive)
                  if shouldTriggerArtBackgroundTransition(playbackCoordinator: playbackCoordinator, uiState: uiState) {
                      _ = markNowPlayingArtBackgroundPresentationIfNeeded()
-@@ -356,6 +379,9 @@ struct AppKitMainContentPaneRoot: View {
+@@ -394,6 +421,9 @@ struct AppKitMainContentPaneRoot: View {
              .onChange(of: homeMode) { _, newValue in
                  HomeWindowLayoutState.shared.setHomeMode(newValue)
              }

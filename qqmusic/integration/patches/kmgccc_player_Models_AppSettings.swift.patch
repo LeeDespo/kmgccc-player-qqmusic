@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Models/AppSettings.swift b/kmgccc_player/Models/AppSettings.swift
-index 6c11cee7..f9fb129f 100644
+index 34e6d732..64f9fccb 100644
 --- a/kmgccc_player/Models/AppSettings.swift
 +++ b/kmgccc_player/Models/AppSettings.swift
 @@ -22,10 +22,24 @@ enum PlaybackStartPolicy: Equatable {
@@ -37,7 +37,7 @@ index 6c11cee7..f9fb129f 100644
              return .sequence
          case .forceShuffleTemporary:
              return .shuffle
-@@ -1105,6 +1119,453 @@ public final class AppSettings {
+@@ -1177,6 +1191,453 @@ public final class AppSettings {
          static let sourcePreferences = "externalPlaybackSourcePreferences"
      }
  

@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/Models/Track.swift b/kmgccc_player/Models/Track.swift
-index 02019707..60efa3c9 100644
+index 121c6f15..388c7e2f 100644
 --- a/kmgccc_player/Models/Track.swift
 +++ b/kmgccc_player/Models/Track.swift
-@@ -54,6 +54,12 @@ final class Track {
+@@ -50,6 +50,12 @@ nonisolated final class Track: Identifiable, Hashable, Equatable, @unchecked Sen
      var labelOrCompany: String = ""
      var releaseDate: Date?
      var qqMusicSongMid: String?
@@ -15,7 +15,7 @@ index 02019707..60efa3c9 100644
      var metadataSource: String?
      var metadataFetchedAt: Date?
      var metadataConfidence: Double?
-@@ -278,6 +284,8 @@ final class Track {
+@@ -346,6 +352,8 @@ nonisolated final class Track: Identifiable, Hashable, Equatable, @unchecked Sen
          labelOrCompany: String = "",
          releaseDate: Date? = nil,
          qqMusicSongMid: String? = nil,
@@ -24,7 +24,7 @@ index 02019707..60efa3c9 100644
          metadataSource: String? = nil,
          metadataFetchedAt: Date? = nil,
          metadataConfidence: Double? = nil,
-@@ -321,6 +329,8 @@ final class Track {
+@@ -387,6 +395,8 @@ nonisolated final class Track: Identifiable, Hashable, Equatable, @unchecked Sen
          self.labelOrCompany = labelOrCompany
          self.releaseDate = releaseDate
          self.qqMusicSongMid = qqMusicSongMid

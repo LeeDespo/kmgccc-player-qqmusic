@@ -1,5 +1,5 @@
 diff --git a/kmgccc_playerTests/UpdatePolicyTests.swift b/kmgccc_playerTests/UpdatePolicyTests.swift
-index 1aad3c45..19dc8c85 100644
+index 412727ab..df3b65cc 100644
 --- a/kmgccc_playerTests/UpdatePolicyTests.swift
 +++ b/kmgccc_playerTests/UpdatePolicyTests.swift
 @@ -2,14 +2,24 @@ import Foundation

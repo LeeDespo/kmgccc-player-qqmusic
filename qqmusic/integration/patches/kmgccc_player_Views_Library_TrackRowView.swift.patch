@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/Views/Library/TrackRowView.swift b/kmgccc_player/Views/Library/TrackRowView.swift
-index c47a7acd..d24eabd7 100644
+index b35fe4f1..c865b5ab 100644
 --- a/kmgccc_player/Views/Library/TrackRowView.swift
 +++ b/kmgccc_player/Views/Library/TrackRowView.swift
-@@ -580,7 +580,12 @@ struct TrackRowView<MenuContent: View>: View {
+@@ -700,7 +700,12 @@ struct TrackRowView<MenuContent: View>: View {
      }
  }
  
