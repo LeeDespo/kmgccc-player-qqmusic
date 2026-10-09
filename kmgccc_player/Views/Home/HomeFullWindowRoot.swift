@@ -27,7 +27,10 @@ struct HomeFullWindowRoot: View {
 
     var body: some View {
         Group {
-            if hasMountedHome || shouldRenderHome {
+            switch presentedSurface {
+            case .online:
+                QQMusicFullWindowRoot(appSession: appSession)
+            case .home:
                 if let libraryVM = appSession.libraryVM,
                    let playerVM = appSession.playerVM,
                    let playbackCoordinator = appSession.playbackCoordinator,
@@ -64,23 +67,49 @@ struct HomeFullWindowRoot: View {
                         .tint(ThemeStore.shared.accentColor)
                         .accentColor(ThemeStore.shared.accentColor)
                 }
-            } else if shouldRenderQQMusic {
-                QQMusicFullWindowRoot(appSession: appSession)
-            } else {
+            case .none:
                 Color.clear
                     .allowsHitTesting(false)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: .all)
-        .opacity(shouldRenderHome ? 1 : 0)
-        .allowsHitTesting(shouldRenderHome)
-        .accessibilityHidden(!shouldRenderHome)
+        .opacity(presentedSurface == .none ? 0 : 1)
+        .allowsHitTesting(presentedSurface != .none)
+        .accessibilityHidden(presentedSurface == .none)
         .transaction { $0.animation = nil }
         .onChange(of: shouldRenderHome, initial: true) { _, active in
             if active { hasMountedHome = true }
         }
+        // Which surface this host draws is the difference between "the page is
+        // broken" and "the page is not on screen": from the outside both look
+        // like an empty window, and the online surface leaves no other trace.
+        .onChange(of: presentedSurface, initial: true) { _, _ in
+            Log.info(
+                "[HomeHost] surface=\(presentedSurface) contentMode=\(appSession.uiState.contentMode)",
+                category: .ui
+            )
+        }
         .motionEnvironment()
+    }
+
+    private enum PresentedSurface: Equatable {
+        case online
+        case home
+        case none
+    }
+
+    /// The single place that decides what this host draws, so the branch taken,
+    /// the visibility gates and the log cannot disagree.
+    ///
+    /// The online surface is asked first on purpose: `hasMountedHome` keeps Home
+    /// alive across library navigation, and with the mounted shortcut first it
+    /// also preempted the online pages — opening QQ Music kept drawing Home
+    /// (invisible under the gates above) and never the online root.
+    private var presentedSurface: PresentedSurface {
+        if shouldRenderQQMusic { return .online }
+        if hasMountedHome || shouldRenderHome { return .home }
+        return .none
     }
 
     private var shouldRenderHome: Bool {
