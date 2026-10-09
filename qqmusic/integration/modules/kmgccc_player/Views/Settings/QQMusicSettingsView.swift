@@ -27,7 +27,7 @@ enum QQMusicSettingsCategory: String, CaseIterable, Identifiable {
         switch self {
         case .account: return "账号"
         case .playback: return "播放与下载"
-        case .helper: return "Helper 组件"
+        case .helper: return "组件"
         case .cache: return "缓存"
         }
     }
@@ -85,7 +85,8 @@ struct QQMusicSettingsView: View {
     /// The download engine's state, so the section can show it and offer a restart.
     @State private var aria2Status: QQMusicAria2Status?
     @State private var isRestartingAria2 = false
-    @State private var isShowingUpdateHelp = false
+    @State private var isShowingHelperUpdateHelp = false
+    @State private var isShowingAria2UpdateHelp = false
 
     private let helper = QQMusicComponentProcess.shared
 
@@ -514,7 +515,7 @@ struct QQMusicSettingsView: View {
 
     private var helperSection: some View {
         VStack(alignment: .leading, spacing: SettingsStyleTokens.groupSpacing) {
-            SettingsHeaderLabel(title: "Helper 组件", systemImage: "shippingbox")
+            SettingsHeaderLabel(title: "组件", systemImage: "shippingbox")
 
             VStack(alignment: .leading, spacing: 10) {
                 labeledValue("组件", "Helper组件")
@@ -529,6 +530,23 @@ struct QQMusicSettingsView: View {
 
                 if let running = helperBinaryPath {
                     labeledValue("当前运行", running, monospaced: true)
+                }
+
+                // Buttons sit right under the status rows, matching the download
+                // engine section below — one row shape across the page.
+                HStack(spacing: 8) {
+                    Button("更新组件") { isShowingHelperUpdateHelp = true }
+                    Button("重新检查") { Task { await refreshStatus() } }
+                    Spacer()
+                }
+                .alert("更新组件", isPresented: $isShowingHelperUpdateHelp) {
+                    Button("前往 HelperNext Release 页面") {
+                        openReleasePage(QQMusicComponentProcess.helperNextReleasePage)
+                    }
+                    Button("打开文件位置") { revealComponentDirectory() }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text(helperUpdateHelpText)
                 }
 
                 Divider().opacity(0.4)
@@ -554,21 +572,6 @@ struct QQMusicSettingsView: View {
                 Divider().opacity(0.4)
 
                 rateLimitRows
-
-                Divider().opacity(0.4)
-
-                HStack(spacing: 8) {
-                    Button("更新组件") { isShowingUpdateHelp = true }
-                    Button("重新检查") { Task { await refreshStatus() } }
-                    Spacer()
-                }
-                .alert("更新组件", isPresented: $isShowingUpdateHelp) {
-                    Button("前往 Release 页面") { openComponentReleasePage() }
-                    Button("打开文件位置") { revealComponentDirectory() }
-                    Button("取消", role: .cancel) {}
-                } message: {
-                    Text(updateHelpText)
-                }
             }
             .padding(SettingsStyleTokens.groupPadding)
             .background(sectionBackground)
@@ -1181,21 +1184,22 @@ struct QQMusicSettingsView: View {
         NSWorkspace.shared.activateFileViewerSelecting([directory])
     }
 
-    /// Where a newer component package is published.
-    private func openComponentReleasePage() {
-        guard let url = URL(string: QQMusicComponentProcess.componentReleasePage) else { return }
+    /// Open one of the components' own release pages.
+    private func openReleasePage(_ page: String) {
+        guard let url = URL(string: page) else { return }
         NSWorkspace.shared.open(url)
     }
 
-    /// What replacing the component actually takes — spelled out, because two of
+    /// What replacing the data component actually takes — spelled out, because two of
     /// the three steps are the ones people skip and then wonder why the app says
     /// the component is not there.
-    private var updateHelpText: String {
+    private var helperUpdateHelpText: String {
         """
-        组件与应用分开更新：换掉下面目录里的文件即可，不必重新构建应用。
+        数据组件（HelperNext）与应用分开更新，也与下载引擎各自更新：换掉外部目录里的
+        qqmusic-helper-next 即可，不必重新构建应用。
 
-        1. 在 Release 页面下载最新的组件包（含 qqmusic-helper-next 与 aria2-next）。
-        2. 把两个文件放进：
+        1. 在 HelperNext 的 Release 页面下载最新的 qqmusic-helper-next。
+        2. 把它放进：
            \(QQMusicComponentProcess.externalComponentDirectory.path)
            应用优先用外部目录里的这份，bundle 内的只作兜底。
         3. 清掉隔离属性并重新签名，两件都要做：
@@ -1208,6 +1212,31 @@ struct QQMusicSettingsView: View {
         只清属性仍会被杀，所以要再补一次签名。
 
         放好之后点「重新检查」，上面的版本号应当随之更新。
+        """
+    }
+
+    /// Same drill for the download engine; it lives in the same directory and is
+    /// launched by the data component, so a swap mid-download needs a restart.
+    private var aria2UpdateHelpText: String {
+        """
+        下载引擎（Aria2Next）独立发布，与数据组件各自更新：换掉外部目录里的 aria2-next
+        即可，不必重新构建应用。
+
+        1. 在 Aria2Next 的 Release 页面下载 macOS (Apple Silicon) 版，资产名形如
+           aria2-next-<版本>-macos-arm64。
+        2. 把它放进数据组件所在的同一个目录：
+           \(QQMusicComponentProcess.externalComponentDirectory.path)
+           引擎由组件在开始下载时拉起；正在下载时替换的话，先点「重启引擎」或等这批任务结束。
+        3. 清掉隔离属性并重新签名，两件都要做：
+
+           xattr -cr "~/Library/Application Support/kmgccc.player/QQMusicHelperNext"
+           codesign --force --sign - "~/Library/Application Support/kmgccc.player/QQMusicHelperNext/"*
+
+        第 3 步不能省：从浏览器下载来的文件带隔离属性，带它的可执行文件会被系统直接杀掉
+        （退出码 137，没有任何输出），而应用只会写一行日志——表现是"下载不动"，看起来像接口失效。
+        只清属性仍会被杀，所以要再补一次签名。
+
+        放好之后点「重新检查」，版本与状态应当随之更新。
         """
     }
 
@@ -1242,7 +1271,7 @@ struct QQMusicSettingsView: View {
 
     // MARK: - Download engine
 
-    /// Aria2 Next: the download engine that ships with the component.
+    /// Aria2 Next: the download engine, updated independently of the app.
     ///
     /// Its own section rather than rows inside 组件, because it is a separate
     /// process with its own lifecycle: it can be restarted, and it has its own
@@ -1250,9 +1279,9 @@ struct QQMusicSettingsView: View {
     private var aria2Section: some View {
         VStack(alignment: .leading, spacing: SettingsStyleTokens.groupSpacing) {
             HStack(spacing: 6) {
-                SettingsHeaderLabel(title: "下载引擎", systemImage: "arrow.down.circle")
+                SettingsHeaderLabel(title: "Aria2Next 下载引擎", systemImage: "arrow.down.circle")
                 SettingsInfoButton(
-                    text: "歌曲的字节由 Aria2 Next 搬运（随组件一同发布）：它支持多连接、断点续传与限速。引擎不可用时会自动退回应用自身的下载方式，功能不受影响。"
+                    text: "歌曲的字节由 Aria2 Next 搬运（独立发布，与数据组件各自更新）：它支持多连接、断点续传与限速。引擎不可用时会自动退回应用自身的下载方式，功能不受影响。"
                 )
             }
 
@@ -1266,10 +1295,20 @@ struct QQMusicSettingsView: View {
                 }
 
                 HStack(spacing: 8) {
+                    Button("更新组件") { isShowingAria2UpdateHelp = true }
                     Button("重启引擎") { Task { await restartAria2() } }
                         .disabled(isRestartingAria2 || aria2Status?.installed != true)
                     Button("重新检查") { Task { await refreshAria2() } }
                     Spacer()
+                }
+                .alert("更新组件", isPresented: $isShowingAria2UpdateHelp) {
+                    Button("前往 Aria2Next Release 页面") {
+                        openReleasePage(QQMusicComponentProcess.aria2NextReleasePage)
+                    }
+                    Button("打开文件位置") { revealComponentDirectory() }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text(aria2UpdateHelpText)
                 }
 
                 Divider().opacity(0.4)

@@ -2657,12 +2657,16 @@ actor QQMusicComponentProcess {
             .appendingPathComponent("QQMusicHelperNext", isDirectory: true)
     }
 
-    /// Where a newer component package is published.
-    ///
-    /// The component travels with the app's patch package, so its releases live on
-    /// this project's release page — one place to look for both.
-    nonisolated static let componentReleasePage =
-        "https://github.com/LeeDespo/kmgccc-player-qqmusic/releases"
+    /// Where the data component's releases are published: its own repository,
+    /// not this project's. The app bundles whatever the build fetched, but
+    /// updates come from the upstream of each binary — the same repositories
+    /// `qqmusic/integration/components.lock.json` pins.
+    nonisolated static let helperNextReleasePage =
+        "https://github.com/LeeDespo/QQMusicApi_HelperNext/releases"
+
+    /// Where the download engine's releases are published (a third-party repo).
+    nonisolated static let aria2NextReleasePage =
+        "https://github.com/AnInsomniacy/aria2-next/releases"
 
     /// Root for the persisted QQ Music credential.
     ///

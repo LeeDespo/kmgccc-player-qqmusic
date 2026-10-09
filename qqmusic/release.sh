@@ -204,8 +204,9 @@ rm -rf "$OUT_DIR/patch"
 
 step "assemble component package"
 # The component and its download engine, on their own, so someone whose online
-# source broke can replace two files instead of the whole app. This is what the
-# settings window's 「更新组件」 points at.
+# source broke can replace two files instead of the whole app. Pinned by the
+# lock, license-complete — the app's 「更新组件」 points at each component's own
+# release page instead, because that is where new versions are actually cut.
 COMP="$OUT_DIR/component/kmgccc_player-${SLUG}-component"
 rm -rf "$OUT_DIR/component"
 mkdir -p "$COMP"
