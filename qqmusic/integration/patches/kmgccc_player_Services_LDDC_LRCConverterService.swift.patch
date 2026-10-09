@@ -1,0 +1,34 @@
+diff --git a/kmgccc_player/Services/LDDC/LRCConverterService.swift b/kmgccc_player/Services/LDDC/LRCConverterService.swift
+index 4ab07a0b..293e1fbd 100644
+--- a/kmgccc_player/Services/LDDC/LRCConverterService.swift
++++ b/kmgccc_player/Services/LDDC/LRCConverterService.swift
+@@ -749,7 +749,28 @@ actor LRCConverterService {
+                 result.append(lineData)
+                 continue
+             }
+-            
++
++            // A line that already carries several timed words keeps them.
++            //
++            // The lyric type is a majority vote over the whole document, so a
++            // line-level translation appended to a word-level song (which is how
++            // the online source hands both languages over) classifies the song as
++            // line-level — and collapsing every line to its first segment then
++            // deleted all but the first word of each line. Only a line with a
++            // single segment is genuinely line-level.
++            if lineData.segments.count > 1 {
++                let nextLineStart = i + 1 < count ? lyricsData[i + 1].segments.first?.time : nil
++                result.append(
++                    LyricLine(
++                        segments: calculateSegmentEndTimes(
++                            lineData.segments,
++                            nextLineStart: nextLineStart
++                        )
++                    )
++                )
++                continue
++            }
++
+             var segment = lineData.segments[0]
+             
+             if let explicitEnd = segment.nextLineStart {

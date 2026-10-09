@@ -1,0 +1,44 @@
+diff --git a/Tests/LRCConverterServiceRegressionTests.swift b/Tests/LRCConverterServiceRegressionTests.swift
+index 2c25fb19..aaf4fb8b 100644
+--- a/Tests/LRCConverterServiceRegressionTests.swift
++++ b/Tests/LRCConverterServiceRegressionTests.swift
+@@ -17,9 +17,39 @@ struct LRCConverterServiceRegressionTests {
+         try await testEarlyTranslationOffsetFallback()
+         try await testIntroCreditsAreStripped()
+         try await testHyphenatedIntroAdlibsDoNotShiftTranslations()
++        try await testAppendedTranslationDoesNotDeleteWords()
+         print("LRCConverterServiceRegressionTests passed")
+     }
+ 
++    /// The online source hands a word-level song and its translation over as one
++    /// LRC block (see `QQMusicOnlineCoordinator.combinedLyrics`), and the
++    /// translation's lines carry one timestamp each. The line/word classification
++    /// is a majority vote over the whole document, so a document like that counts
++    /// as line-level — and the line-level pass collapsed every line to its first
++    /// segment, which deleted all but the first word of every sung line.
++    private static func testAppendedTranslationDoesNotDeleteWords() async throws {
++        let combined = """
++        [00:13.040]Yelling [00:13.320]at [00:13.520]the [00:13.760]sky
++        [00:16.100]Screaming [00:16.400]at [00:16.600]the [00:16.900]world
++        [00:13.040]向天空呼号
++        [00:14.500]第二行翻译
++        [00:16.100]向世界呐喊
++        [00:17.500]第四行翻译
++        """
++
++        let ttml = try await LRCConverterService.shared.convertToTTML(
++            lrcContent: combined,
++            stripMetadata: true
++        )
++
++        expect(ttml.contains("Yelling"), "Expected the first word of the word-timed line")
++        expect(
++            ttml.contains("sky</span>"),
++            "Expected the words after the first one to survive the appended translation"
++        )
++        expect(ttml.contains("向天空呼号"), "Expected the appended translation line to be kept")
++    }
++
+     private static func testWordTimedLineWithAsteriskIsKept() async throws {
+         let original = """
+         [00:32.330]But [00:32.480]if [00:32.600]I [00:32.750]could [00:32.930]ask [00:33.320]you [00:33.440]one [00:33.890]thing[00:34.580], [00:34.580]one [00:35.720]thing[00:36.710]?[00:36.710]

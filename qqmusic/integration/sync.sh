@@ -95,6 +95,10 @@ is_shippable_path() {
     # compiles them: `xcodebuild test` prints TEST SUCCEEDED while skipping every
     # one, which is a silent failure the toolkit must catch.
     kmgccc_player.xcodeproj/project.pbxproj) return 0 ;;
+    # The standalone LRC regression pins the converter behaviour a fix depends on
+    # (a word-level song with a line-level translation appended); verify.sh runs
+    # it, so it has to travel with the patch or a replayed tree loses the guard.
+    Tests/LRCConverterServiceRegressionTests.swift) return 0 ;;
     # This fork operates no Pages site and no funding metadata, and
     # check-repository-rules.sh forbids that surface. Their deletion has to travel
     # with the package: without it a tree replayed from a clean upstream still
