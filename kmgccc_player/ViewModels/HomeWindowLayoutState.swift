@@ -277,6 +277,9 @@ final class HomeWindowLayoutState {
         return isQQMusicMode || (isHomeMode && !isHomeSearchActive)
     }
 
+    @ObservationIgnored
+    var onHomeModeChange: ((Bool) -> Void)?
+
     /// Live frame of the Mini Player view in SwiftUI `.global` coordinates
     /// (top-left origin, matching the topmost `NSHostingView`'s bounds).
     /// Published by an `.onGeometryChange` probe wrapped around
@@ -372,6 +375,12 @@ final class HomeWindowLayoutState {
     func setHomeMode(_ active: Bool) {
         guard isHomeMode != active else { return }
         isHomeMode = active
+        onHomeModeChange?(active)
+        if !active {
+            // Keep the bounded Home artwork caches for the return transition.
+            // Memory-pressure and fullscreen paths still release them explicitly.
+            HomeArtworkPreheater.shared.cancel()
+        }
     }
 
     func setQQMusicMode(_ active: Bool) {

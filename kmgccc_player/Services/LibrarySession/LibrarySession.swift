@@ -1,5 +1,43 @@
 import Foundation
+import PlayerAutomationProtocol
 import SwiftData
+
+struct LibraryAutomationLyricsApplyOutcome: Sendable {
+    let applied: Bool
+    let conflicted: Bool
+    let currentQuality: Int
+    let candidateQuality: Int
+    let message: String
+}
+
+@MainActor
+struct LibraryAutomationJobReporter {
+    private let operationCoordinator: LibraryOperationCoordinator
+
+    init(operationCoordinator: LibraryOperationCoordinator) {
+        self.operationCoordinator = operationCoordinator
+    }
+
+    func recordProgress(completedCount: Int, totalCount: Int, phase: String) {
+        operationCoordinator.recordProgress(
+            completedCount: completedCount,
+            totalCount: totalCount,
+            phase: phase
+        )
+    }
+
+    func recordCheckpoint(_ label: String) {
+        operationCoordinator.recordCheckpoint(label)
+    }
+
+    func recordFailure(_ summary: String, itemID: UUID? = nil) {
+        operationCoordinator.recordPartialFailure(summary, itemID: itemID)
+    }
+
+    func recordResult(_ result: AutomationJSONValue) {
+        operationCoordinator.recordResult(result)
+    }
+}
 
 @MainActor
 final class LibrarySession: LibrarySessionLifecycle {
@@ -172,7 +210,7 @@ final class LibrarySession: LibrarySessionLifecycle {
             try await startReferencedSourceMonitor(
                 libraryChangeMonitor,
                 reconciler: referencedSourceReconciler,
-                roots: referencedSourceReconciler.sourceRoots
+                roots: try await referencedSourceReconciler.monitoredSourceRoots()
             )
         } else if context.mode == .managed, let libraryChangeMonitor {
             try await startManagedLibraryMonitor(libraryChangeMonitor)
@@ -218,7 +256,7 @@ final class LibrarySession: LibrarySessionLifecycle {
 
         let ledger = try await operationCoordinator.run(as: .sourceScan) { () -> AttemptLedger in
             var ledger = AttemptLedger()
-            let sourceIDs = try await reconciler.allSourceIDs()
+            let sourceIDs = try await reconciler.automaticSourceIDs()
             for sourceID in sourceIDs.sorted(by: { $0.uuidString < $1.uuidString }) {
                 operationCoordinator.recordCheckpoint("来源扫描 \(sourceID.uuidString.prefix(8))")
                 do {
@@ -350,6 +388,417 @@ final class LibrarySession: LibrarySessionLifecycle {
         operationCoordinator.taskDescriptors
     }
 
+    /// Returns live and recently completed operation snapshots for the
+    /// automation Job surface. The coordinator restores its bounded history
+    /// from the library-scoped automation Job file; domain data remains
+    /// durable in the library's own stores.
+    func libraryJobDescriptorsSnapshot() -> [LibraryOperationTaskDescriptor] {
+        let live = operationCoordinator.taskDescriptors
+        let recent = operationCoordinator.recentTaskDescriptors.filter { recent in
+            !live.contains(where: { $0.id == recent.id })
+        }
+        return (live + recent).sorted {
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+    }
+
+    /// Starts generic App automation work as a library-scoped, cancellable
+    /// Job. The caller reports item results through the same durable owner.
+    @discardableResult
+    func startAutomationJob(
+        totalCount: Int,
+        work: @escaping @MainActor (LibraryAutomationJobReporter) async -> Void
+    ) -> LibraryOperationTaskDescriptor? {
+        guard !isClosed, totalCount > 0 else { return nil }
+        let started = operationCoordinator.start({ [weak self] in
+            guard let self else { return }
+            let reporter = LibraryAutomationJobReporter(operationCoordinator: self.operationCoordinator)
+            reporter.recordProgress(completedCount: 0, totalCount: totalCount, phase: "Starting")
+            await work(reporter)
+        }, kind: .automation)
+        guard started else { return nil }
+        return operationCoordinator.taskDescriptors.last
+    }
+
+    @discardableResult
+    func cancelLibraryJob(id: UUID) -> Bool {
+        operationCoordinator.cancel(operationID: id)
+    }
+
+    /// Re-enqueues a failed/cancelled automation Job when its operation type
+    /// carries a durable, safe retry specification. Unsupported Jobs remain
+    /// observable but cannot be guessed or reconstructed from arbitrary data.
+    @discardableResult
+    func retryAutomationJob(
+        id: UUID,
+        importSelection: LibraryInitialImportSelection? = nil
+    ) -> LibraryOperationTaskDescriptor? {
+        guard let descriptor = operationCoordinator.taskDescriptor(operationID: id),
+              descriptor.state == .failed
+                || descriptor.state == .partialFailure
+                || descriptor.state == .cancelled,
+              let retrySpec = descriptor.retrySpec else {
+            return nil
+        }
+        switch retrySpec.kind {
+        case .lyricsRefresh:
+            return startAutomationLyricsRefresh(
+                trackIDs: descriptor.failedItemIDs.isEmpty
+                    ? retrySpec.trackIDs
+                    : descriptor.failedItemIDs,
+                force: retrySpec.force
+            )
+        case .sourceRefresh:
+            guard let sourceID = retrySpec.sourceID else { return nil }
+            return startAutomationSourceRefresh(sourceID: sourceID)
+        case .libraryImport:
+            guard let importSelection,
+                  let enrichmentPolicy = LibraryImportEnrichmentPolicy(
+                    rawValue: retrySpec.enrichmentPolicy
+                  ),
+                  retrySpec.targetPlaylistID.map({ playlistID in
+                      libraryViewModel.playlists.contains { $0.id == playlistID }
+                  }) ?? true else {
+                return nil
+            }
+            return startAutomationImport(
+                selection: importSelection,
+                playlistID: retrySpec.targetPlaylistID,
+                retryEnrichment: enrichmentPolicy == .standard,
+                enrichmentPolicy: enrichmentPolicy
+            )
+        }
+    }
+
+    /// Starts the provider-backed lyrics maintenance workflow without making
+    /// the IPC request wait for a whole library. The operation is owned by the
+    /// session coordinator, so progress/cancellation remain valid across CLI,
+    /// MCP and UI observers during the current App launch.
+    func startAutomationLyricsRefresh(
+        trackIDs: [UUID],
+        force: Bool
+    ) -> LibraryOperationTaskDescriptor? {
+        let uniqueIDs = Array(Set(trackIDs)).sorted { $0.uuidString < $1.uuidString }
+        guard !isClosed, !uniqueIDs.isEmpty else { return nil }
+        let started = operationCoordinator.start({ [weak self] in
+            guard let self else { return }
+            await self.runAutomationLyricsRefresh(trackIDs: uniqueIDs, force: force)
+        }, kind: .enrichment, retrySpec: .lyricsRefresh(trackIDs: uniqueIDs, force: force))
+        guard started else { return nil }
+        return operationCoordinator.taskDescriptors.last
+    }
+
+    private func runAutomationLyricsRefresh(trackIDs: [UUID], force: Bool) async {
+        let tracksByID = Dictionary(
+            uniqueKeysWithValues: libraryViewModel.allTracks.map { ($0.id, $0) }
+        )
+        let total = trackIDs.count
+        var completed = 0
+        for trackID in trackIDs {
+            if Task.isCancelled { return }
+            defer {
+                completed += 1
+                operationCoordinator.recordProgress(
+                    completedCount: completed,
+                    totalCount: total,
+                    phase: "lyrics"
+                )
+            }
+            guard let track = tracksByID[trackID] else {
+                operationCoordinator.recordPartialFailure(
+                    "\(trackID.uuidString): Track not found",
+                    itemID: trackID
+                )
+                continue
+            }
+            let title = track.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !title.isEmpty else {
+                operationCoordinator.recordPartialFailure(
+                    "\(trackID.uuidString): missing title",
+                    itemID: trackID
+                )
+                continue
+            }
+            let expectedRevision = libraryViewModel.automationTrackRevision(for: track)
+            let wordSyncedTTML = await LyricsSearchHelper.searchAndFetchBestLyrics(
+                title: title,
+                artist: track.artist.isEmpty ? nil : track.artist,
+                album: track.album.isEmpty ? nil : track.album,
+                duration: track.duration > 0 ? track.duration : nil,
+                mode: .verbatim,
+                searchCoordinator: cacheServices.lyricsSearchCoordinator,
+                amllDBService: cacheServices.amllDBService
+            )
+            guard !Task.isCancelled else { return }
+            let wordQuality = wordSyncedTTML.map { lyricsQuality($0) } ?? 0
+            let ttml: String?
+            if wordQuality >= 2 {
+                ttml = wordSyncedTTML
+            } else {
+                let lineSyncedTTML = await LyricsSearchHelper.searchAndFetchBestLyrics(
+                    title: title,
+                    artist: track.artist.isEmpty ? nil : track.artist,
+                    album: track.album.isEmpty ? nil : track.album,
+                    duration: track.duration > 0 ? track.duration : nil,
+                    mode: .line,
+                    searchCoordinator: cacheServices.lyricsSearchCoordinator,
+                    amllDBService: cacheServices.amllDBService
+                )
+                ttml = lineSyncedTTML ?? wordSyncedTTML
+            }
+            guard let ttml,
+                  !ttml.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                operationCoordinator.recordPartialFailure(
+                    "\(trackID.uuidString): no usable lyrics candidate",
+                    itemID: trackID
+                )
+                continue
+            }
+            let outcome = await applyAutomationLyrics(
+                trackID: trackID,
+                ttml: ttml,
+                candidateQuality: lyricsQuality(ttml),
+                force: force,
+                expectedRevision: expectedRevision
+            )
+            if outcome.conflicted {
+                operationCoordinator.recordPartialFailure(
+                    "\(trackID.uuidString): lyrics changed while the candidate was fetched",
+                    itemID: trackID
+                )
+            } else if outcome.applied {
+                operationCoordinator.recordCheckpoint("applied lyrics \(trackID.uuidString)")
+            } else if outcome.message.hasPrefix("kept") {
+                operationCoordinator.recordCheckpoint("kept current lyrics \(trackID.uuidString)")
+            } else {
+                operationCoordinator.recordPartialFailure(
+                    "\(trackID.uuidString): \(outcome.message)",
+                    itemID: trackID
+                )
+            }
+        }
+    }
+
+    /// Searches all configured artwork providers and returns the merged result
+    /// after the transient coordinator has finished aggregating them.
+    /// The search path deliberately reuses the same provider services as the
+    /// interactive cover editor. The coordinator is transient because its
+    /// published candidate/selection state belongs to one request, while the
+    /// provider services and their caches remain session-owned.
+    func searchArtworkCandidatesForAutomation(
+        trackID: UUID,
+        limit: Int
+    ) async -> [CoverCandidate] {
+        guard let track = libraryViewModel.allTracks.first(where: { $0.id == trackID }) else {
+            return []
+        }
+
+        let coordinator = CoverSearchCoordinator(
+            coverDownloadService: cacheServices.coverDownloadService,
+            netEaseCoverService: cacheServices.netEaseCoverService,
+            qqMusicCoverService: cacheServices.qqMusicCoverService
+        )
+        await coordinator.search(
+            artist: track.artist,
+            album: track.album,
+            title: track.title,
+            duration: track.duration.isFinite && track.duration > 0 ? track.duration : nil
+        )
+        return Array(coordinator.candidates.prefix(max(1, min(limit, 5))))
+    }
+
+    func searchArtistArtworkCandidatesForAutomation(
+        artistID: UUID,
+        limit: Int
+    ) async -> [CoverCandidate] {
+        guard let entry = libraryViewModel.artistEntries.first(where: { $0.id == artistID }) else {
+            return []
+        }
+        do {
+            let candidates = try await cacheServices.artistArtworkProviderCoordinator.searchCandidates(
+                artist: entry.displayName,
+                limit: max(1, min(limit, 5))
+            )
+            return Array(candidates.prefix(max(1, min(limit, 5))))
+        } catch {
+            return []
+        }
+    }
+
+    func searchAlbumArtworkCandidatesForAutomation(
+        albumKey: String,
+        limit: Int
+    ) async -> [CoverCandidate] {
+        guard let entry = libraryViewModel.albumEntries.first(where: { $0.canonicalKey == albumKey }) else {
+            return []
+        }
+        let coordinator = CoverSearchCoordinator(
+            coverDownloadService: cacheServices.coverDownloadService,
+            netEaseCoverService: cacheServices.netEaseCoverService,
+            qqMusicCoverService: cacheServices.qqMusicCoverService
+        )
+        await coordinator.search(
+            artist: entry.primaryArtistDisplayName,
+            album: entry.displayTitle
+        )
+        return Array(coordinator.candidates.prefix(max(1, min(limit, 5))))
+    }
+
+    /// Applies a fetched candidate through the same App-owned persistence
+    /// boundary used by the batch Job. The revision is checked immediately
+    /// before writing so a UI edit made while a remote candidate was fetched
+    /// cannot be silently overwritten.
+    func applyAutomationLyrics(
+        trackID: UUID,
+        ttml: String,
+        candidateQuality: Int,
+        force: Bool,
+        expectedRevision: String? = nil
+    ) async -> LibraryAutomationLyricsApplyOutcome {
+        guard let track = libraryViewModel.allTracks.first(where: { $0.id == trackID }) else {
+            return LibraryAutomationLyricsApplyOutcome(
+                applied: false,
+                conflicted: false,
+                currentQuality: 0,
+                candidateQuality: candidateQuality,
+                message: "Track not found"
+            )
+        }
+        let currentQuality = automationLyricsQuality(track)
+        if let expectedRevision,
+           expectedRevision != libraryViewModel.automationTrackRevision(for: track) {
+            return LibraryAutomationLyricsApplyOutcome(
+                applied: false,
+                conflicted: true,
+                currentQuality: currentQuality,
+                candidateQuality: candidateQuality,
+                message: "Track metadata changed after the lyrics query"
+            )
+        }
+        guard force || candidateQuality > currentQuality else {
+            return LibraryAutomationLyricsApplyOutcome(
+                applied: false,
+                conflicted: false,
+                currentQuality: currentQuality,
+                candidateQuality: candidateQuality,
+                message: "kept current lyrics because the candidate is not better"
+            )
+        }
+        track.ttmlLyricText = ttml
+        track.lyricsText = nil
+        track.lyricsFileName = nil
+        let persistence = await libraryViewModel.saveTrackEdits(
+            track,
+            mode: .metaAndLyrics,
+            reason: "automationLyricsApply"
+        )
+        guard persistence.persistedTrackIDs.contains(trackID) else {
+            return LibraryAutomationLyricsApplyOutcome(
+                applied: false,
+                conflicted: false,
+                currentQuality: currentQuality,
+                candidateQuality: candidateQuality,
+                message: "persistence failed"
+            )
+        }
+        return LibraryAutomationLyricsApplyOutcome(
+            applied: true,
+            conflicted: false,
+            currentQuality: currentQuality,
+            candidateQuality: candidateQuality,
+            message: force ? "lyrics applied with force" : "lyrics applied"
+        )
+    }
+
+    /// Applies Agent-supplied TTML directly after the same validation and
+    /// repository-owned persistence boundary used by the manual lyric editor.
+    /// Direct text is intentional: unlike a provider candidate it is not
+    /// subject to the "only replace with a better search result" policy.
+    func applyCustomTTMLForAutomation(
+        trackID: UUID,
+        ttml: String,
+        expectedRevision: String? = nil
+    ) async -> LibraryAutomationLyricsApplyOutcome {
+        guard let normalizedTTML = LyricsFormatSupport.normalizedTTMLText(ttml) else {
+            return LibraryAutomationLyricsApplyOutcome(
+                applied: false,
+                conflicted: false,
+                currentQuality: 0,
+                candidateQuality: 0,
+                message: "custom TTML is invalid"
+            )
+        }
+        guard let track = libraryViewModel.allTracks.first(where: { $0.id == trackID }) else {
+            return LibraryAutomationLyricsApplyOutcome(
+                applied: false,
+                conflicted: false,
+                currentQuality: 0,
+                candidateQuality: 0,
+                message: "Track not found"
+            )
+        }
+
+        let currentQuality = automationLyricsQuality(track)
+        if let expectedRevision,
+           expectedRevision != libraryViewModel.automationTrackRevision(for: track) {
+            return LibraryAutomationLyricsApplyOutcome(
+                applied: false,
+                conflicted: true,
+                currentQuality: currentQuality,
+                candidateQuality: lyricsQuality(normalizedTTML),
+                message: "Track metadata changed after the lyrics query"
+            )
+        }
+
+        let candidateQuality = lyricsQuality(normalizedTTML)
+        track.ttmlLyricText = normalizedTTML
+        track.lyricsText = nil
+        track.lyricsFileName = nil
+        let persistence = await libraryViewModel.saveTrackEdits(
+            track,
+            mode: .metaAndLyrics,
+            reason: "automationLyricsApplyCustomTTML"
+        )
+        guard persistence.persistedTrackIDs.contains(trackID) else {
+            return LibraryAutomationLyricsApplyOutcome(
+                applied: false,
+                conflicted: false,
+                currentQuality: currentQuality,
+                candidateQuality: candidateQuality,
+                message: "persistence failed"
+            )
+        }
+        return LibraryAutomationLyricsApplyOutcome(
+            applied: true,
+            conflicted: false,
+            currentQuality: currentQuality,
+            candidateQuality: candidateQuality,
+            message: "custom TTML applied"
+        )
+    }
+
+    private func lyricsQuality(_ ttml: String) -> Int {
+        LyricsFormatSupport.isWordSyncedTTML(ttml) ? 2 : 1
+    }
+
+    private func automationLyricsQuality(_ track: Track) -> Int {
+        let ttml = track.ttmlLyricText
+            ?? track.loadTTMLLyricsIfNeeded()
+            ?? (track.ttmlLyricsFileName.flatMap { context.paths.trackAssetURL(for: track.id, fileName: $0) }).flatMap({ try? String(contentsOf: $0, encoding: .utf8) })
+        if let ttml, !ttml.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return lyricsQuality(ttml)
+        }
+        if track.ttmlLyricsFileName != nil { return 1 }
+        let plain = track.lyricsText
+            ?? track.loadLyricsIfNeeded()
+            ?? (track.lyricsFileName.flatMap { context.paths.trackAssetURL(for: track.id, fileName: $0) }).flatMap({ try? String(contentsOf: $0, encoding: .utf8) })
+        if let plain, !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return LyricsFormatSupport.looksLikeLRC(plain) ? 1 : 0
+        }
+        return 0
+    }
+
     /// Installs the session lifetime gate used by UI-owned imports. Keeping the
     /// closure on the view model avoids a second coordinator in the UI while
     /// preserving one owner for session quiescence.
@@ -388,6 +837,369 @@ final class LibrarySession: LibrarySessionLifecycle {
         _ work: @escaping @MainActor () async -> Void
     ) -> Bool {
         operationCoordinator.start(work, kind: .importFiles)
+    }
+
+    /// The same destination, duplicate, conversion and enrichment pipeline as
+    /// manual import, retained by this session rather than the IPC request.
+    @discardableResult
+    func startAutomationImport(
+        selection: LibraryInitialImportSelection,
+        playlistID: UUID? = nil,
+        retryEnrichment: Bool = false,
+        enrichmentPolicy: LibraryImportEnrichmentPolicy = .standard
+    ) -> LibraryOperationTaskDescriptor? {
+        guard !isClosed else { return nil }
+        let ownedSelection = selection.retainedCopy()
+        let importContext = LibraryImportContext(
+            libraryID: context.id,
+            sessionGeneration: context.generation,
+            destination: playlistID.map { .playlist($0) } ?? .libraryOnly,
+            origin: .automation,
+            enrichmentPolicy: enrichmentPolicy
+        )
+        let started = operationCoordinator.start({ [weak self] in
+            defer { ownedSelection.release() }
+            guard let self else { return }
+            let previousTrackCount = playlistID.flatMap { id in
+                self.libraryViewModel.playlists.first { $0.id == id }?.trackCount
+            } ?? 0
+            let outcome = await self.fileImportService.importSelectedURLs(
+                ownedSelection.urls, context: importContext
+            )
+            await self.libraryViewModel.publishImportResult(
+                outcome, playlistID: playlistID, previousTrackCount: previousTrackCount
+            )
+            var values: [String: AutomationJSONValue] = [
+                "libraryID": .string(self.context.id.uuidString),
+                "mode": .string(self.context.mode.rawValue),
+                "trackIDs": .array(outcome.trackIDs.map { .string($0.uuidString) }),
+                "importedTrackCount": .number(Double(outcome.importedTrackCount)),
+                "reusedTrackCount": .number(Double(outcome.reusedTrackCount)),
+                "playlistMembershipAdditions": .number(Double(outcome.playlistMembershipAdditions)),
+                "alreadyInPlaylistCount": .number(Double(outcome.alreadyInPlaylistCount)),
+                "pendingNCMCount": .number(Double(outcome.pendingNCMCount)),
+                "fileTrackMappings": .array(outcome.fileTrackMappings.map { mapping in
+                    .object([
+                        "filePath": .string(mapping.filePath),
+                        "trackID": .string(mapping.trackID.uuidString)
+                    ])
+                }),
+                "failures": .array(outcome.failures.map { .object([
+                    "path": .string($0.url.path), "message": .string($0.message)
+                ]) }),
+                "enrichmentPolicy": .string(enrichmentPolicy.rawValue),
+                "enrichmentCompleted": .boolean(enrichmentPolicy == .migration)
+            ]
+            if let playlistID { values["targetPlaylistID"] = .string(playlistID.uuidString) }
+            self.operationCoordinator.recordResult(.object(values))
+            self.operationCoordinator.recordProgress(
+                completedCount: outcome.affectedTrackCount,
+                totalCount: outcome.affectedTrackCount + outcome.failures.count,
+                phase: enrichmentPolicy == .migration ? "import complete" : "import enrichment"
+            )
+            for failure in outcome.failures.prefix(50) {
+                self.operationCoordinator.recordPartialFailure("\(failure.url.path): \(failure.message)")
+            }
+            if outcome.wasRejectedAsStale {
+                self.operationCoordinator.recordPartialFailure("Import rejected: library session changed")
+            }
+            guard enrichmentPolicy == .standard else {
+                values["enrichmentWarnings"] = .array([])
+                await self.libraryViewModel.syncVisibleStateFromRepositoryAfterImport()
+                self.operationCoordinator.recordResult(.object(values))
+                self.operationCoordinator.recordCheckpoint("Import complete without online enrichment")
+                return
+            }
+            let newTrackIDs = Set(outcome.newTrackIDs)
+            let affectedTrackIDs = Set(outcome.trackIDs)
+            let enrichmentTrackIDs: Set<UUID>
+            if retryEnrichment {
+                let reusedTrackIDs = affectedTrackIDs.subtracting(newTrackIDs)
+                let reusedTracks = self.libraryViewModel.allTracks.filter {
+                    reusedTrackIDs.contains($0.id)
+                }
+                await self.importEnrichmentService.enqueueTracks(reusedTracks)
+                enrichmentTrackIDs = affectedTrackIDs
+            } else {
+                enrichmentTrackIDs = newTrackIDs
+            }
+            do {
+                let warnings = try await self.importEnrichmentService.waitForEnrichment(
+                    for: enrichmentTrackIDs
+                )
+                await self.libraryViewModel.syncVisibleStateFromRepositoryAfterImport()
+                values["enrichmentCompleted"] = .boolean(true)
+                values["enrichmentWarnings"] = .array(warnings.map { .string($0) })
+                self.operationCoordinator.recordResult(.object(values))
+                self.operationCoordinator.recordCheckpoint("Import and enrichment complete")
+            } catch is CancellationError {
+                let cancelledEnrichmentIDs = retryEnrichment
+                    ? affectedTrackIDs
+                    : newTrackIDs
+                await self.fileImportService.cancelEnrichment(for: cancelledEnrichmentIDs)
+            } catch {
+                self.operationCoordinator.recordPartialFailure("Enrichment failed: \(error)")
+            }
+        }, kind: .importFiles, retrySpec: .libraryImport(
+            targetPlaylistID: playlistID,
+            enrichmentPolicy: enrichmentPolicy.rawValue
+        ))
+        guard started else {
+            ownedSelection.release()
+            return nil
+        }
+        return operationCoordinator.taskDescriptors.last
+    }
+
+    /// Exports a portable, path-free Library snapshot while retaining the
+    /// selected destination's security scope and this Library session until
+    /// every media asset has been copied or reported unavailable.
+    @discardableResult
+    func startAutomationLibraryBundleExport(
+        destinationDirectory: URL,
+        destinationScopeStarted: Bool,
+        revision: String,
+        tracks: [LibraryBundleExportTrackInput],
+        playlists: [LibraryBundleExportPlaylistInput]
+    ) -> LibraryOperationTaskDescriptor? {
+        guard !isClosed else {
+            if destinationScopeStarted { destinationDirectory.stopAccessingSecurityScopedResource() }
+            return nil
+        }
+        let started = operationCoordinator.start({ [weak self] in
+            defer {
+                if destinationScopeStarted {
+                    destinationDirectory.stopAccessingSecurityScopedResource()
+                }
+            }
+            guard let self else { return }
+            do {
+                let outcome = try await LibraryBundleExportService.export(
+                    libraryID: self.context.id,
+                    mode: self.context.mode.rawValue,
+                    revision: revision,
+                    destinationDirectory: destinationDirectory,
+                    tracks: tracks,
+                    playlists: playlists,
+                    progress: { [weak self] completed, total, phase in
+                        self?.operationCoordinator.recordProgress(
+                            completedCount: completed,
+                            totalCount: total,
+                            phase: phase
+                        )
+                    }
+                )
+                self.operationCoordinator.recordResult(.object([
+                    "libraryID": .string(self.context.id.uuidString),
+                    "outputDirectory": .string(outcome.outputDirectory.path),
+                    "trackCount": .number(Double(outcome.trackCount)),
+                    "playlistCount": .number(Double(outcome.playlistCount)),
+                    "copiedFileCount": .number(Double(outcome.copiedFileCount)),
+                    "copiedBytes": .number(Double(outcome.copiedBytes)),
+                    "failures": .array(outcome.failures.map(AutomationJSONValue.string))
+                ]))
+                for failure in outcome.failures.prefix(50) {
+                    self.operationCoordinator.recordPartialFailure(failure)
+                }
+                self.operationCoordinator.recordCheckpoint("Library bundle export complete")
+            } catch is CancellationError {
+                self.operationCoordinator.recordCheckpoint("Library bundle export cancelled")
+            } catch {
+                self.operationCoordinator.recordPartialFailure("Library bundle export failed")
+            }
+        }, kind: .libraryBundleExport)
+        guard started else {
+            if destinationScopeStarted { destinationDirectory.stopAccessingSecurityScopedResource() }
+            return nil
+        }
+        return operationCoordinator.taskDescriptors.last
+    }
+
+    /// Writes ID3 tags on staged MP3 copies, verifies each copy, then atomically
+    /// replaces the matching file. The App Job serializes work with other
+    /// Library operations and rechecks Track revisions immediately before each
+    /// file mutation.
+    @discardableResult
+    func startAutomationEmbeddedTagWrite(
+        requests: [MP3EmbeddedTagService.WriteRequest]
+    ) -> LibraryOperationTaskDescriptor? {
+        guard !isClosed else { return nil }
+        let started = operationCoordinator.start({ [weak self] in
+            guard let self else { return }
+            var updatedTrackIDs: [UUID] = []
+            var conflictedTrackIDs: [UUID] = []
+            var failedTrackIDs: [UUID] = []
+            for (index, request) in requests.enumerated() {
+                guard !Task.isCancelled else { break }
+                guard let track = self.libraryViewModel.allTracks.first(where: { $0.id == request.trackID }),
+                      self.libraryViewModel.automationTrackRevision(for: track) == request.expectedTrackRevision else {
+                    conflictedTrackIDs.append(request.trackID)
+                    self.operationCoordinator.recordPartialFailure(
+                        "\(request.trackID.uuidString): metadata changed before embedded-tag write",
+                        itemID: request.trackID
+                    )
+                    self.operationCoordinator.recordProgress(
+                        completedCount: index + 1,
+                        totalCount: requests.count,
+                        phase: "writing embedded tags"
+                    )
+                    continue
+                }
+                do {
+                    let writeTask = Task.detached(priority: .utility) {
+                        _ = try MP3EmbeddedTagService.patch(at: request.fileURL, fields: request.fields)
+                    }
+                    try await withTaskCancellationHandler {
+                        try await writeTask.value
+                    } onCancel: {
+                        writeTask.cancel()
+                    }
+                    updatedTrackIDs.append(request.trackID)
+                    self.operationCoordinator.recordCheckpoint("wrote embedded tags \(request.trackID.uuidString)")
+                } catch {
+                    failedTrackIDs.append(request.trackID)
+                    self.operationCoordinator.recordPartialFailure(
+                        "\(request.trackID.uuidString): \(MP3EmbeddedTagService.publicMessage(for: error))",
+                        itemID: request.trackID
+                    )
+                }
+                self.operationCoordinator.recordProgress(
+                    completedCount: index + 1,
+                    totalCount: requests.count,
+                    phase: "writing embedded tags"
+                )
+            }
+            let cancelled = Task.isCancelled
+            self.operationCoordinator.recordResult(.object([
+                "updatedTrackIDs": .array(updatedTrackIDs.map { .string($0.uuidString) }),
+                "conflictedTrackIDs": .array(conflictedTrackIDs.map { .string($0.uuidString) }),
+                "failedTrackIDs": .array(failedTrackIDs.map { .string($0.uuidString) }),
+                "cancelled": .boolean(cancelled),
+                "completedCount": .number(Double(updatedTrackIDs.count + conflictedTrackIDs.count + failedTrackIDs.count)),
+                "totalCount": .number(Double(requests.count))
+            ]))
+            self.operationCoordinator.recordCheckpoint(
+                cancelled ? "embedded-tag write cancelled" : "embedded-tag write complete"
+            )
+        }, kind: .embeddedTagWrite)
+        guard started else { return nil }
+        return operationCoordinator.taskDescriptors.last
+    }
+
+    /// Starts an automation-owned referenced Source import without keeping the
+    /// IPC request blocked on file scanning, duplicate resolution, enrichment
+    /// or index writes. The picker selection is retained until the operation
+    /// reaches a terminal state, while the caller receives the Job descriptor
+    /// immediately after authorization succeeds.
+    @discardableResult
+    func startAutomationInitialImport(
+        selection: LibraryInitialImportSelection,
+        playlistID: UUID? = nil
+    ) -> LibraryOperationTaskDescriptor? {
+        guard !isClosed, context.mode == .referenced else { return nil }
+        let ownedSelection = selection.retainedCopy()
+        let started = operationCoordinator.start({ [weak self] in
+            defer { ownedSelection.release() }
+            guard let self else { return }
+
+            let result: LibraryInitialImportResult
+            do {
+                result = try await self.importInitialSelection(ownedSelection)
+            } catch LibraryInitialImportError.initialImportFailed(let partialResult) {
+                await self.finishAutomationInitialImport(
+                    partialResult,
+                    playlistID: playlistID
+                )
+                return
+            } catch {
+                self.operationCoordinator.recordPartialFailure(
+                    "Source import failed: \(String(describing: error))"
+                )
+                return
+            }
+
+            await self.finishAutomationInitialImport(
+                result,
+                playlistID: playlistID
+            )
+        }, kind: .importFiles)
+        guard started else {
+            ownedSelection.release()
+            return nil
+        }
+        return operationCoordinator.taskDescriptors.last
+    }
+
+    private func finishAutomationInitialImport(
+        _ result: LibraryInitialImportResult,
+        playlistID: UUID?
+    ) async {
+        operationCoordinator.recordProgress(
+            completedCount: result.imported,
+            totalCount: max(result.planned, result.requested),
+            phase: "source import"
+        )
+        for failure in result.failures.prefix(50) {
+            operationCoordinator.recordPartialFailure(
+                "\(failure.url.path): \(failure.message)"
+            )
+        }
+        if result.failures.count > 50 {
+            operationCoordinator.recordPartialFailure(
+                "\(result.failures.count - 50) additional Source import failures"
+            )
+        }
+
+        guard let playlistID, !result.sourceIDs.isEmpty,
+              let referencedSourceReconciler else { return }
+        do {
+            try await referencedSourceReconciler.bindSourcesToPlaylist(
+                Set(result.sourceIDs),
+                playlistID: playlistID,
+                relativePath: nil
+            )
+            await libraryViewModel.reloadLibrary()
+            operationCoordinator.recordCheckpoint("Source Playlist binding complete")
+        } catch {
+            operationCoordinator.recordPartialFailure(
+                "Source Playlist binding failed: \(String(describing: error))"
+            )
+        }
+    }
+
+    /// Starts an automation-owned Source scan as a Job. Source scans can
+    /// touch every file in a referenced directory, so they must not inherit
+    /// the request lifetime of CLI/MCP callers.
+    @discardableResult
+    func startAutomationSourceRefresh(
+        sourceID: UUID
+    ) -> LibraryOperationTaskDescriptor? {
+        guard !isClosed, context.mode == .referenced else { return nil }
+        let started = operationCoordinator.start({ [weak self] in
+            guard let self else { return }
+            do {
+                let issues = try await self.refreshReferencedSource(sourceID)
+                self.operationCoordinator.recordProgress(
+                    completedCount: 1,
+                    totalCount: 1,
+                    phase: "source scan"
+                )
+                for issue in issues {
+                    self.operationCoordinator.recordPartialFailure(
+                        "\(sourceID.uuidString): \(String(describing: issue))"
+                    )
+                }
+                self.operationCoordinator.recordCheckpoint("Source scan complete")
+            } catch is CancellationError {
+                return
+            } catch {
+                self.operationCoordinator.recordPartialFailure(
+                    "\(sourceID.uuidString): \(String(describing: error))"
+                )
+            }
+        }, kind: .sourceScan, retrySpec: .sourceRefresh(sourceID: sourceID))
+        guard started else { return nil }
+        return operationCoordinator.taskDescriptors.last
     }
 
     private func createAutomaticPlaylists(
@@ -539,14 +1351,14 @@ final class LibrarySession: LibrarySessionLifecycle {
             try await startReferencedSourceMonitor(
                 libraryChangeMonitor,
                 reconciler: referencedSourceReconciler,
-                roots: referencedSourceReconciler.sourceRoots
+                roots: try await referencedSourceReconciler.monitoredSourceRoots()
             )
             return issues
         } catch {
             try? await startReferencedSourceMonitor(
                 libraryChangeMonitor,
                 reconciler: referencedSourceReconciler,
-                roots: referencedSourceReconciler.sourceRoots
+                roots: try await referencedSourceReconciler.monitoredSourceRoots()
             )
             throw error
         }
@@ -556,14 +1368,14 @@ final class LibrarySession: LibrarySessionLifecycle {
         guard !isClosed,
               let referencedSourceReconciler,
               let libraryChangeMonitor else { return [] }
-        let originalRoots = referencedSourceReconciler.sourceRoots
+        let originalRoots = try await referencedSourceReconciler.monitoredSourceRoots()
         await libraryChangeMonitor.stopAndWait()
         do {
             let issues = try await referencedSourceReconciler.refreshSource(sourceID)
             try await startReferencedSourceMonitor(
                 libraryChangeMonitor,
                 reconciler: referencedSourceReconciler,
-                roots: referencedSourceReconciler.sourceRoots
+                roots: try await referencedSourceReconciler.monitoredSourceRoots()
             )
             await libraryViewModel.reloadLibrary()
             return issues
@@ -585,7 +1397,7 @@ final class LibrarySession: LibrarySessionLifecycle {
         guard !isClosed,
               let referencedSourceReconciler,
               let libraryChangeMonitor else { return }
-        let originalRoots = referencedSourceReconciler.sourceRoots
+        let originalRoots = try await referencedSourceReconciler.monitoredSourceRoots()
         await libraryChangeMonitor.stopAndWait()
         do {
             try await referencedSourceReconciler.setExcludedRelativePath(
@@ -596,10 +1408,48 @@ final class LibrarySession: LibrarySessionLifecycle {
             try await startReferencedSourceMonitor(
                 libraryChangeMonitor,
                 reconciler: referencedSourceReconciler,
-                roots: referencedSourceReconciler.sourceRoots
+                roots: try await referencedSourceReconciler.monitoredSourceRoots()
             )
             await libraryViewModel.reloadLibrary()
         } catch {
+            try? await startReferencedSourceMonitor(
+                libraryChangeMonitor,
+                reconciler: referencedSourceReconciler,
+                roots: originalRoots
+            )
+            throw error
+        }
+    }
+
+    /// Changes whether filesystem events automatically reconcile one Source.
+    /// Manual refresh remains available for `.off`; changing this policy only
+    /// restarts the monitor and does not remove Track authority.
+    func setReferencedSourceMonitorPolicy(
+        sourceID: UUID,
+        policy: ReferencedSourceMonitorPolicy
+    ) async throws {
+        guard !isClosed,
+              let referencedSourceReconciler,
+              let libraryChangeMonitor,
+              let referencedSourceStore else { return }
+        let originalRoots = try await referencedSourceReconciler.monitoredSourceRoots()
+        let originalPolicy = try await referencedSourceStore.load(id: sourceID).monitorPolicy
+        await libraryChangeMonitor.stopAndWait()
+        do {
+            _ = try await referencedSourceStore.updateMonitorPolicy(
+                sourceID: sourceID,
+                policy: policy
+            )
+            try await startReferencedSourceMonitor(
+                libraryChangeMonitor,
+                reconciler: referencedSourceReconciler,
+                roots: try await referencedSourceReconciler.monitoredSourceRoots()
+            )
+        } catch {
+            _ = try? await referencedSourceStore.updateMonitorPolicy(
+                sourceID: sourceID,
+                policy: originalPolicy
+            )
             try? await startReferencedSourceMonitor(
                 libraryChangeMonitor,
                 reconciler: referencedSourceReconciler,
@@ -613,14 +1463,14 @@ final class LibrarySession: LibrarySessionLifecycle {
         guard !isClosed,
               let referencedSourceReconciler,
               let libraryChangeMonitor else { return }
-        let originalRoots = referencedSourceReconciler.sourceRoots
+        let originalRoots = try await referencedSourceReconciler.monitoredSourceRoots()
         await libraryChangeMonitor.stopAndWait()
         do {
             try await referencedSourceReconciler.removeSource(sourceID)
             try await startReferencedSourceMonitor(
                 libraryChangeMonitor,
                 reconciler: referencedSourceReconciler,
-                roots: referencedSourceReconciler.sourceRoots
+                roots: try await referencedSourceReconciler.monitoredSourceRoots()
             )
         } catch {
             try? await startReferencedSourceMonitor(
@@ -656,7 +1506,7 @@ final class LibrarySession: LibrarySessionLifecycle {
               let libraryChangeMonitor else {
             throw LibrarySessionFactoryError.missingReferencedSourceServices
         }
-        let originalRoots = referencedSourceReconciler.sourceRoots
+        let originalRoots = try await referencedSourceReconciler.monitoredSourceRoots()
         await libraryChangeMonitor.stopAndWait()
         do {
             try await sourceReconnectService.reconnectSource(
@@ -667,13 +1517,13 @@ final class LibrarySession: LibrarySessionLifecycle {
             try await startReferencedSourceMonitor(
                 libraryChangeMonitor,
                 reconciler: referencedSourceReconciler,
-                roots: referencedSourceReconciler.sourceRoots
+                roots: try await referencedSourceReconciler.monitoredSourceRoots()
             )
         } catch {
             try? await startReferencedSourceMonitor(
                 libraryChangeMonitor,
                 reconciler: referencedSourceReconciler,
-                roots: sourceReconnectServiceRoots(
+                roots: try await sourceReconnectServiceRoots(
                     fallback: originalRoots,
                     reconciler: referencedSourceReconciler
                 )
@@ -718,9 +1568,12 @@ final class LibrarySession: LibrarySessionLifecycle {
         let libraryRootPath = context.rootURL.standardizedFileURL.path
         var monitoredRoots = roots
         monitoredRoots[libraryID] = context.rootURL
+        var watchPathsBySource = roots.mapValues { [$0] }
+        watchPathsBySource[libraryID] = libraryMonitorWatchPaths()
 
         try await monitor.start(
             sourceRoots: monitoredRoots,
+            watchPathsBySource: watchPathsBySource,
             eventFilter: { event in
                 let eventPath = URL(fileURLWithPath: event.path).standardizedFileURL.path
                 guard eventPath == libraryRootPath || eventPath.hasPrefix(libraryRootPath + "/") else {
@@ -762,6 +1615,7 @@ final class LibrarySession: LibrarySessionLifecycle {
         let filter = ManagedLibraryFileEventFilter(paths: context.paths)
         try await monitor.start(
             sourceRoots: [libraryID: context.rootURL],
+            watchPathsBySource: [libraryID: libraryMonitorWatchPaths()],
             eventFilter: { filter.shouldProcess($0) },
             initiallyDirty: false
         ) { [weak libraryViewModel] libraryIDs, _ in
@@ -770,11 +1624,25 @@ final class LibrarySession: LibrarySessionLifecycle {
         }
     }
 
+    private func libraryMonitorWatchPaths() -> [URL] {
+        let paths = [
+            context.paths.tracksRootURL,
+            context.paths.playlistsRootURL,
+            context.paths.artistsRootURL,
+            context.paths.albumsRootURL,
+        ]
+        let fileManager = FileManager.default
+        guard paths.allSatisfy({ fileManager.fileExists(atPath: $0.path) }) else {
+            return [context.rootURL]
+        }
+        return paths
+    }
+
     private func sourceReconnectServiceRoots(
         fallback: [UUID: URL],
         reconciler: ReferencedSourceReconciler
-    ) -> [UUID: URL] {
-        let current = reconciler.sourceRoots
+    ) async throws -> [UUID: URL] {
+        let current = try await reconciler.monitoredSourceRoots()
         return current.isEmpty ? fallback : current
     }
 

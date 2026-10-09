@@ -4,8 +4,14 @@
 
 ## [Unreleased]
 
+## [1.2.0]
+
+- 上游基线升级到 kmgccc_player 2.3.4 之后的 `main`，重新迁移并验证集成（含一处 git 看不出的语义冲突）。
 - QQ Music 运行组件改为 lock + Release + SHA-256 物化，不再把可执行文件提交到 Git。
-- replayable patch 开始覆盖 bootstrap 与 bundle 检查，避免 main 与补丁构建链漂移。
+- 设置页的「组件」与「Aria2Next 下载引擎」各自带「更新组件」按钮，指向该组件自己的 Release 页面。
+- replayable patch 覆盖 bootstrap 与 bundle 检查，避免 main 与补丁构建链漂移。
+
+详见 [release-notes/v1.2.0.md](release-notes/v1.2.0.md)。
 
 ## [1.1.0]
 

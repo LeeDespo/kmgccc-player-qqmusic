@@ -14,6 +14,7 @@
 //
 
 import AppKit
+import MotionKit
 import SwiftUI
 
 // MARK: - Deletion Request
@@ -185,7 +186,7 @@ struct AllAlbumsView: View {
                     )
                 }
             )
-            .padding(.horizontal, 24)
+            .padding(.horizontal, Constants.Layout.listHorizontalPadding)
             .padding(.top, 16)
         }
     }
@@ -324,7 +325,11 @@ private struct AlbumListRow: View {
             Spacer(minLength: 8)
             trailingActions
         }
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
+        .padding(
+            .trailing,
+            max(0, 12 - (Constants.Layout.TrackRow.trailingMenuHitSize - 13) / 2)
+        )
         .padding(.vertical, 8)
         .frame(minHeight: 76)
         .background(
@@ -368,10 +373,12 @@ private struct AlbumListRow: View {
                     cornerRadius: cornerRadius,
                     clipShape: .continuous,
                     iconSize: 22,
-                    iconOpacity: 0.4
+                    iconOpacity: 0.0,
+                    themeColor: Color.primary.opacity(0.04)
                 )
             }
         }
+        .motionAnimation(.microInteraction, value: image != nil)
         .frame(width: artworkSize, height: artworkSize)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .shadow(
@@ -423,12 +430,18 @@ private struct AlbumListRow: View {
             Image(systemName: "ellipsis")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(subtitleColor)
-                .frame(width: 24, height: 24)
+                .frame(
+                    width: Constants.Layout.TrackRow.trailingMenuHitSize,
+                    height: Constants.Layout.TrackRow.trailingMenuHitSize
+                )
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .frame(width: 24, height: 24)
+        .frame(
+            width: Constants.Layout.TrackRow.trailingMenuHitSize,
+            height: Constants.Layout.TrackRow.trailingMenuHitSize
+        )
         .opacity(isHovering ? 1 : 0.4)
         .disabled(!enableSecondaryInteractions)
         .allowsHitTesting(enableSecondaryInteractions)
@@ -443,24 +456,62 @@ private struct AlbumListRow: View {
     }
 
     private func loadArtwork() async {
-        var data = album.artworkData
-        if data == nil || data!.isEmpty {
-            let key = album.canonicalKey
-            if let firstTrack = libraryVM.allTracks.first(where: { $0.albumGroupKey == key }) {
-                data = await firstTrack.loadArtworkDataOffMainIfNeeded()
-            }
+        let targetSize = CGSize(width: 132, height: 132)
+        if let data = album.artworkData, !data.isEmpty {
+            let checksum = ArtworkLoader.checksum(for: data)
+            let key = ArtworkLoader.cacheKey(
+                trackID: album.id,
+                checksum: checksum,
+                targetPixelSize: targetSize
+            )
+            image = await ArtworkLoader.loadImage(
+                artworkData: data,
+                cacheKey: key,
+                targetPixelSize: targetSize,
+                derivativeStore: cacheServices.artworkDerivativeStore
+            )
+            return
         }
-        guard let data, !data.isEmpty else { return }
+        if let artworkFileURL = album.artworkFileURL,
+           let loaded = await ArtworkLoader.loadImage(
+               fileURL: artworkFileURL,
+               cacheKey: ArtworkLoader.fileCacheKey(
+                   fileURL: artworkFileURL,
+                   targetPixelSize: targetSize
+               ),
+               targetPixelSize: targetSize,
+               derivativeStore: cacheServices.artworkDerivativeStore
+           )
+        {
+            image = loaded
+            return
+        }
+        let key = album.canonicalKey
+        guard let firstTrack = libraryVM.allTracks.first(where: { $0.albumGroupKey == key }) else { return }
+        if let artworkFileURL = firstTrack.existingArtworkURL() {
+            let cacheKey = ArtworkLoader.fileCacheKey(
+                fileURL: artworkFileURL,
+                targetPixelSize: targetSize
+            )
+            image = await ArtworkLoader.loadImage(
+                fileURL: artworkFileURL,
+                cacheKey: cacheKey,
+                targetPixelSize: targetSize,
+                derivativeStore: cacheServices.artworkDerivativeStore
+            )
+            return
+        }
+        guard let data = await firstTrack.loadArtworkDataOffMainIfNeeded(), !data.isEmpty else { return }
         let checksum = ArtworkLoader.checksum(for: data)
-        let key = ArtworkLoader.cacheKey(
+        let cacheKey = ArtworkLoader.cacheKey(
             trackID: album.id,
             checksum: checksum,
-            targetPixelSize: CGSize(width: 132, height: 132)
+            targetPixelSize: targetSize
         )
         image = await ArtworkLoader.loadImage(
             artworkData: data,
-            cacheKey: key,
-            targetPixelSize: CGSize(width: 132, height: 132),
+            cacheKey: cacheKey,
+            targetPixelSize: targetSize,
             derivativeStore: cacheServices.artworkDerivativeStore
         )
     }

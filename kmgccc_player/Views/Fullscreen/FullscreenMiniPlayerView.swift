@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import MotionKit
 import SwiftUI
 
 struct FullscreenControlsGlassStyle {
@@ -35,6 +36,11 @@ nonisolated struct FullscreenMiniPlayerLayoutMetrics: Equatable, Sendable {
 
     var maximumPlaybackModeWidth: CGFloat {
         max(playbackModeExpandedWidth, externalPlaybackModeExpandedWidth)
+    }
+
+    var minimumExpandedContainerWidth: CGFloat {
+        trackInfoWidth + controlsWidth + maximumPlaybackModeWidth + minimumProgressAreaWidth
+            + sectionSpacing * 3 + horizontalPadding * 2
     }
 
     func availableProgressAreaWidth(
@@ -82,6 +88,9 @@ struct FullscreenMiniPlayerView: View {
     @Environment(LibraryCacheServices.self) private var cacheServices
     @Environment(AppSettings.self) private var settings
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.motionTokens) private var motionTokens
+    @Environment(\.motionPolicy) private var configuredMotionPolicy
     @EnvironmentObject private var themeStore: ThemeStore
 
     @State private var isDragging = false
@@ -124,8 +133,18 @@ struct FullscreenMiniPlayerView: View {
     private var progressAreaHPadding: CGFloat { 8 * scale }
     private var progressTimeSpacing: CGFloat { 10 * scale }
     private var progressYOffset: CGFloat { 13 * scale }
-    private var layoutAnimation: Animation {
-        .spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.08)
+    private var layoutAnimation: Animation? {
+        let policy = configuredMotionPolicy.resolving(
+            accessibilityReduceMotion: reduceMotion
+        )
+        return policy.animation(for: motionTokens[.layout])
+    }
+
+    private var contentReplacementAnimation: Animation? {
+        let policy = configuredMotionPolicy.resolving(
+            accessibilityReduceMotion: reduceMotion
+        )
+        return policy.animation(for: motionTokens[.contentReplacement])
     }
 
     var body: some View {
@@ -244,52 +263,28 @@ struct FullscreenMiniPlayerView: View {
 
     private var controlsView: some View {
         let presentation = playbackCoordinator.stablePresentation
-        let isEnabled = presentation.isControlEnabled
-        let isTrackControlEnabled = isEnabled && presentation.hasTrack
-        let metrics = AnimatedMediaControlMetrics.fullscreenMiniPlayer(scale: scale)
-        return HStack(spacing: controlsHSpacing) {
-            // Previous
-            AnimatedSkipButton(
-                direction: .previous,
-                enabled: isTrackControlEnabled,
-                metrics: metrics,
-                color: controlPrimaryColor,
-                disabledColor: controlDisabledColor,
-                blendMode: controlBlendMode,
-                action: {
-                    onInteraction()
-                    playbackCoordinator.previous()
-                }
-            )
-
-            // Play/Pause
-            AnimatedPlayPauseButton(
-                isPlaying: presentation.isPlaying,
-                enabled: isEnabled,
-                metrics: metrics,
-                color: controlPrimaryColor,
-                disabledColor: controlDisabledColor,
-                blendMode: controlBlendMode,
-                action: {
-                    onInteraction()
-                    playbackCoordinator.playPause()
-                }
-            )
-
-            // Next
-            AnimatedSkipButton(
-                direction: .next,
-                enabled: isTrackControlEnabled,
-                metrics: metrics,
-                color: controlPrimaryColor,
-                disabledColor: controlDisabledColor,
-                blendMode: controlBlendMode,
-                action: {
-                    onInteraction()
-                    playbackCoordinator.next()
-                }
-            )
-        }
+        return PlaybackTransportControls(
+            isPlaying: presentation.isPlaying,
+            isEnabled: presentation.isControlEnabled,
+            hasTrack: presentation.hasTrack,
+            metrics: .fullscreenMiniPlayer(scale: scale),
+            color: controlPrimaryColor,
+            disabledColor: controlDisabledColor,
+            blendMode: controlBlendMode,
+            spacing: controlsHSpacing,
+            previous: {
+                onInteraction()
+                playbackCoordinator.previous()
+            },
+            playPause: {
+                onInteraction()
+                playbackCoordinator.playPause()
+            },
+            next: {
+                onInteraction()
+                playbackCoordinator.next()
+            }
+        )
     }
 
     private var playbackModeView: some View {
@@ -341,7 +336,7 @@ struct FullscreenMiniPlayerView: View {
             value: .bounds
         ) { $0 }
         .contentShape(Capsule())
-        .animation(layoutAnimation, value: isPlaybackModeExpanded)
+        .motionAnimation(.layout, value: isPlaybackModeExpanded)
         .onHover { hovering in
             guard isEnabled else {
                 if isPlaybackModeExpanded {
@@ -370,7 +365,7 @@ struct FullscreenMiniPlayerView: View {
             enforceBrightForeground: resolvedForegroundProfile.enforceBrightProgressForeground,
             spectrumArtworkColors: spectrumArtworkColors,
             spectrumUsesDarkForeground: resolvedForegroundProfile.spectrumUsesDarkForeground,
-            ledToneVariant: settings.fullscreen.skinID == AppleStyleSkin.skinID
+            ledToneVariant: SkinRegistry.fullscreenSkin(for: settings.fullscreen.skinID).descriptor.presentation.controlForeground == .fixedLight
                 ? .appleStyleBright
                 : .miniPlayer,
             progress: progressDisplayTime(for: presentation),
@@ -576,7 +571,7 @@ struct FullscreenMiniPlayerView: View {
             palette: themeStore.semanticPalette,
             localArtworkPolarity: nil,
             hasArtworkThemeColor: themeStore.hasArtworkThemeColor,
-            skinID: settings.fullscreen.skinID,
+            controlForeground: SkinRegistry.fullscreenSkin(for: settings.fullscreen.skinID).descriptor.presentation.controlForeground,
             colorScheme: colorScheme,
             materialStyle: glassStyle.materialStyle,
             fullscreenArtBackgroundEnabled: settings.fullscreenArtBackgroundEnabled
@@ -690,6 +685,9 @@ private struct FullscreenMiniPlayerLeftSection: View, Equatable {
     let onInteraction: () -> Void
 
     @Environment(PlaybackCoordinator.self) private var playbackCoordinator
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.motionTokens) private var motionTokens
+    @Environment(\.motionPolicy) private var configuredMotionPolicy
 
     // Layout derived from scale (mirrors FullscreenMiniPlayerView formulas)
     private var artworkSize: CGFloat { 60 * 0.73 * scale }
@@ -698,6 +696,12 @@ private struct FullscreenMiniPlayerLeftSection: View, Equatable {
     private var trackInfoVSpacing: CGFloat { 6 * scale }
     private var titleFontSize: CGFloat { 15 * scale }
     private var artistFontSize: CGFloat { 12.5 * scale }
+    private var contentReplacementAnimation: Animation? {
+        let policy = configuredMotionPolicy.resolving(
+            accessibilityReduceMotion: reduceMotion
+        )
+        return policy.animation(for: motionTokens[.contentReplacement])
+    }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.hasTrack == rhs.hasTrack
@@ -758,20 +762,21 @@ private struct FullscreenMiniPlayerLeftSection: View, Equatable {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.trailing, isRefetchingLyrics ? 20 * scale : 0)
 
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(activityIndicatorColor)
-                    .foregroundStyle(activityIndicatorColor)
-                    .frame(width: 12, height: 12)
-                    .scaleEffect(scale)
-                    .opacity(isRefetchingLyrics ? 1 : 0)
-                    .allowsHitTesting(false)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                if isRefetchingLyrics {
+                    ProgressView()
+                        .controlSize(.small)
+                        .tint(activityIndicatorColor)
+                        .foregroundStyle(activityIndicatorColor)
+                        .scaleEffect(scale)
+                        .allowsHitTesting(false)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                        .transition(.opacity)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .animation(.easeInOut(duration: 0.15), value: isRefetchingLyrics)
+        .motionAnimation(.contentReplacement, value: isRefetchingLyrics)
         .contextMenu {
             // Closure is lazy — evaluated only when NSMenu appears, not during body computation.
             nowPlayingInfoContextMenu

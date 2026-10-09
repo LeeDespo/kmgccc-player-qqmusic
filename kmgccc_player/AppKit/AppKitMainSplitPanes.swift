@@ -7,16 +7,12 @@
 //
 
 import AppKit
+import MotionKit
 import SwiftData
 import SwiftUI
 
 struct AppKitMainSidebarPaneRoot: View {
     @ObservedObject var appSession: AppSessionHost
-    // Dedicated instances for views presented from the sidebar (e.g. the
-    // batch track editor opened from the enrichment completion notice);
-    // the content pane keeps its own, mirroring HomeFullWindowRoot.
-    @State private var coverDownloadService = CoverDownloadService()
-    @State private var netEaseCoverService = NetEaseCoverService()
 
     var body: some View {
         if let libraryVM = appSession.libraryVM,
@@ -28,6 +24,7 @@ struct AppKitMainSidebarPaneRoot: View {
            let cacheServices = appSession.cacheServices,
             let skinManager = appSession.skinManager {
             SidebarView()
+                .motionEnvironment()
                 .environment(AppSettings.shared)
                 .environment(appSession.uiState)
                 .environment(libraryVM)
@@ -39,8 +36,8 @@ struct AppKitMainSidebarPaneRoot: View {
 
                .environment(cacheServices)
                .environment(skinManager)
-               .environment(coverDownloadService)
-               .environment(netEaseCoverService)
+               .environment(cacheServices.coverDownloadService)
+               .environment(cacheServices.netEaseCoverService)
                .environmentObject(appSession)
                .environmentObject(ThemeStore.shared)
                 .environment(\.libraryPresentedAccentColor, ThemeStore.shared.accentColor)
@@ -161,8 +158,6 @@ struct AppKitMainContentPaneRoot: View {
     @StateObject private var themeStore = ThemeStore.shared
     @ObservedObject var artBackgroundController: BKArtBackgroundController
     @State private var settings = AppSettings.shared
-    @State private var coverDownloadService = CoverDownloadService()
-    @State private var netEaseCoverService = NetEaseCoverService()
     @State private var hasPresentedNowPlayingArtBackground = false
     @Environment(\.colorScheme) private var swiftUIColorScheme
 
@@ -210,6 +205,40 @@ struct AppKitMainContentPaneRoot: View {
         uiState.contentMode == .qqMusicOnline
     }
 
+    private func pageDestinationIdentity(
+        uiState: UIStateViewModel,
+        libraryVM: LibraryViewModel,
+        homeSearchActive: Bool
+    ) -> String {
+        switch uiState.contentMode {
+        case .qqMusicOnline:
+            // The online surface is its own full-window host, like Home: entering
+            // or leaving it replaces the center pane instead of reusing it.
+            return "qqmusic-online"
+        case .playbackHistory:
+            return "playback-history"
+        case .nowPlaying:
+            return "now-playing"
+        case .library:
+            switch libraryVM.currentSelection {
+            case .home:
+                return homeSearchActive ? "home-search" : "home"
+            case .allPlaylists:
+                return "all-playlists"
+            case .allAlbums:
+                return "all-albums"
+            case .allArtists:
+                return "all-artists"
+            case .folders:
+                return "folders"
+            case .allSongs, .playlist, .artist, .album:
+                // These pages share one stateful detail host. Selection changes
+                // are handled by PlaylistDetailView without rebuilding its owner.
+                return "library-detail"
+            }
+        }
+    }
+
     private func contentView(
         uiState: UIStateViewModel,
         libraryVM: LibraryViewModel,
@@ -225,6 +254,19 @@ struct AppKitMainContentPaneRoot: View {
         let qqMusicMode = isQQMusicMode(uiState: uiState)
         let homeSearchActive = homeMode
             && !pageController.searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let destinationIdentity = pageDestinationIdentity(
+            uiState: uiState,
+            libraryVM: libraryVM,
+            homeSearchActive: homeSearchActive
+        )
+        let selectionIdentity = libraryVM.currentSelection.selectionIdentity(in: libraryVM)
+        let detailReady = pageController.page?.selection == libraryVM.currentSelection
+            && !pageController.isSelectionTransitioning
+        let isDetail = destinationIdentity == "library-detail" || homeSearchActive
+        let readiness = isDetail
+            ? (detailReady || libraryVM.loadingPhase.isFailed)
+            : (uiState.contentMode != .playbackHistory || !appSession.playbackHistoryViewModel.isLoading)
+        let presentationRevision = "\(destinationIdentity)-\(selectionIdentity)"
 
         let base = ZStack(alignment: .bottomLeading) {
             // Transparent center-rect probe. Reports the center pane's
@@ -235,17 +277,11 @@ struct AppKitMainContentPaneRoot: View {
             Color.clear
                 .allowsHitTesting(false)
 
-            Group {
-              if fullscreenWindowManager.isWindowedFullscreenActive {
-                // Embedded fullscreen presents an opaque, full-pane overlay
-                // (see `FullscreenPlayerView` zIndex(1) below). The heavy detail
-                // content beneath it is fully occluded, so tear it down while
-                // embedded fullscreen is active: it saves the cost of keeping
-                // `PlaylistDetailView` / `NowPlayingHostView` live, and removes
-                // the layer that showed through during cover-switch transients.
-                // It is re-rendered automatically when embedded fullscreen exits.
-                Color.clear
-              } else {
+            PagePresentation(
+                revision: presentationRevision,
+                isPresented: (!homeMode || homeSearchActive) && readiness
+            ) {
+              Group {
                 switch uiState.contentMode {
                 case .library:
                     switch libraryVM.currentSelection {
@@ -284,7 +320,6 @@ struct AppKitMainContentPaneRoot: View {
                     case .allSongs, .playlist, .artist, .album:
                         PlaylistDetailView(pageController: pageController)
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                            .id("appkit-main-library")
                     }
                 case .playbackHistory:
                     PlaybackHistoryView()
@@ -316,9 +351,13 @@ struct AppKitMainContentPaneRoot: View {
                         .id("appkit-main-qqmusic-online")
                 }
               }
+            } placeholder: {
+                if destinationIdentity == "library-detail" || homeSearchActive {
+                    PlaylistDetailSkeletonView(showHeader: libraryVM.currentSelection != .allSongs && !homeSearchActive)
+                }
             }
 
-            if !FullscreenWindowManager.shared.isWindowedFullscreenActive {
+            if !uiState.usesSkinScene {
                 GeometryReader { proxy in
                     MiniPlayerView()
                         .environment(appSession.qqMusicOnlineCoordinator)
@@ -333,15 +372,18 @@ struct AppKitMainContentPaneRoot: View {
                         .padding(.bottom, 12)
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                 }
-                .allowsHitTesting(true)
+                .opacity(fullscreenWindowManager.isWindowedFullscreenActive ? 0 : 1)
+                .allowsHitTesting(!fullscreenWindowManager.isWindowedFullscreenActive)
+                .accessibilityHidden(fullscreenWindowManager.isWindowedFullscreenActive)
             }
 
-            if fullscreenWindowManager.isWindowedFullscreenActive {
-                FullscreenPlayerView(hostContext: .embeddedWindow) {
-                    fullscreenWindowManager.closeFullscreenPlayerInWindow()
+            if fullscreenWindowManager.isEmbeddedFullscreenSurfaceMounted {
+                EmbeddedFullscreenSurface {
+                    FullscreenPlayerView(hostContext: .embeddedWindow) {
+                        fullscreenWindowManager.closeFullscreenPlayerInWindow()
+                    }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .transition(.opacity)
                 .zIndex(1)
                 .environment(AppSettings.shared)
                 .environment(appSession.uiState)
@@ -354,8 +396,8 @@ struct AppKitMainContentPaneRoot: View {
 
                 .environment(cacheServices)
                 .environment(skinManager)
-                .environment(coverDownloadService)
-                .environment(netEaseCoverService)
+                .environment(cacheServices.coverDownloadService)
+                .environment(cacheServices.netEaseCoverService)
                 .environmentObject(themeStore)
                 .modelContainer(appSession.sharedModelContainer)
             }
@@ -430,9 +472,11 @@ struct AppKitMainContentPaneRoot: View {
             .onChange(of: uiState.contentMode) { (_: ContentMode, newValue: ContentMode) in
                 handleContentModeChange(newValue, playbackCoordinator: playbackCoordinator, uiState: uiState)
             }
-            .onChange(of: playerVM.currentTrack?.id) { (_: UUID?, _: UUID?) in
+            .onChange(of: playerVM.currentTrack?.id) { (_: UUID?, newTrackID: UUID?) in
                 if shouldTriggerArtBackgroundTransition(playbackCoordinator: playbackCoordinator, uiState: uiState) {
-                    artBackgroundController.triggerTransition()
+                    artBackgroundController.triggerTransition(
+                        for: playbackCoordinator.stablePresentation.source == .local ? newTrackID : nil
+                    )
                 }
             }
             .onChange(of: settings.nowPlayingArtBackgroundEnabled) { (_: Bool, enabled: Bool) in
@@ -462,13 +506,14 @@ struct AppKitMainContentPaneRoot: View {
 
             .environment(cacheServices)
             .environment(skinManager)
-            .environment(coverDownloadService)
-            .environment(netEaseCoverService)
+            .environment(cacheServices.coverDownloadService)
+            .environment(cacheServices.netEaseCoverService)
             .environmentObject(themeStore)
             .environment(\.libraryPresentedAccentColor, themeStore.accentColor)
             .modelContainer(appSession.sharedModelContainer)
             .tint(themeStore.accentColor)
             .accentColor(themeStore.accentColor)
+            .motionEnvironment()
             .sheet(item: crashPromptBinding) { _ in
                 CrashReportPromptSheet(
                     onCancel: {
@@ -511,9 +556,10 @@ struct AppKitMainContentPaneRoot: View {
         uiState: UIStateViewModel
     ) -> Bool {
         uiState.contentMode == .nowPlaying
+            && !uiState.usesSkinScene
             && settings.nowPlayingArtBackgroundEnabled
-            && settings.selectedNowPlayingSkinID != AppleStyleSkin.skinID
-            && playbackCoordinator.presentation.hasTrack
+            && SkinRegistry.descriptor(for: settings.selectedNowPlayingSkinID).presentation.windowBackgroundPlacement != .parent
+            && playbackCoordinator.stablePresentation.hasTrack
             && !fullscreenWindowManager.usesFullscreenPlayerUI
     }
 
@@ -525,7 +571,7 @@ struct AppKitMainContentPaneRoot: View {
     }
 
     private func artworkBackgroundTrackID(playbackCoordinator: PlaybackCoordinator) -> UUID? {
-        let presentation = playbackCoordinator.presentation
+        let presentation = playbackCoordinator.stablePresentation
         if let artworkTrackID = presentation.artworkDisplayTrackID {
             return artworkTrackID
         }
@@ -571,9 +617,10 @@ struct AppKitMainContentPaneRoot: View {
     }
 
     private func syncFullscreenWindowEditorDependencies() {
+        guard let cacheServices = appSession.cacheServices else { return }
         FullscreenWindowManager.shared.configureEditorServices(
-            coverDownloadService: coverDownloadService,
-            netEaseCoverService: netEaseCoverService
+            coverDownloadService: cacheServices.coverDownloadService,
+            netEaseCoverService: cacheServices.netEaseCoverService
         )
     }
 }
@@ -600,12 +647,12 @@ private struct PlaybackThemeArtworkWatcher: View {
                     return
                 }
                 guard !Task.isCancelled else { return }
-                await themeStore.updateTheme(for: playbackCoordinator.presentation)
+                await themeStore.updateTheme(for: playbackCoordinator.stablePresentation)
             }
     }
 
     private var artworkIdentity: String {
-        let presentation = playbackCoordinator.presentation
+        let presentation = playbackCoordinator.stablePresentation
         let identity =
             presentation.artworkIdentity
             ?? presentation.externalStableKey
@@ -649,6 +696,7 @@ struct AppKitMainLyricsPaneRoot: View {
             .modelContainer(appSession.sharedModelContainer)
             .tint(ThemeStore.shared.accentColor)
             .accentColor(ThemeStore.shared.accentColor)
+            .motionEnvironment()
         } else {
             ProgressView()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -663,6 +711,13 @@ struct AppKitMainWindowArtBackgroundLayer: View {
     @ObservedObject private var fullscreenWindowManager = FullscreenWindowManager.shared
     @StateObject private var themeStore = ThemeStore.shared
     @State private var settings = AppSettings.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.motionTokens) private var motionTokens
+    @Environment(\.motionPolicy) private var configuredMotionPolicy
+
+    private var motionPolicy: MotionPolicy {
+        configuredMotionPolicy.resolving(accessibilityReduceMotion: reduceMotion)
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -685,9 +740,9 @@ struct AppKitMainWindowArtBackgroundLayer: View {
 
                 if let playbackCoordinator = appSession.playbackCoordinator,
                    isRenderableWindowBackgroundSize(proxy.size),
-                   shouldShowAppleStyleWindowBackground(playbackCoordinator: playbackCoordinator) {
-                    SkinRegistry.skin(for: AppleStyleSkin.skinID)
-                        .makeBackground(context: makeAppleStyleWindowContext(
+                   shouldShowSkinWindowBackground(playbackCoordinator: playbackCoordinator) {
+                    SkinRegistry.skin(for: settings.selectedNowPlayingSkinID)
+                        .makeBackground(context: makeWindowSkinContext(
                             windowSize: proxy.size,
                             playbackCoordinator: playbackCoordinator
                         ))
@@ -702,15 +757,15 @@ struct AppKitMainWindowArtBackgroundLayer: View {
                         controller: artBackgroundController,
                         trackID: artworkBackgroundTrackID(playbackCoordinator: playbackCoordinator),
                         artworkData: renderingArtworkData(playbackCoordinator: playbackCoordinator),
-                        isPlaying: playbackCoordinator.presentation.isPlaying,
+                        isPlaying: playbackCoordinator.stablePresentation.isPlaying,
+                        artworkFileURL: playbackCoordinator.stablePresentation.source == .local
+                            ? playbackCoordinator.stablePresentation.localTrack?.existingArtworkURL()
+                            : nil,
                         animationEnabled: appSession.uiState.contentMode == .nowPlaying
                             && !fullscreenWindowManager.usesFullscreenPlayerUI,
-                        resourceProfile: settings.selectedNowPlayingSkinID == "kmgccc.cassette"
-                            ? .cassetteForeground
-                            : .standard,
+                        resourceProfile: .init(skinProfile: SkinRegistry.descriptor(for: settings.selectedNowPlayingSkinID).presentation.artBackgroundResourceProfile),
                         initialPalette: [themeStore.accentNSColor],
-                        holdPaletteWhenArtworkMissing: playbackCoordinator.presentation.isArtworkLoading
-                            && renderingArtworkData(playbackCoordinator: playbackCoordinator) == nil
+                        isArtworkLoading: playbackCoordinator.stablePresentation.isArtworkLoading
                     )
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .ignoresSafeArea(.container, edges: .all)
@@ -722,6 +777,7 @@ struct AppKitMainWindowArtBackgroundLayer: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(.container, edges: .all)
+        .motionEnvironment()
     }
 
     private var shouldShowPlaylistHeaderBackground: Bool {
@@ -748,15 +804,17 @@ struct AppKitMainWindowArtBackgroundLayer: View {
 
     private func shouldShowArtBackground(playbackCoordinator: PlaybackCoordinator) -> Bool {
         appSession.uiState.contentMode == .nowPlaying
+            && !appSession.uiState.usesSkinScene
             && settings.nowPlayingArtBackgroundEnabled
-            && settings.selectedNowPlayingSkinID != AppleStyleSkin.skinID
-            && playbackCoordinator.presentation.hasTrack
+            && SkinRegistry.descriptor(for: settings.selectedNowPlayingSkinID).presentation.windowBackgroundPlacement != .parent
+            && playbackCoordinator.stablePresentation.hasTrack
             && !fullscreenWindowManager.usesFullscreenPlayerUI
     }
 
-    private func shouldShowAppleStyleWindowBackground(playbackCoordinator: PlaybackCoordinator) -> Bool {
+    private func shouldShowSkinWindowBackground(playbackCoordinator: PlaybackCoordinator) -> Bool {
         appSession.uiState.contentMode == .nowPlaying
-            && settings.selectedNowPlayingSkinID == AppleStyleSkin.skinID
+            && !appSession.uiState.usesSkinScene
+            && SkinRegistry.descriptor(for: settings.selectedNowPlayingSkinID).presentation.windowBackgroundPlacement == .parent
             && !fullscreenWindowManager.usesFullscreenPlayerUI
     }
 
@@ -768,7 +826,7 @@ struct AppKitMainWindowArtBackgroundLayer: View {
     }
 
     private func artworkBackgroundTrackID(playbackCoordinator: PlaybackCoordinator) -> UUID? {
-        let presentation = playbackCoordinator.presentation
+        let presentation = playbackCoordinator.stablePresentation
         if let artworkTrackID = presentation.artworkDisplayTrackID {
             return artworkTrackID
         }
@@ -781,9 +839,14 @@ struct AppKitMainWindowArtBackgroundLayer: View {
     }
 
     private func renderingArtworkData(playbackCoordinator: PlaybackCoordinator) -> Data? {
-        let presentation = playbackCoordinator.presentation
+        let presentation = playbackCoordinator.stablePresentation
         if let artworkData = presentation.artworkData, !artworkData.isEmpty {
             return artworkData
+        }
+        // A file-backed cover is a real source even when its inline bytes were
+        // released. Let BKArt resolve that file instead of coloring a fallback.
+        if presentation.source == .local, presentation.localTrack?.existingArtworkURL() != nil {
+            return nil
         }
         guard ArtworkRenderingFallback.shouldUse(
             for: presentation.artworkData,
@@ -794,11 +857,11 @@ struct AppKitMainWindowArtBackgroundLayer: View {
         return ArtworkRenderingFallback.data(for: artworkBackgroundTrackID(playbackCoordinator: playbackCoordinator))
     }
 
-    private func makeAppleStyleWindowContext(
+    private func makeWindowSkinContext(
         windowSize: CGSize,
         playbackCoordinator: PlaybackCoordinator
     ) -> SkinContext {
-        let presentation = playbackCoordinator.presentation
+        let presentation = playbackCoordinator.stablePresentation
         let effectiveArtworkData = renderingArtworkData(playbackCoordinator: playbackCoordinator)
         let artworkChecksum = ArtworkDataFingerprint.sampledHash(for: effectiveArtworkData)
 
@@ -814,16 +877,17 @@ struct AppKitMainWindowArtBackgroundLayer: View {
                 duration: presentation.duration,
                 artworkChecksum: artworkChecksum,
                 artworkData: effectiveArtworkData,
+                artworkFileURL: presentation.source == .local
+                    && presentation.artworkData?.isEmpty != false
+                    ? presentation.localTrack?.existingArtworkURL()
+                    : nil,
                 artworkImage: nil,
                 displayedArtworkID: nil
             )
             : nil
 
         let playback = SkinContext.PlaybackState(
-            isPlaying: presentation.isPlaying,
-            currentTime: presentation.currentTime,
-            duration: presentation.duration,
-            progress: presentation.progress
+            isPlaying: presentation.isPlaying
         )
 
         let analysis = themeStore.semanticPalette.analysis
@@ -841,45 +905,23 @@ struct AppKitMainWindowArtBackgroundLayer: View {
         let chosen = Array(primary.prefix(2))
         let spectrumArtworkColors = SpectrumColorResolver.prepareSpectrumColors(chosen, analysis: analysis)
 
-        let audioMetrics = appSession.ledMeterProvider?.audioMetrics ?? .zero
-        let ledMetrics = appSession.ledMeterProvider?.metrics
-            ?? LEDMeterMetrics.zero(count: LEDDefaults.ledCount)
-
         let theme = SkinContext.ThemeTokens(
             accentColor: themeStore.accentColor,
             colorScheme: themeStore.colorScheme,
-            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
-            reduceTransparency: NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency,
-            glassIntensity: settings.liquidGlassIntensity,
-            backgroundBlur: settings.nowPlayingBackgroundBlur,
-            backgroundBrightness: settings.nowPlayingBackgroundBrightness,
-            backgroundSaturation: settings.nowPlayingBackgroundSaturation,
-            meshAmplitude: settings.nowPlayingMeshAmplitude,
-            meshFlowSpeed: settings.nowPlayingMeshFlowSpeed,
-            meshSharpness: settings.nowPlayingMeshSharpness,
-            meshSoftness: settings.nowPlayingMeshSoftness,
-            meshColorBoost: settings.nowPlayingMeshColorBoost,
-            meshContrast: settings.nowPlayingMeshContrast,
-            meshBassImpact: settings.nowPlayingMeshBassImpact,
             artworkAccentColor: themeStore.hasArtworkThemeColor ? themeStore.accentColor : nil,
             artworkPalette: primary,
-            artworkRichPalette: analysis.displayPalette,
             artworkAverageColor: nil,
             artBackgroundIsUltraDark: false,
             spectrumArtworkColors: spectrumArtworkColors,
-            spectrumUsesDarkForeground: analysis.usesDarkForeground,
-            cassetteTint: themeStore.semanticPalette.cassetteTint,
-            kickToBrightnessMix: settings.bgKickToBrightnessMix,
-            kickDisplaceAmount: settings.bgKickDisplaceAmount,
-            kickScaleAmount: settings.bgKickScaleAmount
+            spectrumUsesDarkForeground: analysis.usesDarkForeground
         )
 
         return SkinContext(
             track: trackMeta,
             playback: playback,
-            audio: audioMetrics,
-            led: ledMetrics,
             theme: theme,
+            motionTokens: motionTokens,
+            motionPolicy: motionPolicy,
             windowSize: windowSize,
             contentBounds: CGRect(origin: .zero, size: windowSize),
             fullscreenScale: 1.0,
@@ -907,7 +949,7 @@ struct FlatLyricsBackgroundView: View {
                 .allowsHitTesting(false)
         case .clear:
             Rectangle()
-                .fill(.ultraThinMaterial)
+                .fill(Color.black.opacity(0.12))
                 .allowsHitTesting(false)
         }
     }
@@ -917,15 +959,14 @@ struct FlatLyricsBackgroundView: View {
 
 /// Zero-sized SwiftUI driver for the flat AppKit lyrics host.
 /// Provides the non-visual LyricsViewModel observation/lifecycle with no
-/// SwiftUI view wrapping the WKWebView itself.
+/// SwiftUI view owning a second lyrics renderer.
 struct LyricsFlatDriverView: View {
     @Environment(PlaybackCoordinator.self) private var playbackCoordinator
-    @Environment(LibraryViewModel.self) private var libraryVM
     @Environment(LyricsViewModel.self) private var lyricsVM
     @Environment(UIStateViewModel.self) private var uiState
     @Environment(AppSettings.self) private var settings
     @EnvironmentObject private var themeStore: ThemeStore
-    // Key matches AMLLKeys.lyricsRenderQuality in AppSettings. Default "medium" matches AppSettings default.
+    // Keep the persisted setting key stable while the renderer is native.
     @AppStorage("amllLyricsRenderQuality") private var amllLyricsRenderQuality: String = "medium"
 
     var body: some View {
@@ -939,18 +980,7 @@ struct LyricsFlatDriverView: View {
                 )
             }
             .onDisappear {
-                LyricsSurfaceManager.shared.reportMainVisible(false)
-            }
-            .onChange(of: playbackCoordinator.presentation.lyricsIdentity) { oldId, newId in
-                guard oldId != newId else { return }
-                LyricsRuntimeProfile.increment("LyricsFlatDriverView.trackIDChange")
-            }
-            .onChange(of: playbackCoordinator.presentation.hasTrack) { _, hasTrack in
-                syncMainLyricsVisibility(
-                    isVisible: isLyricsSurfaceActive,
-                    reason: "flat driver hasTrack changed",
-                    hasTrackOverride: hasTrack
-                )
+                if !uiState.usesSkinScene { LyricsSurfaceManager.shared.reportMainVisible(false) }
             }
             .onChange(of: uiState.lyricsVisible) { _, isVisible in
                 syncMainLyricsVisibility(
@@ -976,40 +1006,22 @@ struct LyricsFlatDriverView: View {
                 guard isLyricsSurfaceActive else { return }
                 lyricsVM.refreshConfigFromSettings()
             }
-            // Real-time sync — inlined from LyricsRealtimeSyncObserver (which is private).
-            .onChange(of: playbackCoordinator.presentation.currentTime) { oldTime, newTime in
-                guard isLyricsSurfaceActive else { return }
-                lyricsVM.syncTime(playbackCoordinator.presentation.lyricsCurrentTime)
-                if oldTime > 1.0, newTime < 0.2 {
-                    reloadLyrics(reason: "playback restarted", forceLyricsReload: true)
-                }
-            }
-            .onChange(of: playbackCoordinator.presentation.isPlaying) { _, newValue in
-                guard isLyricsSurfaceActive else { return }
-                if !newValue {
-                    lyricsVM.syncTime(playbackCoordinator.presentation.lyricsCurrentTime)
-                }
-                lyricsVM.setPlaying(newValue)
-            }
+            // LyricsPlaybackPipeline owns the high-frequency transport bridge.
+            // Keep this zero-sized driver limited to visibility, settings and
+            // seek wiring so a 4 Hz presentation tick cannot invalidate its
+            // SwiftUI hosting view and the surrounding split-window layout.
             .modifier(LyricsSettingsObserver(lyricsVM: lyricsVM, isActive: isLyricsSurfaceActive))
             .onChange(of: amllLyricsRenderQuality) { _, newValue in
                 guard isLyricsSurfaceActive else { return }
-                let scale = AppSettings.AMLLLyricsRenderQuality(rawValue: newValue)?.webViewScale ?? 0.75
-                if LyricsSurfaceManager.rendererBackend == .native {
-                    NativeLyricsSurfaceManager.shared.setRenderScale(scale, for: .main)
-                } else {
-                    LyricsSurfaceManager.shared.mainStore.setRenderQualityScale(
-                        scale,
-                        reason: "flatDriver.qualityChanged"
-                    )
-                }
+                let scale = AppSettings.AMLLLyricsRenderQuality(rawValue: newValue)?.renderScale ?? 0.75
+                NativeLyricsSurfaceManager.shared.setRenderScale(scale, for: .main)
             }
     }
 
     private var isLyricsSurfaceActive: Bool {
         // uiState stays true across fullscreen only as a restoration marker.
-        // Do not let the hidden flat-host driver keep syncing the window store.
-        LyricsSurfaceManager.shared.targetMode == .main
+        // Do not let the hidden flat-host driver keep syncing the window surface.
+        !uiState.usesSkinScene && LyricsSurfaceManager.shared.targetMode == .main
             && uiState.lyricsVisible
             && !uiState.isWindowPlaybackQueueVisible
     }
@@ -1026,6 +1038,7 @@ struct LyricsFlatDriverView: View {
         reason: String,
         hasTrackOverride: Bool? = nil
     ) {
+        guard !uiState.usesSkinScene else { return }
         setupSeekCallback()
         guard LyricsSurfaceManager.shared.targetMode == .main else {
             LyricsSurfaceManager.shared.reportMainVisible(false)
@@ -1052,7 +1065,7 @@ struct LyricsFlatDriverView: View {
         }
     }
 
-    private func reloadLyrics(reason: String, forceWebReload: Bool = false, forceLyricsReload: Bool = false) {
+    private func reloadLyrics(reason: String, forceLyricsReload: Bool = false) {
         let presentation = playbackCoordinator.presentation
         switch presentation.source {
         case .local:
@@ -1061,14 +1074,12 @@ struct LyricsFlatDriverView: View {
                 currentTime: presentation.lyricsCurrentTime,
                 isPlaying: presentation.isPlaying,
                 reason: reason,
-                forceWebReload: forceWebReload,
                 forceLyricsReload: forceLyricsReload
             )
         case .appleMusic, .systemNowPlaying:
             lyricsVM.ensureExternalLyricsLoaded(
                 presentation: presentation,
                 reason: reason,
-                forceWebReload: forceWebReload,
                 forceLyricsReload: forceLyricsReload
             )
         }

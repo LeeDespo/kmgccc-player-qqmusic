@@ -732,22 +732,6 @@ final class PlaybackCoordinator {
         externalProvider(for: activeSource)
     }
 
-    @available(*, deprecated, message: "Use smartRandomPick for single picks or playRandomTracks for ShuffleSession-backed playback.")
-    static func smartRandomQueue(
-        from tracks: [Track],
-        startingWith startTrack: Track? = nil,
-        preferenceStatsService: PreferenceStatsService
-    ) -> [Track] {
-        if let startTrack,
-           let matched = WeightedPlaybackSampler.playableUniqueTracks(from: tracks).first(where: { $0.id == startTrack.id }) {
-            return [matched]
-        }
-        return WeightedPlaybackSampler.pick(
-            from: tracks,
-            preferenceStatsService: preferenceStatsService
-        ).map { [$0] } ?? []
-    }
-
     static func smartRandomPick(
         from tracks: [Track],
         preferenceStatsService: PreferenceStatsService
@@ -830,12 +814,23 @@ final class PlaybackCoordinator {
 
     private func makeLocalPresentation() -> NowPlayingPresentation {
         guard let playback = localPlayback else {
+            presentation.localTrack?.releaseFileBackedArtworkData()
             return .emptyLocal
         }
         guard let track = playback.currentTrack else {
+            presentation.localTrack?.releaseFileBackedArtworkData()
             var empty = NowPlayingPresentation.emptyLocal
             empty.volume = playback.volume
             return empty
+        }
+
+        if let previousTrack = presentation.localTrack,
+           previousTrack.id != track.id {
+            previousTrack.releaseFileBackedArtworkData()
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(500))
+                CacheManager.trimProcessMemory()
+            }
         }
 
         let artworkData = track.artworkData
@@ -845,7 +840,7 @@ final class PlaybackCoordinator {
         } ?? false
         let lyricsText = preferredLyricsTextSnapshot(for: track)
         let isArtworkLoading = track.artworkData?.isEmpty != false
-            && track.resolvedArtworkURL() != nil
+            && track.existingArtworkURL() != nil
             && !hasDiskArtworkCache
         let isRefetchingLyrics = activeLyricsRefetchContext?.trackIdentity == track.id.uuidString
         scheduleSidecarHydrationIfNeeded(for: track)
@@ -929,34 +924,22 @@ final class PlaybackCoordinator {
     }
 
     private func scheduleSidecarHydrationIfNeeded(for track: Track) {
-        let needsArtwork = track.artworkData?.isEmpty != false && track.resolvedArtworkURL() != nil
         let needsTTMLLyrics = track.ttmlLyricText?.isEmpty != false
             && (track.resolvedTTMLURL() != nil || track.resolvedLyricsURL() != nil)
-        guard needsArtwork || needsTTMLLyrics else { return }
+        guard needsTTMLLyrics else { return }
         guard sidecarHydratingTrackID != track.id else { return }
 
         let trackID = track.id
-        let artworkSource = needsArtwork ? track.trackArtworkSource(fallbackData: track.artworkData) : nil
-        let artworkURL = artworkSource?.artworkFileURL
         let ttmlURL = needsTTMLLyrics ? track.resolvedTTMLURL() : nil
         let ttmlFallbackURL = needsTTMLLyrics ? track.resolvedLyricsURL() : nil
-        let artworkCache = artworkCache
 
         sidecarHydrationTask?.cancel()
         sidecarHydratingTrackID = trackID
         sidecarHydrationTask = Task(priority: .utility) { @MainActor [weak self, weak track] in
-                let token = FirstUseHitchDiagnostics.begin(
-                    "PlaybackCoordinator.sidecarHydration",
-                    detail: "track=\(trackID.uuidString.prefix(8)) artwork=\(artworkURL != nil) ttml=\(ttmlURL != nil || ttmlFallbackURL != nil)"
-                )
-
-            async let artworkTask: Data? = {
-                guard let artworkSource else { return nil }
-                return await artworkCache.sourceData(
-                    for: artworkSource,
-                    purpose: "hydration"
-                )
-            }()
+            let token = FirstUseHitchDiagnostics.begin(
+                "PlaybackCoordinator.lyricsSidecarHydration",
+                detail: "track=\(trackID.uuidString.prefix(8)) ttml=\(ttmlURL != nil || ttmlFallbackURL != nil)"
+            )
 
             async let ttmlTask: String? = Task.detached(priority: .utility) { @Sendable in
                 if let ttmlURL,
@@ -973,13 +956,12 @@ final class PlaybackCoordinator {
                 return nil
             }.value
 
-            let artwork = await artworkTask
             let ttml = await ttmlTask
 
             defer {
                 FirstUseHitchDiagnostics.end(
                     token,
-                    detail: "artworkBytes=\(artwork?.count ?? 0) ttmlChars=\(ttml?.count ?? 0)"
+                    detail: "ttmlChars=\(ttml?.count ?? 0)"
                 )
                 if self?.sidecarHydratingTrackID == trackID {
                     self?.sidecarHydratingTrackID = nil
@@ -987,9 +969,6 @@ final class PlaybackCoordinator {
             }
 
             guard !Task.isCancelled, let self, let track, track.id == trackID else { return }
-            if let artwork, track.artworkData?.isEmpty != false {
-                track.artworkData = artwork
-            }
             if let ttml, track.ttmlLyricText?.isEmpty != false {
                 track.ttmlLyricText = ttml
             }

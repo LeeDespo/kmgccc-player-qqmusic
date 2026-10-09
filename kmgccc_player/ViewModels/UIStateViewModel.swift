@@ -7,7 +7,9 @@
 //  Sidebar can be collapsed and restored.
 //
 
+import AppKit
 import Foundation
+import MotionKit
 import SwiftUI
 
 extension Notification.Name {
@@ -63,6 +65,16 @@ final class UIStateViewModel {
     private var isLoadingPersistedLayoutState = false
     @ObservationIgnored private var sidebarNoticeDismissTask: Task<Void, Never>?
 
+    private var motionPolicy: MotionPolicy {
+        MotionPolicy.system(
+            accessibilityReduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        )
+    }
+
+    private func motionAnimation(for token: MotionToken) -> Animation? {
+        motionPolicy.animation(for: MotionTokens.standard[token])
+    }
+
     // MARK: - Layout Visibility
 
     /// Whether the sidebar is currently visible.
@@ -115,6 +127,12 @@ final class UIStateViewModel {
             guard oldValue != isWindowPlaybackQueueVisible else { return }
             NotificationCenter.default.post(name: .windowPlaybackQueueVisibilityDidChange, object: nil)
         }
+    }
+
+    /// Author scene visibility is transient; inspector preferences remain intact.
+    var skinSceneLyricsVisible = true
+    var usesSkinScene: Bool {
+        contentMode == .nowPlaying && SkinRegistry.skin(for: AppSettings.shared.selectedNowPlayingSkinID).scene != nil
     }
 
     /// Current lyrics panel width (user-resizable).
@@ -192,19 +210,19 @@ final class UIStateViewModel {
     }
 
     func showWindowPlaybackQueue() {
-        withAnimation(.easeInOut(duration: 0.22)) {
+        withAnimation(motionAnimation(for: .navigation)) {
             isWindowPlaybackQueueVisible = true
         }
     }
 
     func hideWindowPlaybackQueue() {
-        withAnimation(.easeInOut(duration: 0.22)) {
+        withAnimation(motionAnimation(for: .navigation)) {
             isWindowPlaybackQueueVisible = false
         }
     }
 
     func toggleWindowPlaybackQueue() {
-        withAnimation(.easeInOut(duration: 0.22)) {
+        withAnimation(motionAnimation(for: .navigation)) {
             isWindowPlaybackQueueVisible.toggle()
         }
     }
@@ -352,7 +370,7 @@ final class UIStateViewModel {
     // MARK: - Actions
 
     func toggleSidebar() {
-        withAnimation(.easeInOut(duration: 0.25)) {
+        withAnimation(motionAnimation(for: .layout)) {
             sidebarVisible.toggle()
         }
     }
@@ -368,30 +386,25 @@ final class UIStateViewModel {
     }
 
     func toggleLyrics() {
-        withAnimation(.easeInOut(duration: 0.25)) {
-            lyricsVisible.toggle()
+        withAnimation(motionAnimation(for: .layout)) {
+            if usesSkinScene { skinSceneLyricsVisible.toggle() }
+            else { lyricsVisible.toggle() }
         }
     }
 
     func showNowPlaying() {
-        withAnimation(.easeInOut(duration: 0.3)) {
-            contentMode = .nowPlaying
-        }
+        contentMode = .nowPlaying
     }
 
     func showLibrary() {
         HomeWindowLayoutState.shared.setQQMusicMode(false)
-        withAnimation(.easeInOut(duration: 0.3)) {
-            playbackHistoryDate = nil
-            contentMode = .library
-        }
+        playbackHistoryDate = nil
+        contentMode = .library
     }
 
     func showPlaybackHistory(for date: Date? = nil) {
-        withAnimation(.easeInOut(duration: 0.3)) {
-            playbackHistoryDate = date.map { Calendar.current.startOfDay(for: $0) }
-            contentMode = .playbackHistory
-        }
+        playbackHistoryDate = date.map { Calendar.current.startOfDay(for: $0) }
+        contentMode = .playbackHistory
     }
 
     func showQQMusicOnline() {

@@ -2,11 +2,11 @@
 
 只收录**当前仍然生效**的实现约束与已知坑。改对应功能代码前先读本页；条目失效时直接改写或删除，不保留历史版本。
 
-## 歌词渲染（NativeLyrics 与 AMLL）
+## 歌词渲染（NativeLyrics 与 AMLL 背景）
 
-- 生产环境默认采用原生 `NativeLyrics` 引擎（Core Text + Core Animation）；Web/AMLL 仅保留作为兼容回退。不要在原生渲染层中引入依赖 DOM、JavaScript bridge 或全局 WebView 实例的假设，也不得将 WebView 直接传给原生宿主视图。
-- `kmgccc_player/Resources/AMLL/` 下的 `amll-core.js`、`amll-lyric.js`、`amll-background.js`、`style.css` 是**生成物，不可手改**；用 `scripts/sync-amll-from-fork.sh` 从 fork 同步。
-- 歌词 WebView 的 owner 是 `LyricsSurfaceManager`；不要在 View 里持有或新建 WebView。view-owned WebView、旧 `LyricsBridge.swift`、旧 exiting-line suppress、离散 highlight 系统均已废弃，**不要恢复**。
+- 生产环境歌词只采用原生 `NativeLyrics` 引擎（Core Text + Core Animation）；不要在歌词渲染层中引入 DOM、JavaScript bridge 或歌词 WebView fallback。
+- `kmgccc_player/Resources/AMLL/` 只保留网格背景所需的 `background.html`、生成的 `amll-background.js` 和字体资源；生成 JavaScript 不可手改，用 `scripts/sync-amll-from-fork.sh` 从 fork 同步。
+- `AMLLMeshGradientBackgroundView` 的 WebView 只服务背景动画，不得复用于歌词，也不要在歌词 View 中创建第二套渲染状态。
 
 ## 全屏
 
@@ -36,5 +36,5 @@
 
 ## 提交与验证
 
-- 常规改动 = 匹配的增量 Debug Build；`./scripts/verify.sh` 留给合并/PR/发布门禁；发布审计与私有资源验证**不进** verify.sh。
+- Agent 不自行编译或运行会触发编译的命令、脚本和测试；改动大小或重大重构都不构成例外。只有用户在当前任务明确要求时才可编译。需编译的测试由维护者运行；`./scripts/verify.sh` 也仅限用户明确要求。GitHub macOS CI 仅手动触发；发布审计与私有资源验证**不进** verify.sh。
 - 本仓库常有并行会话同时工作：动 git 分支、删产物、跑大规模清理前，先 `git status` + `git log` 确认没人在干活；squash 合并的分支不是 main 的祖先，删分支前先打 tag。

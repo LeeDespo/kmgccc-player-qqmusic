@@ -14,6 +14,7 @@
 //
 
 import AppKit
+import MotionKit
 import SwiftUI
 
 // MARK: - Deletion Request
@@ -181,7 +182,7 @@ struct AllArtistsView: View {
                     )
                 }
             )
-            .padding(.horizontal, 24)
+            .padding(.horizontal, Constants.Layout.listHorizontalPadding)
             .padding(.top, 16)
         }
     }
@@ -325,7 +326,11 @@ private struct ArtistListRow: View {
             Spacer(minLength: 8)
             trailingActions
         }
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
+        .padding(
+            .trailing,
+            max(0, 12 - (Constants.Layout.TrackRow.trailingMenuHitSize - 13) / 2)
+        )
         .padding(.vertical, 8)
         .frame(minHeight: 76)
         .background(
@@ -371,10 +376,12 @@ private struct ArtistListRow: View {
                     cornerRadius: artworkSize / 2,
                     clipShape: .circle,
                     iconSize: 22,
-                    iconOpacity: 0.4
+                    iconOpacity: 0.0,
+                    themeColor: Color.primary.opacity(0.04)
                 )
             }
         }
+        .motionAnimation(.microInteraction, value: image != nil)
         .frame(width: artworkSize, height: artworkSize)
         .clipShape(Circle())
         .shadow(
@@ -422,12 +429,18 @@ private struct ArtistListRow: View {
             Image(systemName: "ellipsis")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(subtitleColor)
-                .frame(width: 24, height: 24)
+                .frame(
+                    width: Constants.Layout.TrackRow.trailingMenuHitSize,
+                    height: Constants.Layout.TrackRow.trailingMenuHitSize
+                )
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .frame(width: 24, height: 24)
+        .frame(
+            width: Constants.Layout.TrackRow.trailingMenuHitSize,
+            height: Constants.Layout.TrackRow.trailingMenuHitSize
+        )
         .opacity(isHovering ? 1 : 0.4)
         .disabled(!enableSecondaryInteractions)
         .allowsHitTesting(enableSecondaryInteractions)
@@ -477,17 +490,31 @@ private struct ArtistListRow: View {
     }
 
     private func loadPersistedArtwork(from entry: ArtistEntry) async -> Bool {
-        guard let data = entry.artworkData, !data.isEmpty else { return false }
-        let checksum = ArtworkLoader.checksum(for: data)
-        let key = ArtworkLoader.cacheKey(
-            trackID: entry.id,
-            checksum: checksum,
-            targetPixelSize: CGSize(width: 132, height: 132)
+        let targetSize = CGSize(width: 132, height: 132)
+        if let data = entry.artworkData, !data.isEmpty {
+            let checksum = ArtworkLoader.checksum(for: data)
+            let key = ArtworkLoader.cacheKey(
+                trackID: entry.id,
+                checksum: checksum,
+                targetPixelSize: targetSize
+            )
+            image = await ArtworkLoader.loadImage(
+                artworkData: data,
+                cacheKey: key,
+                targetPixelSize: targetSize,
+                derivativeStore: cacheServices.artworkDerivativeStore
+            )
+            return image != nil
+        }
+        guard let artworkFileURL = entry.artworkFileURL else { return false }
+        let key = ArtworkLoader.fileCacheKey(
+            fileURL: artworkFileURL,
+            targetPixelSize: targetSize
         )
         image = await ArtworkLoader.loadImage(
-            artworkData: data,
+            fileURL: artworkFileURL,
             cacheKey: key,
-            targetPixelSize: CGSize(width: 132, height: 132),
+            targetPixelSize: targetSize,
             derivativeStore: cacheServices.artworkDerivativeStore
         )
         return image != nil

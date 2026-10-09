@@ -13,12 +13,16 @@ import SwiftUI
 struct ClassicLEDSkin: NowPlayingSkin {
     static let id: String = "coverLed"
 
-    let id: String = ClassicLEDSkin.id
-    let name: String = NSLocalizedString("skin.classic_led.name", comment: "")
-    let detail: String = NSLocalizedString("skin.classic_led.detail", comment: "")
-    let systemImage: String = "dot.radiowaves.left.and.right"
-    var isFullscreenCompatible: Bool { true }
-    var isNowPlayingCompatible: Bool { true }
+    let descriptor = SkinDescriptor(
+        id: ClassicLEDSkin.id,
+        name: NSLocalizedString("skin.classic_led.name", comment: ""),
+        detail: NSLocalizedString("skin.classic_led.detail", comment: ""),
+        systemImage: "dot.radiowaves.left.and.right",
+        audio: SkinAudioDefaults(window: .miniPlayerSpectrum, fullscreen: .miniPlayerLED),
+        artwork: SkinArtworkDefaults(scale: 1.1, maximumScale: 1.35),
+        fullscreenTypography: SkinDescriptor.coverTypography,
+        legacy: SkinLegacySettings(visualizerNamespace: "skin.classicLED")
+    )
 
     func makeBackground(context: SkinContext) -> AnyView {
         AnyView(UnifiedNowPlayingBackground(context: context))
@@ -34,6 +38,11 @@ struct ClassicLEDSkin: NowPlayingSkin {
 
     var fullscreenSettingsView: AnyView? {
         AnyView(ClassicLEDSkinFullscreenSettingsView())
+    }
+
+    func releaseCachedResources() async {
+        await ClassicArtworkFrameExtendedArtworkCache.shared.removeAll()
+        ClassicArtworkFrameExtendedArtworkRenderer.clearCaches()
     }
 }
 
@@ -70,6 +79,11 @@ struct ClassicCoverArtworkView: View {
 
     private var localArtworkScale: CGFloat {
         presentation == .classic && artworkFrameMaskEnabled ? 1.08 : 1.0
+    }
+
+    private var artworkRasterScale: CGFloat {
+        max(1, context.fullscreenScale)
+            * (context.usesFullscreenPlayerLayout ? fullscreenCoverScaleEffect : windowCoverScaleEffect)
     }
 
     // MARK: - Fullscreen Fine-tuning Constants
@@ -140,7 +154,8 @@ struct ClassicCoverArtworkView: View {
             ClassicArtworkCoverContainer(
                 context: context,
                 size: size,
-                displayScale: displayScale
+                displayScale: displayScale,
+                rasterScale: artworkRasterScale
             )
         case .appleStyle:
             AppleStyleArtworkCoverContainer(
@@ -151,38 +166,55 @@ struct ClassicCoverArtworkView: View {
     }
 }
 
-private struct ClassicArtworkCoverContainer: View {
+struct ClassicArtworkCoverContainer: View {
     let context: SkinContext
     let size: CGFloat
     let displayScale: CGFloat
+    let rasterScale: CGFloat
 
     @AppStorage("skin.classicLED.artworkFrameMaskEnabled") private var artworkFrameMaskEnabled: Bool = true
     @State private var maskRefreshToken = 0
+    @State private var resolvedArtwork: ClassicArtworkFrameCoverAsset?
 
-    private let cornerRadius: CGFloat = 12
+    var frameMaskOverride: Bool? = nil
+    var cornerRadius: CGFloat = 12
+    private var usesFrameMask: Bool { frameMaskOverride ?? artworkFrameMaskEnabled }
 
     var body: some View {
         classicCoverContent
-            .id(maskRefreshToken)
             .frame(width: size, height: size)
             .contentShape(Rectangle())
             .onTapGesture {
                 advanceArtworkFrameMask()
             }
+            .skinControlRegion()
+            .task(id: maskRequestKey) {
+                await loadArtworkFrameMask()
+            }
+            .onDisappear {
+                resolvedArtwork = nil
+            }
     }
 
     @ViewBuilder
     private var classicCoverContent: some View {
-        if let image = context.track?.artworkImage {
-            if let mask = artworkFrameMask {
+        if usesFrameMask, let artwork = resolvedArtwork {
+            if let mask = artwork.mask {
                 ArtworkFrameMaskedImageView(
-                    image: image,
+                    image: artwork.image,
                     mask: mask.image,
                     frameIndex: mask.index,
-                    artworkChecksum: context.track?.artworkChecksum ?? 0,
+                    artworkChecksum: artwork.checksum,
                     size: size,
-                    displayScale: displayScale
+                    displayScale: displayScale,
+                    rasterScale: rasterScale
                 )
+            } else {
+                RoundedCoverArtworkImage(image: artwork.image, size: size, cornerRadius: cornerRadius)
+            }
+        } else if let image = context.track?.artworkImage {
+            if usesFrameMask, artworkFrameMaskRequest != nil {
+                Color.clear
             } else {
                 RoundedCoverArtworkImage(image: image, size: size, cornerRadius: cornerRadius)
             }
@@ -194,13 +226,12 @@ private struct ClassicArtworkCoverContainer: View {
         }
     }
 
-    private var artworkFrameMask: ClassicArtworkFrameMaskAsset? {
-        guard artworkFrameMaskEnabled else {
+    private var artworkFrameMaskRequest: ClassicArtworkFrameMaskRequest? {
+        guard usesFrameMask else {
             return nil
         }
 
-        let assets = BKThemeAssets.shared
-        let frameCount = assets.artworkFrameCount
+        let frameCount = BKThemeAssets.shared.artworkFrameCount
         let key = ClassicArtworkFrameMaskKey(track: context.track)
         guard let index = ClassicArtworkFrameMaskSelection.shared.maskIndex(
             for: key,
@@ -208,20 +239,63 @@ private struct ClassicArtworkCoverContainer: View {
         ) else {
             return nil
         }
-        // The completed mask stack is scaled after rasterization for frame-specific
-        // visual tuning. Include that scale here so the final transform does not
-        // enlarge a lower-resolution frame asset a second time.
         let finalScale = ClassicArtworkFrameCoverTuning.finalMaskedArtworkScale(for: index)
-        let targetPixel = max(1, Int(ceil(size * max(1, displayScale) * finalScale)))
-        let maxPixel = ((targetPixel + 127) / 128) * 128
-        guard let image = assets.artworkFrame(at: index, maxPixel: maxPixel) else {
-            return nil
+        let targetPixel = max(
+            1,
+            Int(ceil(size * max(1, displayScale) * max(1, rasterScale) * finalScale))
+        )
+        let roundedPixel = ((targetPixel + 127) / 128) * 128
+        let maxPixel = min(704, roundedPixel)
+        return ClassicArtworkFrameMaskRequest(index: index, maxPixel: maxPixel)
+    }
+
+    private var maskRequestKey: String {
+        guard let request = artworkFrameMaskRequest else {
+            return "none"
         }
-        return ClassicArtworkFrameMaskAsset(index: index, image: image)
+        return [
+            (context.track?.displayedArtworkID ?? context.track?.id)?.uuidString ?? "none",
+            String(context.track?.artworkChecksum ?? 0),
+            String(request.index),
+            String(request.maxPixel),
+            String(maskRefreshToken),
+        ].joined(separator: "|")
+    }
+
+    private func loadArtworkFrameMask() async {
+        guard let track = context.track else {
+            resolvedArtwork = nil
+            return
+        }
+        // Keep the previous cover while the host decodes the incoming artwork.
+        guard let sourceImage = track.artworkImage else { return }
+        guard let request = artworkFrameMaskRequest else {
+            resolvedArtwork = nil
+            return
+        }
+
+        let requestKey = maskRequestKey
+        guard resolvedArtwork?.requestKey != requestKey else { return }
+        let assets = BKThemeAssets.shared
+        let image = await Task.detached(priority: .userInitiated) {
+            assets.artworkFrame(at: request.index, maxPixel: request.maxPixel)
+        }.value
+
+        guard !Task.isCancelled, requestKey == maskRequestKey else {
+            return
+        }
+        // Stage matching inputs together without replacing the rendered view.
+        // It retains its finished bitmap until the next composition is ready.
+        resolvedArtwork = ClassicArtworkFrameCoverAsset(
+            image: sourceImage,
+            checksum: track.artworkChecksum,
+            mask: image.map { ClassicArtworkFrameMaskAsset(index: request.index, image: $0) },
+            requestKey: requestKey
+        )
     }
 
     private func advanceArtworkFrameMask() {
-        guard artworkFrameMaskEnabled, context.track?.artworkImage != nil else {
+        guard usesFrameMask, context.track?.artworkImage != nil else {
             return
         }
 
@@ -245,6 +319,18 @@ private struct ClassicArtworkCoverContainer: View {
 private struct ClassicArtworkFrameMaskAsset {
     let index: Int
     let image: CGImage
+}
+
+private struct ClassicArtworkFrameCoverAsset {
+    let image: NSImage
+    let checksum: UInt64
+    let mask: ClassicArtworkFrameMaskAsset?
+    let requestKey: String
+}
+
+private struct ClassicArtworkFrameMaskRequest: Sendable {
+    let index: Int
+    let maxPixel: Int
 }
 
 private enum ClassicArtworkFrameCoverTuning {
@@ -277,9 +363,8 @@ private enum ClassicArtworkFrameCoverTuning {
     ]
 
     static let fallbackFinalMaskedArtworkScale: CGFloat = 1.0
-    /// v6: raster budgets include the final post-mask scale so enlarged frames
-    /// retain their source detail instead of being upsampled at the last step.
-    static let rendererVersion = 6
+    /// v9: baked mask composition in CGContext, eliminating CoreAnimation offscreen masks, with 704 maxPixel.
+    static let rendererVersion = 9
 
     static func artworkScale(for frameIndex: Int) -> CGFloat {
         min(1.0, max(0.50, artworkScaleByFrameIndex[frameIndex] ?? fallbackArtworkScale))
@@ -339,6 +424,7 @@ private struct ArtworkFrameMaskedImageView: View {
     let artworkChecksum: UInt64
     let size: CGFloat
     let displayScale: CGFloat
+    let rasterScale: CGFloat
     @AppStorage("skin.classicLED.edgeBlurEnabled") private var edgeBlurEnabled: Bool = true
     @State private var extendedArtworkImage: NSImage?
     @State private var extendedArtworkKey: String?
@@ -354,21 +440,13 @@ private struct ArtworkFrameMaskedImageView: View {
 
     var body: some View {
         Group {
-            if let extendedArtworkImage, let displayedMask {
+            if let extendedArtworkImage {
                 Image(nsImage: extendedArtworkImage)
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fill)
                     .frame(width: size, height: size)
                     .clipped()
-                    .mask {
-                        Image(decorative: displayedMask, scale: max(1, displayScale), orientation: .up)
-                            .resizable()
-                            .interpolation(.high)
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: size, height: size)
-                            .clipped()
-                    }
                     .scaleEffect(displayedFinalScale)
             } else {
                 Color.clear
@@ -384,6 +462,18 @@ private struct ArtworkFrameMaskedImageView: View {
         .onDisappear {
             processingTask?.cancel()
             processingTask = nil
+            extendedArtworkImage = nil
+            extendedArtworkKey = nil
+            displayedMask = nil
+            displayedFinalScale = 1.0
+            Task {
+                await ClassicArtworkFrameExtendedArtworkCache.shared.removeAll()
+                ClassicArtworkFrameExtendedArtworkRenderer.clearCaches()
+                await MainActor.run {
+                    CATransaction.flush()
+                    CacheManager.trimProcessMemory()
+                }
+            }
         }
     }
 
@@ -399,8 +489,12 @@ private struct ArtworkFrameMaskedImageView: View {
         // Keep the reflected artwork at the same backing-pixel density as the
         // final masked stack. The outer extension is otherwise rasterized at the
         // pre-scale size and then enlarged together with the mask.
-        let rawPixel = max(1, Int(ceil(size * max(1, displayScale) * finalMaskedArtworkScale)))
-        return ((rawPixel + 63) / 64) * 64
+        let rawPixel = max(
+            1,
+            Int(ceil(size * max(1, displayScale) * max(1, rasterScale) * finalMaskedArtworkScale))
+        )
+        let rounded = ((rawPixel + 63) / 64) * 64
+        return min(704, rounded)
     }
 
     private var processingKey: String {
@@ -417,13 +511,11 @@ private struct ArtworkFrameMaskedImageView: View {
 
     private func scheduleExtendedArtworkProcessing() {
         let key = processingKey
+        processingTask?.cancel()
+        processingTask = nil
         guard extendedArtworkKey != key else { return }
 
-        processingTask?.cancel()
         guard let sourceImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-            extendedArtworkImage = nil
-            displayedMask = nil
-            extendedArtworkKey = nil
             return
         }
 
@@ -433,10 +525,13 @@ private struct ArtworkFrameMaskedImageView: View {
         // in atomically with the finished cover (see `displayedMask`).
         let committedMask = mask
         let committedFinalScale = finalMaskedArtworkScale
-        processingTask = Task(priority: .utility) {
+        let committedEdgeBlurEnabled = edgeBlurEnabled
+        processingTask = Task(priority: .userInitiated) {
+            let cacheGeneration = await ClassicArtworkFrameExtendedArtworkCache.shared.generation()
             if let cached = await ClassicArtworkFrameExtendedArtworkCache.shared.image(for: key),
                !Task.isCancelled {
                 await MainActor.run {
+                    guard !Task.isCancelled else { return }
                     extendedArtworkImage = cached
                     displayedMask = committedMask
                     displayedFinalScale = committedFinalScale
@@ -446,22 +541,27 @@ private struct ArtworkFrameMaskedImageView: View {
                 return
             }
 
-            let rendered = await Task.detached(priority: .utility) {
-                ClassicArtworkFrameExtendedArtworkRenderer.render(
-                    sourceImage: sourceImage,
-                    outputPixel: outputPixel,
-                    artworkScale: scale
-                )
-            }.value
+            let rendered = await ClassicArtworkFrameExtendedArtworkRenderQueue.shared.render(
+                sourceImage: sourceImage,
+                mask: committedMask,
+                outputPixel: outputPixel,
+                artworkScale: scale,
+                edgeBlurEnabled: committedEdgeBlurEnabled
+            )
 
             guard !Task.isCancelled, let rendered else { return }
             let renderedImage = NSImage(
                 cgImage: rendered,
                 size: NSSize(width: rendered.width, height: rendered.height)
             )
-            await ClassicArtworkFrameExtendedArtworkCache.shared.setImage(renderedImage, for: key)
+            await ClassicArtworkFrameExtendedArtworkCache.shared.setImage(
+                renderedImage,
+                for: key,
+                generation: cacheGeneration
+            )
 
             await MainActor.run {
+                guard !Task.isCancelled else { return }
                 extendedArtworkImage = renderedImage
                 displayedMask = committedMask
                 displayedFinalScale = committedFinalScale
@@ -472,21 +572,27 @@ private struct ArtworkFrameMaskedImageView: View {
     }
 }
 
-private actor ClassicArtworkFrameExtendedArtworkCache {
+actor ClassicArtworkFrameExtendedArtworkCache {
     static let shared = ClassicArtworkFrameExtendedArtworkCache()
 
     private var storage: [String: NSImage] = [:]
     private var keys: [String] = []
     private var costs: [String: Int] = [:]
     private var totalBytes = 0
-    private let maxCount = 40
-    private let maxTotalBytes = 32 * 1024 * 1024
+    private let maxCount = 1
+    private let maxTotalBytes = 4 * 1024 * 1024
+    private var memoryGeneration: UInt64 = 0
+
+    func generation() -> UInt64 {
+        memoryGeneration
+    }
 
     func image(for key: String) -> NSImage? {
         storage[key]
     }
 
-    func setImage(_ image: NSImage, for key: String) {
+    func setImage(_ image: NSImage, for key: String, generation: UInt64) {
+        guard memoryGeneration == generation else { return }
         if storage[key] == nil {
             keys.append(key)
         }
@@ -498,13 +604,21 @@ private actor ClassicArtworkFrameExtendedArtworkCache {
         costs[key] = cost
         totalBytes += cost
 
-        while keys.count > maxCount || totalBytes > maxTotalBytes {
+        while keys.count > maxCount || (totalBytes > maxTotalBytes && keys.count > 1) {
             let oldest = keys.removeFirst()
             storage.removeValue(forKey: oldest)
             if let removedCost = costs.removeValue(forKey: oldest) {
                 totalBytes -= removedCost
             }
         }
+    }
+
+    func removeAll() {
+        memoryGeneration &+= 1
+        storage.removeAll(keepingCapacity: false)
+        keys.removeAll(keepingCapacity: false)
+        costs.removeAll(keepingCapacity: false)
+        totalBytes = 0
     }
 
     private static func estimatedCost(for image: NSImage) -> Int {
@@ -516,8 +630,59 @@ private actor ClassicArtworkFrameExtendedArtworkCache {
     }
 }
 
-private enum ClassicArtworkFrameExtendedArtworkRenderer {
-    nonisolated static func render(sourceImage: CGImage, outputPixel: Int, artworkScale: CGFloat) -> CGImage? {
+private actor ClassicArtworkFrameExtendedArtworkRenderQueue {
+    static let shared = ClassicArtworkFrameExtendedArtworkRenderQueue()
+
+    func render(
+        sourceImage: CGImage,
+        mask: CGImage?,
+        outputPixel: Int,
+        artworkScale: CGFloat,
+        edgeBlurEnabled: Bool
+    ) -> CGImage? {
+        guard !Task.isCancelled else { return nil }
+        return ClassicArtworkFrameExtendedArtworkRenderer.render(
+            sourceImage: sourceImage,
+            mask: mask,
+            outputPixel: outputPixel,
+            artworkScale: artworkScale,
+            edgeBlurEnabled: edgeBlurEnabled
+        )
+    }
+}
+
+enum ClassicArtworkFrameExtendedArtworkRenderer {
+    private nonisolated(unsafe) static var ciContext: CIContext?
+    private nonisolated static let ciContextLock = NSLock()
+
+    private nonisolated static func currentCIContext() -> CIContext {
+        ciContextLock.lock()
+        defer { ciContextLock.unlock() }
+        if let existing = ciContext {
+            return existing
+        }
+        let created = CIContext(options: [
+            .cacheIntermediates: false,
+            .useSoftwareRenderer: false,
+        ])
+        ciContext = created
+        return created
+    }
+
+    nonisolated static func clearCaches() {
+        ciContextLock.lock()
+        defer { ciContextLock.unlock() }
+        ciContext?.clearCaches()
+        ciContext = nil
+    }
+
+    nonisolated static func render(
+        sourceImage: CGImage,
+        mask: CGImage?,
+        outputPixel: Int,
+        artworkScale: CGFloat,
+        edgeBlurEnabled: Bool
+    ) -> CGImage? {
         autoreleasepool {
             let outputPixel = max(1, outputPixel)
             let artworkScale = min(1.0, max(0.50, artworkScale))
@@ -631,14 +796,40 @@ private enum ClassicArtworkFrameExtendedArtworkRenderer {
             // the outer edge. The band is narrow, so the ramp is deliberately
             // fast. When there is no extension band (insetPixel == 0) the base
             // image is returned unchanged.
-            guard insetPixel > 0 else { return baseImage }
-            let edgeBlurEnabled = UserDefaults.standard.object(forKey: "skin.classicLED.edgeBlurEnabled") as? Bool ?? true
-            guard edgeBlurEnabled else { return baseImage }
-            return progressiveEdgeBlur(
-                base: baseImage,
-                outputPixel: outputPixel,
-                insetPixel: insetPixel
-            ) ?? baseImage
+            let baseWithBlur: CGImage
+            if insetPixel > 0 {
+                if edgeBlurEnabled {
+                    baseWithBlur = progressiveEdgeBlur(
+                        base: baseImage,
+                        outputPixel: outputPixel,
+                        insetPixel: insetPixel
+                    ) ?? baseImage
+                } else {
+                    baseWithBlur = baseImage
+                }
+            } else {
+                baseWithBlur = baseImage
+            }
+
+            guard let mask else { return baseWithBlur }
+
+            guard let maskContext = CGContext(
+                data: nil,
+                width: outputPixel,
+                height: outputPixel,
+                bitsPerComponent: 8,
+                bytesPerRow: 0,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                return baseWithBlur
+            }
+
+            let fullRect = CGRect(x: 0, y: 0, width: outputPixel, height: outputPixel)
+            maskContext.draw(baseWithBlur, in: fullRect)
+            maskContext.setBlendMode(.destinationIn)
+            maskContext.draw(mask, in: fullRect)
+            return maskContext.makeImage() ?? baseWithBlur
         }
     }
 
@@ -651,11 +842,6 @@ private enum ClassicArtworkFrameExtendedArtworkRenderer {
     /// cover edge). The extension band is narrow, so the progression stays fast,
     /// but eased back from 0.42 so the onset just past the cover is gentler.
     private nonisolated static let edgeBlurRampExponent: Double = 0.55
-
-    private nonisolated static let ciContext = CIContext(options: [
-        .cacheIntermediates: false,
-        .useSoftwareRenderer: false,
-    ])
 
     /// Blurs only the mirrored extension band of an already-rendered extended
     /// artwork, leaving the inner cover untouched.
@@ -685,11 +871,20 @@ private enum ClassicArtworkFrameExtendedArtworkRenderer {
             let radius = min(edgeBlurMaxRadius, CGFloat(insetPixel) * 0.95)
             blurFilter.setValue(clamped, forKey: kCIInputImageKey)
             blurFilter.setValue(radius, forKey: kCIInputRadiusKey)
-            blurFilter.setValue(CIImage(cgImage: mask), forKey: "inputMask")
+            // The ramp mask is capped at 256 px to keep its bitmap small. Scale
+            // its extent back to the artwork canvas before using it: Core Image
+            // samples masks in image coordinates, so passing the small image
+            // directly only blurred the lower-left 256×256 region.
+            let maskScale = CGFloat(outputPixel) / CGFloat(mask.width)
+            let fullCanvasMask = CIImage(cgImage: mask)
+                .transformed(by: CGAffineTransform(scaleX: maskScale, y: maskScale))
+                .cropped(to: canvasRect)
+            blurFilter.setValue(fullCanvasMask, forKey: "inputMask")
 
             guard let output = blurFilter.outputImage?.cropped(to: canvasRect) else { return base }
-            defer { ciContext.clearCaches() }
-            return ciContext.createCGImage(output, from: canvasRect) ?? base
+            let ctx = currentCIContext()
+            defer { ctx.clearCaches() }
+            return ctx.createCGImage(output, from: canvasRect) ?? base
         }
     }
 
@@ -699,8 +894,10 @@ private enum ClassicArtworkFrameExtendedArtworkRenderer {
     /// and corners (box / Chebyshev distance from the inner rect). The
     /// (t,t,t,t) straight-alpha encoding matches the gradient-blur masks.
     private nonisolated static func edgeBlurMask(outputPixel: Int, insetPixel: Int) -> CGImage? {
-        let n = max(1, outputPixel)
-        let inset = max(1, insetPixel)
+        let dimension = min(max(1, outputPixel), 256)
+        let scale = Double(dimension) / Double(max(1, outputPixel))
+        let n = dimension
+        let inset = max(1, Int(round(Double(insetPixel) * scale)))
         guard inset * 2 < n else { return nil }
 
         // Band is narrow — precompute the ramp once per distance step.

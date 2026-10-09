@@ -8,5 +8,12 @@
 - HelperNext 内部协议/凭据处理：向
   [QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext) 报告。
 
+| 版本 | 安全评估 |
+| --- | --- |
+| `main` | 支持 |
+| 最新正式 Release | 支持 |
+| 更早的版本 | 不保证修复 |
+| 第三方修改版 | 不支持 |
+
 不要在公开 Issue 附带真实 cookie、token、QQ 账号凭据、用户曲库或未经脱敏的本机路径。
 报告请注明受影响 commit/Release、系统环境、影响和最小复现。

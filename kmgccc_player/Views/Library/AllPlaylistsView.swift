@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import MotionKit
 import SwiftUI
 
 private struct PlaylistDeletionRequest: Identifiable {
@@ -159,7 +160,7 @@ struct AllPlaylistsView: View {
                     )
                 }
             )
-            .padding(.horizontal, 24)
+            .padding(.horizontal, Constants.Layout.listHorizontalPadding)
             .padding(.top, 16)
         }
     }
@@ -257,7 +258,11 @@ private struct PlaylistListRow: View {
             Spacer(minLength: 8)
             trailingActions
         }
-        .padding(.horizontal, 12)
+        .padding(.leading, 12)
+        .padding(
+            .trailing,
+            max(0, 12 - (Constants.Layout.TrackRow.trailingMenuHitSize - 13) / 2)
+        )
         .padding(.vertical, 8)
         .frame(minHeight: 76)
         .background(
@@ -303,10 +308,12 @@ private struct PlaylistListRow: View {
                     cornerRadius: cornerRadius,
                     clipShape: .continuous,
                     iconSize: 22,
-                    iconOpacity: 0.4
+                    iconOpacity: 0.0,
+                    themeColor: Color.primary.opacity(0.04)
                 )
             }
         }
+        .motionAnimation(.microInteraction, value: image != nil)
         .frame(width: artworkSize, height: artworkSize)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .shadow(
@@ -356,12 +363,18 @@ private struct PlaylistListRow: View {
             Image(systemName: "ellipsis")
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(subtitleColor)
-                .frame(width: 24, height: 24)
+                .frame(
+                    width: Constants.Layout.TrackRow.trailingMenuHitSize,
+                    height: Constants.Layout.TrackRow.trailingMenuHitSize
+                )
                 .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
-        .frame(width: 24, height: 24)
+        .frame(
+            width: Constants.Layout.TrackRow.trailingMenuHitSize,
+            height: Constants.Layout.TrackRow.trailingMenuHitSize
+        )
         .opacity(isHovering ? 1 : 0.4)
         .disabled(!enableSecondaryInteractions)
         .allowsHitTesting(enableSecondaryInteractions)
@@ -397,12 +410,15 @@ private struct PlaylistListRow: View {
 
     private func loadHeaderImage(from resolved: ResolvedHeaderArtwork?) async -> NSImage? {
         guard let resolved else { return nil }
+        if let image = resolved.image {
+            return image
+        }
         let request = PlaylistArtworkPipeline.headerRequest(
             artworkIdentity: artworkIdentity,
-            artworkData: resolved.image?.tiffRepresentation,
+            artworkData: nil,
             fileURL: resolved.fileURL
         )
-        return await cacheServices.playlistArtworkPipeline.load(request) ?? resolved.image
+        return await cacheServices.playlistArtworkPipeline.load(request)
     }
 
     private func formattedDuration(_ seconds: Double) -> String {

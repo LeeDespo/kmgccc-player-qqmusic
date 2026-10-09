@@ -7,6 +7,8 @@
 //
 
 import AppKit
+import Foundation
+import MotionKit
 import SwiftUI
 
 struct SkinContext {
@@ -29,58 +31,34 @@ struct SkinContext {
         let duration: Double
         let artworkChecksum: UInt64
         let artworkData: Data?
+        let artworkFileURL: URL?
         let artworkImage: NSImage?
         let displayedArtworkID: UUID?
     }
 
     struct PlaybackState {
         let isPlaying: Bool
-        let currentTime: Double
-        let duration: Double
-        let progress: Double
     }
 
     struct ThemeTokens {
         let accentColor: Color
         let colorScheme: ColorScheme
-        let reduceMotion: Bool
-        let reduceTransparency: Bool
-        let glassIntensity: Double
-        /// Legacy background controls.
-        let backgroundBlur: Double
-        let backgroundBrightness: Double
-        let backgroundSaturation: Double
-        /// Mesh gradient controls.
-        let meshAmplitude: Double
-        let meshFlowSpeed: Double
-        let meshSharpness: Double
-        let meshSoftness: Double
-        let meshColorBoost: Double
-        let meshContrast: Double
-        let meshBassImpact: Double
         /// Accent derived from artwork for UI tint usage.
         let artworkAccentColor: Color?
         let artworkPalette: [NSColor]
-        let artworkRichPalette: [NSColor]
         let artworkAverageColor: NSColor?
         let artBackgroundIsUltraDark: Bool
         /// Spectrum-specific prepared palette and foreground mode.
         /// Reuses the exact same inputs as MiniPlayerSpectrumView.
         let spectrumArtworkColors: [NSColor]
         let spectrumUsesDarkForeground: Bool
-        /// Night-only luminance map for the cassette's dark shell and reels.
-        let cassetteTint: CassetteTintPalette
-        /// Background dynamics (transient overlays).
-        let kickToBrightnessMix: Double
-        let kickDisplaceAmount: Double
-        let kickScaleAmount: Double
     }
 
     let track: TrackMetadata?
     let playback: PlaybackState
-    let audio: AudioMetrics
-    let led: LEDMeterMetrics
     let theme: ThemeTokens
+    let motionTokens: MotionTokens
+    let motionPolicy: MotionPolicy
 
     /// Full available window size for the detail column.
     let windowSize: CGSize
@@ -123,9 +101,9 @@ extension SkinContext {
         SkinContext(
             track: track,
             playback: playback,
-            audio: audio,
-            led: led,
             theme: theme,
+            motionTokens: motionTokens,
+            motionPolicy: motionPolicy,
             windowSize: windowSize,
             contentBounds: CGRect(
                 origin: contentBounds.origin,

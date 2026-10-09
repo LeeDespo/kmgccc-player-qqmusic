@@ -26,7 +26,19 @@ HelperNext manifest/NOTICE/第三方许可证以及 Aria2 Next GPL 文本。
 如果锁定的较早组件资产未包含 NOTICE，只允许按 lock 中固定的补充来源 URL 与 Git blob 哈希下载并核验，
 不得静默省略或使用未经锁定的最新文本。
 
-Tag 使用 `v<upstream-version>+QQMusic.<patch-version>`，并与应用报告的 patchVersion 对齐。
+Tag 只使用补丁包自己的版本：`v<patch-version>`，与 `QQMusicComponentProcess.patchVersion` 对齐。
+上游版本不进 tag——它写在 Release 正文里，并链接到对应的上游 Release。
+
+补丁包自身发生变化（功能更新或上游适配）才发新 Release；上游升版而补丁无需改动时不发版，
+那种情况下旧补丁包对它的基线仍然有效。
+
+## Release 正文
+
+正文即 `qqmusic/release-notes/v<patch-version>.md`，必须写明：
+
+- 本次打补丁并构建验证过的 kmgccc_player 版本，以及指向该版本上游 Release 的超链接；
+- 补丁基线 commit（`qqmusic/integration/BASE`）与补丁版本；
+- 实际跑过的验证（干净 BASE 重放、构建、测试数）。
 
 ## 发布前
 

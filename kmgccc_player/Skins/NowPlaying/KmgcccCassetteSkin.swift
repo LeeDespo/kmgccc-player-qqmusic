@@ -9,23 +9,33 @@ import AppKit
 import Combine
 import CoreImage
 import ImageIO
+import MotionKit
 import QuartzCore
 import SwiftUI
 
 struct KmgcccCassetteSkin: NowPlayingSkin {
-    let id: String = "kmgccc.cassette"
-    let name: String = NSLocalizedString("skin.kmgccc_cassette.name", comment: "")
-    let detail: String = NSLocalizedString("skin.kmgccc_cassette.detail", comment: "")
-    let systemImage: String = "music.note.list"
-    var isFullscreenCompatible: Bool { true }
-    var isNowPlayingCompatible: Bool { true }
+    let descriptor = SkinDescriptor(
+        id: "kmgccc.cassette",
+        name: NSLocalizedString("skin.kmgccc_cassette.name", comment: ""),
+        detail: NSLocalizedString("skin.kmgccc_cassette.detail", comment: ""),
+        systemImage: "music.note.list",
+        presentation: SkinPresentationPolicy(artBackgroundResourceProfile: .foreground),
+        audio: SkinAudioDefaults(window: .miniPlayerLED, fullscreen: .off, supportsEmbeddedVisualizer: false),
+        artwork: SkinArtworkDefaults(scale: 1.25),
+        fullscreenTypography: SkinDescriptor.coverTypography,
+        legacy: SkinLegacySettings(
+            visualizerNamespace: "skin.kmgcccCassette",
+            previousFullscreenVisualization: .miniPlayerLED,
+            defaultsMiniPlayerSpectrumOn: false
+        )
+    )
 
     func makeBackground(context: SkinContext) -> AnyView {
         AnyView(UnifiedNowPlayingBackground(context: context))
     }
 
     func makeArtwork(context: SkinContext) -> AnyView {
-        AnyView(CassetteArtwork(context: context).equatable())
+        AnyView(CassetteArtworkHost(context: context))
     }
 
     func makeOverlay(context: SkinContext) -> AnyView? {
@@ -38,6 +48,15 @@ struct KmgcccCassetteSkin: NowPlayingSkin {
 
     var fullscreenSettingsView: AnyView? {
         AnyView(KmgcccCassetteFullscreenSettingsView())
+    }
+
+    static func purgeCaches() {
+        CassetteThemeAssetCache.shared.removeAll()
+    }
+
+    func releaseCachedResources() async {
+        await CassetteArtworkCache.shared.removeAll()
+        Self.purgeCaches()
     }
 }
 
@@ -142,8 +161,8 @@ private final class CassetteThemeAssetCache {
     private var resolvedAspectRatio: CGFloat?
 
     private init() {
-        cache.countLimit = 4
-        cache.totalCostLimit = 32 * 1024 * 1024
+        cache.countLimit = 2
+        cache.totalCostLimit = 4 * 1024 * 1024
     }
 
     func imageSet(
@@ -199,7 +218,7 @@ private final class CassetteThemeAssetCache {
         lock.unlock()
 
         let ratio: CGFloat
-        if let image = loadImage(resource: .light, maxPixel: 4096), image.size.height > 0 {
+        if let image = loadImage(resource: .light, maxPixel: 256), image.size.height > 0 {
             ratio = image.size.width / image.size.height
         } else {
             ratio = 3149.0 / 2006.0
@@ -364,6 +383,16 @@ private enum CassetteAssetToneMapper {
     }
 }
 
+private struct CassetteArtworkHost: View {
+    let context: SkinContext
+    @EnvironmentObject private var themeStore: ThemeStore
+
+    var body: some View {
+        CassetteArtwork(context: context, tint: themeStore.semanticPalette.cassetteTint)
+            .equatable()
+    }
+}
+
 private struct CassetteArtwork: View, Equatable {
     private struct ArtworkSourceIdentity: Equatable {
         let trackID: UUID?
@@ -379,6 +408,7 @@ private struct CassetteArtwork: View, Equatable {
     }
 
     let context: SkinContext
+    let tint: CassetteTintPalette
     @AppStorage("skin.kmgcccCassette.showKmgLook") private var showKmgLook: Bool = false
     @Environment(\.displayScale) private var displayScale
     @State private var adjustedArtworkImage: NSImage?
@@ -392,6 +422,10 @@ private struct CassetteArtwork: View, Equatable {
     @AppStorage("skin.kmgcccCassette.visualizerMode") private var normalVisualizerMode: String = "off"
     @AppStorage("skin.kmgcccCassette.fullscreen.visualizerMode") private var fullscreenVisualizerMode: String = "off"
 
+    private var kmgLookTransitionAnimation: Animation? {
+        context.motionPolicy.animation(for: context.motionTokens[.contentReplacement])
+    }
+
     static func == (lhs: CassetteArtwork, rhs: CassetteArtwork) -> Bool {
         lhs.showKmgLook == rhs.showKmgLook
             && lhs.normalVisualizerMode == rhs.normalVisualizerMode
@@ -404,7 +438,7 @@ private struct CassetteArtwork: View, Equatable {
             && lhs.context.lyricsVisible == rhs.context.lyricsVisible
             && lhs.context.contentBounds.size == rhs.context.contentBounds.size
             && waveformPaletteSignature(for: lhs.context) == waveformPaletteSignature(for: rhs.context)
-            && cassetteTintSignature(for: lhs.context) == cassetteTintSignature(for: rhs.context)
+            && cassetteTintSignature(for: lhs.context, tint: lhs.tint) == cassetteTintSignature(for: rhs.context, tint: rhs.tint)
     }
 
     var body: some View {
@@ -458,10 +492,10 @@ private struct CassetteArtwork: View, Equatable {
                     .scaleEffect(1.50)
                     // Let it extend beyond the cassette bounds into the background.
                     .offset(x: 52, y: -7)
-                    .transition(.opacity.animation(.easeInOut(duration: 0.3)))
+                    .transition(.opacity.animation(kmgLookTransitionAnimation))
             }
         }
-        .overlay(HolesOverlay(context: context))
+        .overlay(HolesOverlay(context: context, tint: tint))
         .overlay(WaveformCapsulesLayer(context: context).zIndex(999))
         .frame(width: size.width, height: size.height)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
@@ -512,7 +546,7 @@ private struct CassetteArtwork: View, Equatable {
         if let image = context.track?.artworkImage {
             return Image(nsImage: image)
         }
-        if let image = ArtAssetLoader.shared.xcAssetImage(named: "seasons", maxPixel: 1_600) {
+        if let image = ArtAssetLoader.shared.xcAssetImage(named: "seasons", maxPixel: 960) {
             return Image(nsImage: image)
         }
         return Image(systemName: "music.note")
@@ -536,8 +570,8 @@ private struct CassetteArtwork: View, Equatable {
         return hasher.finalize()
     }
 
-    private static func cassetteTintSignature(for context: SkinContext) -> Int {
-        context.theme.colorScheme == .dark ? context.theme.cassetteTint.signature : 0
+    private static func cassetteTintSignature(for context: SkinContext, tint: CassetteTintPalette) -> Int {
+        context.theme.colorScheme == .dark ? tint.signature : 0
     }
 
     private static func append(color: NSColor?, to hasher: inout Hasher) {
@@ -558,8 +592,25 @@ private struct CassetteArtwork: View, Equatable {
             trackID: track?.id,
             displayedArtworkID: track.map { $0.displayedArtworkID ?? $0.id },
             artworkChecksum: track?.artworkChecksum ?? 0,
-            dataFingerprint: ArtworkDataFingerprint.sampledHash(for: track?.artworkData)
+            dataFingerprint: artworkFingerprint(for: track)
         )
+    }
+
+    private static func artworkFingerprint(for track: SkinContext.TrackMetadata?) -> UInt64 {
+        if let artworkFileURL = track?.artworkFileURL,
+           let values = try? artworkFileURL.resourceValues(
+                forKeys: [.fileSizeKey, .contentModificationDateKey]
+           ) {
+            var hasher = Hasher()
+            hasher.combine(artworkFileURL.standardizedFileURL.path)
+            hasher.combine(values.fileSize ?? 0)
+            hasher.combine(values.contentModificationDate)
+            return UInt64(bitPattern: Int64(hasher.finalize()))
+        }
+        if let artworkData = track?.artworkData, !artworkData.isEmpty {
+            return ArtworkDataFingerprint.sampledHash(for: artworkData)
+        }
+        return track?.artworkChecksum ?? 0
     }
 
     private func artworkProcessingInputKey(for size: CGSize) -> ProcessingInputKey {
@@ -575,7 +626,14 @@ private struct CassetteArtwork: View, Equatable {
         processingGeneration &+= 1
         let generation = processingGeneration
 
-        guard let track = context.track, let data = track.artworkData, !data.isEmpty else {
+        guard let track = context.track else {
+            processingTask = nil
+            clearAdjustedArtworkState(resetRenderKey: true)
+            return
+        }
+        let cachedData = track.artworkData.flatMap { $0.isEmpty ? nil : $0 }
+        let artworkURL = track.artworkFileURL
+        guard cachedData != nil || artworkURL != nil else {
             processingTask = nil
             clearAdjustedArtworkState(resetRenderKey: true)
             return
@@ -586,7 +644,7 @@ private struct CassetteArtwork: View, Equatable {
         let midAnchor = 0.5
         let seed = UInt64(bitPattern: Int64(track.id.uuidString.hashValue))
         let maxPixel = processingMaxPixel(for: targetSize)
-        let dataFingerprint = ArtworkDataFingerprint.sampledHash(for: data)
+        let dataFingerprint = Self.artworkFingerprint(for: track)
         let key = makeToneKey(
             trackID: track.id,
             scheme: context.theme.colorScheme,
@@ -614,6 +672,25 @@ private struct CassetteArtwork: View, Equatable {
                     self.processingTask = nil
                 }
             }
+
+            let cacheGeneration = await CassetteArtworkCache.shared.generation()
+            var data: Data?
+            if let artworkURL {
+                let readTask = Task.detached(priority: .utility) { () -> Data? in
+                    guard !Task.isCancelled else { return nil }
+                    let data = try? Data(contentsOf: artworkURL)
+                    return Task.isCancelled ? nil : data
+                }
+                data = await withTaskCancellationHandler {
+                    await readTask.value
+                } onCancel: {
+                    readTask.cancel()
+                }
+            }
+            if data?.isEmpty != false {
+                data = cachedData
+            }
+            guard !Task.isCancelled, let data, !data.isEmpty else { return }
 
             if let cached = await CassetteArtworkCache.shared.image(for: key),
                 !Task.isCancelled
@@ -657,11 +734,15 @@ private struct CassetteArtwork: View, Equatable {
                     cgImage: result.image,
                     size: NSSize(width: result.image.width, height: result.image.height)
                 )
-                Task {
-                    await CassetteArtworkCache.shared.setImage(image, for: key)
-                }
                 self.adjustedArtworkImage = image
                 self.adjustedArtworkKey = key
+                Task {
+                    await CassetteArtworkCache.shared.setImage(
+                        image,
+                        for: key,
+                        generation: cacheGeneration
+                    )
+                }
             }
         }
     }
@@ -690,20 +771,20 @@ private struct CassetteArtwork: View, Equatable {
         let longestSide = max(displayedWidth, displayedHeight)
         let overscan = max(1.15, min(1.35, displayedWidth / max(1, displayedHeight)))
         let target = Int(ceil(longestSide * resolvedScale * overscan))
-        return min(1_600, max(640, target))
+        return min(1_080, max(640, target))
     }
 
     private func themeMaxPixel(for size: CGSize) -> Int {
         let resolvedScale = max(1.0, displayScale)
         let longestSide = max(size.width, size.height)
         let target = Int(ceil(longestSide * resolvedScale * 1.18))
-        return min(1_100, max(640, target))
+        return min(960, max(640, target))
     }
 
     private func cassetteThemeImages(for size: CGSize) -> CassetteThemeImageSet? {
         CassetteThemeAssetCache.shared.imageSet(
             colorScheme: context.theme.colorScheme,
-            cassetteTint: context.theme.cassetteTint,
+            cassetteTint: tint,
             maxPixel: themeMaxPixel(for: size)
         )
     }
@@ -712,9 +793,9 @@ private struct CassetteArtwork: View, Equatable {
         if let image {
             return Image(nsImage: image)
         }
-        if let image = ArtAssetLoader.shared.xcAssetImage(named: name, maxPixel: 1_600) {
+        if let image = ArtAssetLoader.shared.xcAssetImage(named: name, maxPixel: 960) {
             let rendered = context.theme.colorScheme == .dark && name == "tapedark"
-                ? CassetteAssetToneMapper.colorized(image, tint: context.theme.cassetteTint) ?? image
+                ? CassetteAssetToneMapper.colorized(image, tint: tint) ?? image
                 : image
             return Image(nsImage: rendered)
         }
@@ -781,14 +862,20 @@ actor CassetteArtworkCache {
     private var keys: [String] = []
     private var costs: [String: Int] = [:]
     private var totalBytes = 0
-    private let maxCount = 48
-    private let maxTotalBytes = 24 * 1024 * 1024
+    private let maxCount = 8
+    private let maxTotalBytes = 4 * 1024 * 1024
+    private var memoryGeneration: UInt64 = 0
+
+    func generation() -> UInt64 {
+        memoryGeneration
+    }
 
     func image(for key: String) -> NSImage? {
         storage[key]
     }
 
-    func setImage(_ image: NSImage, for key: String) {
+    func setImage(_ image: NSImage, for key: String, generation: UInt64) {
+        guard memoryGeneration == generation else { return }
         if storage[key] == nil {
             keys.append(key)
         }
@@ -809,6 +896,7 @@ actor CassetteArtworkCache {
     }
 
     func removeAll() {
+        memoryGeneration &+= 1
         storage.removeAll()
         keys.removeAll()
         costs.removeAll()
@@ -1279,12 +1367,13 @@ private enum WaveformCapsulesPalette {
 
 private struct HolesOverlay: View {
     let context: SkinContext
+    let tint: CassetteTintPalette
     @Environment(\.displayScale) private var displayScale
 
     var body: some View {
         CassetteHoleRotationRepresentable(
             imageName: context.theme.colorScheme == .dark ? "darkhole" : "lighthole",
-            tint: context.theme.cassetteTint,
+            tint: tint,
             isPlaying: context.playback.isPlaying,
             displayScale: displayScale
         )

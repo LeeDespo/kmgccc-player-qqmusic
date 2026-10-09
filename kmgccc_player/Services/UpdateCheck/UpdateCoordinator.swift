@@ -504,18 +504,17 @@ final class UpdateCoordinator: NSObject, ObservableObject {
         releaseNotesTask?.cancel()
         releaseNotesTask = nil
         guard let notesURL = item.releaseNotesURL else { return }
+        let requestURL = UpdateReleaseNotesSource.requestURL(for: notesURL)
 
         releaseNotesTask = Task { [weak self] in
-            guard let (data, response) = try? await URLSession.shared.data(from: notesURL),
+            guard let (data, response) = try? await URLSession.shared.data(from: requestURL),
                   let httpResponse = response as? HTTPURLResponse,
                   (200..<300).contains(httpResponse.statusCode),
                   !Task.isCancelled else {
                 return
             }
 
-            let notes = UpdateReleaseNotesParser.parse(
-                String(decoding: data, as: UTF8.self)
-            )
+            let notes = UpdateReleaseNotesSource.parseResponse(data, from: requestURL)
             guard !notes.isEmpty, !Task.isCancelled else { return }
 
             await MainActor.run {
@@ -558,7 +557,7 @@ final class UpdateCoordinator: NSObject, ObservableObject {
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = "发现新版本 \(item.displayVersionString)"
-        alert.informativeText = "点击后将在后台安全下载。完成后可从侧边栏一键重启更新。"
+        alert.informativeText = "下载完成后重启，即可更新到最新版本的 kmgccc_player，体验新功能或问题修复。"
         alert.addButton(withTitle: "下载更新")
         alert.addButton(withTitle: "稍后")
         NSApp.activate(ignoringOtherApps: true)

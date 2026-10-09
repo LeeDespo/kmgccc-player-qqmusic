@@ -5,6 +5,7 @@
 //  kmgccc_player - Appearance Settings View
 //
 
+import MotionKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -14,8 +15,11 @@ struct AppearanceSettingsView: View {
     @EnvironmentObject private var themeStore: ThemeStore
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.settingsAppForegroundColors) private var appColors
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.motionTokens) private var motionTokens
+    @Environment(\.motionPolicy) private var configuredMotionPolicy
 
-    @State private var globalArtworkTintEnabled: Bool = AppSettings.shared.globalArtworkTintEnabled
+    @State private var artworkTintMode: AppSettings.ArtworkTintMode = AppSettings.shared.artworkTintMode
     @State private var audioVisualizationHDREnabled: Bool = AppSettings.shared.audioVisualizationHDREnabled
     @State private var dockProgressVisible: Bool = AppSettings.shared.dockProgressVisible
     @State private var followSystemAppearance: Bool = AppSettings.shared.followSystemAppearance
@@ -53,6 +57,21 @@ struct AppearanceSettingsView: View {
     private let dragHorizontalDamping: CGFloat = 0.45
     private let dragHorizontalLimit: CGFloat = 28
 
+    private var motionPolicy: MotionPolicy {
+        configuredMotionPolicy.resolving(accessibilityReduceMotion: reduceMotion)
+    }
+
+    private var reorderAnimation: Animation? {
+        motionPolicy.animation(for: motionTokens[.control])
+    }
+
+    private func settleAnimation(initialVelocity: Double = 0) -> Animation? {
+        motionPolicy.animation(
+            for: motionTokens[.gestureSettle],
+            initialVelocity: initialVelocity
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             SettingsHeaderLabel("外观", systemImage: "paintpalette")
@@ -60,12 +79,8 @@ struct AppearanceSettingsView: View {
             SettingsSection("常规") {
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(alignment: .top, spacing: 14) {
-                        SettingsSwitchRow(
-                            title: "全局取色",
-                            isOn: $globalArtworkTintEnabled,
-                            detail: "开启后界面配色将跟随当前播放封面的主色调动态变化"
-                        )
-                        .frame(maxWidth: .infinity)
+                        artworkTintModePicker
+                            .frame(maxWidth: .infinity)
 
                         Divider()
                             .frame(height: 18)
@@ -102,7 +117,7 @@ struct AppearanceSettingsView: View {
             }
         }
         .onAppear {
-            globalArtworkTintEnabled = settings.globalArtworkTintEnabled
+            artworkTintMode = settings.artworkTintMode
             audioVisualizationHDREnabled = settings.audioVisualizationHDREnabled
             dockProgressVisible = settings.dockProgressVisible
             followSystemAppearance = settings.followSystemAppearance
@@ -110,10 +125,10 @@ struct AppearanceSettingsView: View {
             homeCardMaterialMode = settings.homeCardMaterialMode
             homeSectionOrder = settings.homeSectionOrder
         }
-        .onChange(of: globalArtworkTintEnabled) { _, newValue in
-            settings.globalArtworkTintEnabled = newValue
+        .onChange(of: artworkTintMode) { _, newValue in
+            settings.artworkTintMode = newValue
             Task { @MainActor in
-                await themeStore.refreshPalette(reason: "settings_global_tint_change")
+                await themeStore.refreshPalette(reason: "settings_artwork_tint_mode_change")
             }
         }
         .onChange(of: audioVisualizationHDREnabled) { _, newValue in
@@ -137,6 +152,50 @@ struct AppearanceSettingsView: View {
         }
     }
 
+    private var artworkTintModePicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("动态取色")
+                    .settingsRowLabelStyle()
+
+                Spacer(minLength: 6)
+
+                SlidingSelector(
+                    segments: AppSettings.ArtworkTintMode.allCases,
+                    selection: $artworkTintMode,
+                    hSpacing: 0,
+                    background: {
+                        Color.clear
+                    },
+                    knob: {
+                        Capsule()
+                            .fill(themeStore.accentColor.opacity(0.18))
+                    },
+                    content: { mode, isSelected in
+                        Text(mode.title)
+                            .font(.system(size: 11, weight: isSelected ? .medium : .regular))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .foregroundStyle(
+                                isSelected ? themeStore.accentColor : (appColors?.secondary ?? .secondary)
+                            )
+                            .frame(minWidth: 34)
+                    }
+                )
+                .padding(3)
+                .background(
+                    Capsule()
+                        .fill((appColors?.secondary ?? .secondary).opacity(0.08))
+                )
+                .fixedSize(horizontal: true, vertical: false)
+            }
+
+            Text("简洁使用默认色，动态跟随播放封面，丰富为列表歌曲分别取色")
+                .font(.system(size: 11))
+                .foregroundStyle(appColors?.secondary ?? .secondary)
+        }
+    }
+
     private var lyricsBackgroundModePicker: some View {
         HStack(spacing: 8) {
             Text("歌词卡片背景")
@@ -147,7 +206,6 @@ struct AppearanceSettingsView: View {
             SlidingSelector(
                 segments: AppSettings.LyricsBackgroundMode.allCases,
                 selection: $lyricsBackgroundMode,
-                animation: .spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.08),
                 hSpacing: 0,
                 background: {
                     Color.clear
@@ -185,7 +243,6 @@ struct AppearanceSettingsView: View {
             SlidingSelector(
                 segments: AppSettings.HomeCardMaterialMode.allCases,
                 selection: $homeCardMaterialMode,
-                animation: .spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.08),
                 hSpacing: 0,
                 background: {
                     Color.clear
@@ -259,7 +316,7 @@ struct AppearanceSettingsView: View {
                 Spacer(minLength: 0)
 
                 Button("恢复默认排序") {
-                    withAnimation(.spring(response: 0.28, dampingFraction: 0.86)) {
+                withAnimation(reorderAnimation) {
                         homeSectionOrder = HomeSection.defaultOrder
                         draggingSection = nil
                         isFinishingDrag = false
@@ -343,14 +400,14 @@ struct AppearanceSettingsView: View {
 
                 // Animate ONLY the reorder, so neighbours slide while the pill
                 // keeps tracking the cursor without any animation interference.
-                withAnimation(.snappy(duration: 0.16)) {
+                withAnimation(reorderAnimation) {
                     homeSectionOrder.move(
                         fromOffsets: IndexSet(integer: current),
                         toOffset: target > current ? target + 1 : target
                     )
                 }
             }
-            .onEnded { _ in
+            .onEnded { value in
                 // Persist once at the end (not per onChanged) to avoid hammering
                 // UserDefaults.
                 saveHomeSectionOrder(homeSectionOrder)
@@ -358,19 +415,39 @@ struct AppearanceSettingsView: View {
                 // Settle the floating pill onto its final slot (x → 0, y → final
                 // row origin) before the real row reappears, so there is no pop.
                 let finalIndex = homeSectionOrder.firstIndex(of: section) ?? dragStartIndex
+                let finalY = CGFloat(finalIndex) * homeRowStride
+                let initialVelocity = MotionSpec.clampedInitialVelocity(
+                    MotionSpec.normalizedInitialVelocity(
+                        from: dragFloatingY,
+                        to: finalY,
+                        velocity: Double(value.velocity.height)
+                    )
+                )
                 isFinishingDrag = true
-                withAnimation(.snappy(duration: 0.16)) {
+                withAnimation(settleAnimation(initialVelocity: initialVelocity)) {
                     dragFloatingX = 0
-                    dragFloatingY = CGFloat(finalIndex) * homeRowStride
+                    dragFloatingY = finalY
                 }
 
                 // Clear only after the settle animation, and only if a new drag
                 // has not taken over in the meantime (token guards against the
                 // stale async callback wiping a fresh drag).
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                let cleanupDelay = motionPolicy.visualCompletionDelay(
+                    for: motionTokens[.gestureSettle],
+                    initialVelocity: initialVelocity
+                )
+                let clearDrag = {
                     guard isFinishingDrag, draggingSection == section else { return }
                     draggingSection = nil
                     isFinishingDrag = false
+                }
+                if cleanupDelay <= .leastNonzeroMagnitude {
+                    clearDrag()
+                } else {
+                    DispatchQueue.main.asyncAfter(
+                        deadline: .now() + cleanupDelay,
+                        execute: clearDrag
+                    )
                 }
             }
     }

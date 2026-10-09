@@ -23,6 +23,9 @@ nonisolated struct QQMusicArtworkCandidate: Codable, Equatable, Sendable {
 
 nonisolated enum MetadataDetailSource: String, Codable, Sendable {
     case qqmusic
+    // Upstream's automation protocol records this source too, and reads the enum
+    // from here now that the helper client it used to live in is gone.
+    case musicbrainz
 }
 
 nonisolated struct QQMusicMetadataDetail: Codable, Equatable, Sendable {

@@ -7,7 +7,8 @@
 //
 
 import AppKit
-import NativeLyrics
+import MelismaKit
+import MotionKit
 import SwiftData
 import SwiftUI
 
@@ -30,6 +31,7 @@ final class AppKitMainSplitViewController: NSSplitViewController {
     private var suspendedSidebarVisibilityForEmbeddedFullscreen: Bool?
     private var isEmbeddedFullscreenPaneSuppressionActive = false
     private var isApplyingInitialLayout = false
+    private var isSkinScenePaneSuppressionActive = false
 
     init(appSession: AppSessionHost) {
         self.appSession = appSession
@@ -156,6 +158,10 @@ final class AppKitMainSplitViewController: NSSplitViewController {
     }
 
     override func toggleInspector(_ sender: Any?) {
+        if appSession.uiState.usesSkinScene {
+            appSession.uiState.toggleLyrics()
+            return
+        }
         super.toggleInspector(sender)
         publishHomeLayoutGeometry(windowSize: view.bounds.size)
         mirrorSplitStateToUIState(reason: "toggleInspector")
@@ -215,6 +221,10 @@ final class AppKitMainSplitViewController: NSSplitViewController {
         animated: Bool = true,
         preserveMirroredState: Bool = false
     ) {
+        if appSession.uiState.usesSkinScene && !preserveMirroredState {
+            appSession.uiState.skinSceneLyricsVisible = visible
+            return
+        }
         PaneLayoutTrace.log(
             "splitView.setLyricsVisible requested=\(visible) current=\(isLyricsVisible) suppression=\(isEmbeddedFullscreenPaneSuppressionActive) embedded=\(FullscreenWindowManager.shared.presentationMode) caller=\(PaneLayoutTrace.callerSummary(skip: 3))"
         )
@@ -251,6 +261,18 @@ final class AppKitMainSplitViewController: NSSplitViewController {
         }
     }
 
+    func setSkinSceneActive(_ active: Bool) {
+        isSkinScenePaneSuppressionActive = active
+        setLyricsVisible(active ? false : appSession.uiState.lyricsVisible,
+                         animated: false, preserveMirroredState: true)
+        if !active {
+            LyricsSurfaceManager.shared.reportMainVisible(
+                isLyricsVisible && !appSession.uiState.isWindowPlaybackQueueVisible
+                    && LyricsSurfaceManager.shared.targetMode == .main
+            )
+        }
+    }
+
     func setEmbeddedFullscreenActive(_ active: Bool) {
         PaneLayoutTrace.log(
             "splitView.setEmbeddedFullscreenActive active=\(active) currentSuppression=\(isEmbeddedFullscreenPaneSuppressionActive) sidebar=\(isSidebarVisible) lyrics=\(isLyricsVisible)"
@@ -260,7 +282,7 @@ final class AppKitMainSplitViewController: NSSplitViewController {
             suspendedSidebarVisibilityForEmbeddedFullscreen = isSidebarVisible
             isEmbeddedFullscreenPaneSuppressionActive = true
             if isSidebarVisible {
-                setSidebarVisible(false, preserveMirroredState: true)
+                setSidebarVisible(false, animated: false, preserveMirroredState: true)
             }
             return
         }
@@ -443,7 +465,7 @@ final class AppKitMainSplitViewController: NSSplitViewController {
         if uiState.sidebarVisible != sidebarVisible {
             uiState.sidebarVisible = sidebarVisible
         }
-        if uiState.lyricsVisible != lyricsVisible {
+        if !isSkinScenePaneSuppressionActive, uiState.lyricsVisible != lyricsVisible {
             uiState.lyricsVisible = lyricsVisible
         }
 
@@ -455,7 +477,7 @@ final class AppKitMainSplitViewController: NSSplitViewController {
             }
         }
 
-        if lyricsVisible {
+        if lyricsVisible && !isSkinScenePaneSuppressionActive {
             let width = lyricsItem.viewController.view.frame.width
             if abs(width - lastMirroredLyricsWidth) > 0.5 {
                 lastMirroredLyricsWidth = width
@@ -677,7 +699,7 @@ final class CenterPanePassthroughViewController: NSViewController {
 // MARK: - Flat AppKit lyrics inspector pane
 
 /// Production lyrics inspector pane.
-/// Hosts the reusable NativeLyrics layer-backed view directly in AppKit so
+/// Hosts the reusable MelismaKit layer-backed view directly in AppKit so
 /// normal track switches do not re-wrap the renderer in SwiftUI. A zero-sized
 /// `NSHostingController` child keeps the non-visual LyricsViewModel bindings
 /// alive (seek callback, time sync, settings observation).
@@ -786,7 +808,7 @@ final class LyricsFlatAppKitHostViewController: NSViewController {
         // Attachment changes are the only reason to touch the surface owner
         // from this hot layout callback. AppKit will lay out the child after
         // its frame changes; forcing a synchronous subtree layout here made
-        // every window-resize tick enter NativeLyrics' text reflow on the
+        // every window-resize tick enter MelismaKit's text reflow on the
         // main thread.
         let isAttached = nativeLyricsView.superview === view
         if isAttached != shouldAttachLyricsSurface {
@@ -803,6 +825,7 @@ final class LyricsFlatAppKitHostViewController: NSViewController {
         else { return }
 
         let driverView = LyricsFlatDriverView()
+            .motionEnvironment()
             .environment(AppSettings.shared)
             .environment(appSession.uiState)
             .environment(libraryVM)
@@ -830,6 +853,7 @@ final class LyricsFlatAppKitHostViewController: NSViewController {
         else { return }
 
         let queueView = WindowPlaybackQueuePanelView()
+            .motionEnvironment()
             .environment(AppSettings.shared)
             .environment(appSession.uiState)
             .environment(libraryVM)
@@ -850,6 +874,7 @@ final class LyricsFlatAppKitHostViewController: NSViewController {
         vc.view.autoresizingMask = [.width, .height]
         vc.view.wantsLayer = true
         vc.view.layer?.backgroundColor = NSColor.clear.cgColor
+        vc.view.isHidden = !appSession.uiState.isWindowPlaybackQueueVisible
         view.addSubview(vc.view, positioned: .above, relativeTo: nativeLyricsView)
         addChild(vc)
         queueOverlayVC = vc
@@ -888,9 +913,12 @@ final class LyricsFlatAppKitHostViewController: NSViewController {
 
     private func syncVisibilityAndAttachment(reason: String) {
         guard isViewLoaded else { return }
-        AMLLLifecycleDiagnostics.emit(
-            "mainHost.sync reason=\(reason) target=\(String(describing: LyricsSurfaceManager.shared.targetMode)) shouldAttach=\(shouldAttachLyricsSurface) viewHidden=\(view.isHidden) hasWindow=\(view.window != nil) hostBounds=\(nativeLyricsView.bounds)"
-        )
+        if appSession.uiState.usesSkinScene {
+            queueOverlayVC?.view.isHidden = true
+            detachNativeView()
+            return
+        }
+        queueOverlayVC?.view.isHidden = !appSession.uiState.isWindowPlaybackQueueVisible
         guard shouldAttachLyricsSurface else {
             reportMainSurfaceVisible(false)
             detachNativeView()

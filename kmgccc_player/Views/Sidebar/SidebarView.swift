@@ -12,6 +12,7 @@
 
 import Observation
 import AppKit
+import MotionKit
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -32,6 +33,9 @@ struct SidebarView: View {
     @EnvironmentObject private var appSession: AppSessionHost
     @EnvironmentObject private var themeStore: ThemeStore
     @Environment(\.colorScheme) private var currentColorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.motionTokens) private var motionTokens
+    @Environment(\.motionPolicy) private var configuredMotionPolicy
     @ObservedObject private var updateCoordinator = UpdateCoordinator.shared
     /// `@Observable`, so it is read directly rather than through `@ObservedObject`.
     @ObservedObject private var crashReportService = CrashReportService.shared
@@ -61,6 +65,18 @@ struct SidebarView: View {
     @State private var updateReleaseNotesToShow: UpdateReleaseNotesNotice?
 
     private let scrollFadeHeight: CGFloat = 28
+
+    private var motionPolicy: MotionPolicy {
+        configuredMotionPolicy.resolving(accessibilityReduceMotion: reduceMotion)
+    }
+
+    private var microInteractionAnimation: Animation? {
+        motionPolicy.animation(for: motionTokens[.microInteraction])
+    }
+
+    private var controlAnimation: Animation? {
+        motionPolicy.animation(for: motionTokens[.control])
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -268,7 +284,7 @@ struct SidebarView: View {
                     }
                 } header: {
                     Button {
-                        withAnimation {
+                        withAnimation(microInteractionAnimation) {
                             isArtistsExpanded.toggle()
                         }
                     } label: {
@@ -362,7 +378,7 @@ struct SidebarView: View {
                     }
                 } header: {
                     Button {
-                        withAnimation {
+                        withAnimation(microInteractionAnimation) {
                             isAlbumsExpanded.toggle()
                         }
                     } label: {
@@ -404,12 +420,14 @@ struct SidebarView: View {
             Divider()
 
             // Bottom controls
-            HStack(spacing: 8) {
-                settingsButton
-                qqMusicButton
-                appearanceSwitchButton
-                fullscreenButton
-                Spacer(minLength: 0)
+            GlassEffectContainer(spacing: 8) {
+                HStack(spacing: 8) {
+                    settingsButton
+                    qqMusicButton
+                    appearanceSwitchButton
+                    fullscreenButton
+                    Spacer(minLength: 0)
+                }
             }
             .tint(themeStore.accentColor)
             .padding(.horizontal, 12)
@@ -465,14 +483,14 @@ struct SidebarView: View {
             get: { QQMusicWindowManager.shared.isPresented },
             set: { QQMusicWindowManager.shared.isPresented = $0 }
         ), onDismiss: {
-            FeatureTipPresentationCoordinator.shared.setSuspended(false)
+            FeatureTipPresentationCoordinator.shared.setSuspended(false, reason: .qqMusicWindow)
         }) {
             QQMusicSettingsView(coordinator: appSession.qqMusicOnlineCoordinator)
                 .environment(AppSettings.shared)
                 .environmentObject(themeStore)
         }
         .sheet(isPresented: $showSettings, onDismiss: {
-            FeatureTipPresentationCoordinator.shared.setSuspended(false)
+            FeatureTipPresentationCoordinator.shared.setSuspended(false, reason: .settingsSheet)
         }) {
             SettingsView(hasActiveLibrarySession: true)
                 .environment(settings)
@@ -527,13 +545,14 @@ struct SidebarView: View {
         }
         .onChange(of: settings.enableSystemNowPlayingMode) { _, enabled in
             if !enabled, playbackCoordinator.activeSource == .systemNowPlaying {
-                withAnimation(.snappy(duration: 0.18)) {
+                withAnimation(microInteractionAnimation) {
                     playbackCoordinator.setActiveSource(.local)
                 }
             }
         }
-        .animation(.snappy(duration: 0.2), value: importEnrichmentService.hasOutstandingWork)
-        .animation(.snappy(duration: 0.2), value: uiState.sidebarNotice?.id)
+        .motionAnimation(.microInteraction, value: importEnrichmentService.hasOutstandingWork)
+        .motionAnimation(.microInteraction, value: uiState.sidebarNotice?.id)
+        .motionAnimation(.microInteraction, value: hasSidebarTaskProgress)
         .sheet(item: $failedEnrichmentEditRequest) { request in
             // Reuses the exact multi-track metadata editor from the library
             // list so failed enrichment items can be fixed by hand.
@@ -825,7 +844,15 @@ struct SidebarView: View {
     private var activeLibraryImportTask: LibraryOperationTaskDescriptor? {
         appSession.activeLibraryTasks.reversed().first { task in
             !task.state.isTerminal
-                && [.importFiles, .sourceScan, .ncmConversion, .enrichment].contains(task.kind)
+                && [
+                    .importFiles,
+                    .sourceScan,
+                    .ncmConversion,
+                    .enrichment,
+                    .automation,
+                    .libraryBundleExport,
+                    .embeddedTagWrite
+                ].contains(task.kind)
         }
     }
 
@@ -833,9 +860,12 @@ struct SidebarView: View {
         if let task = activeLibraryImportTask {
             let title: String
             switch task.kind {
+            case .libraryBundleExport: title = "正在导出资料库"
+            case .embeddedTagWrite: title = "正在写入音频标签"
             case .sourceScan: title = "正在扫描来源"
             case .ncmConversion: title = "正在转换歌曲"
             case .enrichment: title = "正在补全信息"
+            case .automation: title = "正在处理自动化任务"
             default: title = "正在导入歌曲"
             }
             return SidebarTaskProgress(
@@ -869,12 +899,11 @@ struct SidebarView: View {
             selection: Binding(
                 get: { playbackCoordinator.activeSource },
                 set: { source in
-                    withAnimation(.snappy(duration: 0.18)) {
+                    withAnimation(microInteractionAnimation) {
                         playbackCoordinator.setActiveSource(source)
                     }
                 }
             ),
-            animation: .spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.08),
             hSpacing: 0,
             background: {
                 Color.clear
@@ -971,13 +1000,13 @@ struct SidebarView: View {
             help: "QQ 音乐",
             surfaceVariant: .sidebarBottom
         ) {
-            FeatureTipPresentationCoordinator.shared.setSuspended(true)
+            FeatureTipPresentationCoordinator.shared.setSuspended(true, reason: .qqMusicWindow)
             QQMusicWindowManager.shared.present()
         }
     }
 
     private func openSettings() {
-        FeatureTipPresentationCoordinator.shared.setSuspended(true)
+        FeatureTipPresentationCoordinator.shared.setSuspended(true, reason: .settingsSheet)
         settingsRotateTrigger += 1
         showSettings = true
     }
@@ -1064,7 +1093,7 @@ struct SidebarView: View {
         .contentTransition(
             .symbolEffect(.replace.magic(fallback: .offUp.byLayer), options: .nonRepeating)
         )
-        .animation(.snappy(duration: 0.24), value: icon)
+        .motionAnimation(.microInteraction, value: icon)
     }
 
     private var fullscreenButton: some View {
@@ -1081,7 +1110,7 @@ struct SidebarView: View {
     }
 
     private func cycleAppearance(to target: AppSettings.ManualAppearance) {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.75)) {
+        withAnimation(controlAnimation) {
             if settings.followSystemAppearance {
                 settings.followSystemAppearance = false
             }
@@ -1160,7 +1189,7 @@ struct SidebarView: View {
     }
 
     private func setPlaylistsExpanded(_ expanded: Bool) {
-        withAnimation(.snappy(duration: 0.18)) {
+        withAnimation(controlAnimation) {
             isPlaylistsExpanded = expanded
         }
         UserDefaults.standard.set(expanded, forKey: playlistsExpandedStorageKey)
@@ -1324,14 +1353,17 @@ struct SidebarView: View {
         shape: SidebarSelectionHighlightShape = .roundedRectangle
     ) -> some View {
         let fill = isSelected ? themeStore.selectionFill : Color.clear
-        switch shape {
-        case .capsule:
-            Capsule(style: .continuous)
-                .fill(fill)
-        case .roundedRectangle:
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(fill)
+        Group {
+            switch shape {
+            case .capsule:
+                Capsule(style: .continuous)
+                    .fill(fill)
+            case .roundedRectangle:
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(fill)
+            }
         }
+        .motionAnimation(.microInteraction, value: isSelected)
     }
 
     private func play(_ playlist: Playlist) {
@@ -1421,13 +1453,19 @@ private struct SidebarEnrichmentCompletionNotice: View {
             }
 
             if summary.failedCount > 0 {
-                Button("查看 \(summary.failedCount) 首失败") {
-                    onShowFailures()
+                HStack {
+                    Spacer(minLength: 0)
+
+                    Button("查看 \(summary.failedCount) 首失败") {
+                        onShowFailures()
+                    }
+                    .buttonStyle(
+                        SidebarNoticeCapsuleButtonStyle(
+                            accentColor: themeStore.accentColor,
+                            accentNSColor: themeStore.accentNSColor
+                        )
+                    )
                 }
-                .buttonStyle(.plain)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(themeStore.accentColor)
-                .padding(.leading, 22)
             }
         }
         .padding(.horizontal, 12)
@@ -1435,10 +1473,6 @@ private struct SidebarEnrichmentCompletionNotice: View {
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.green.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(Color.green.opacity(0.25), lineWidth: 0.5)
         )
         .contentShape(Rectangle())
         .onTapGesture {
@@ -1585,23 +1619,34 @@ private struct SidebarNoticeView: View {
     @EnvironmentObject private var themeStore: ThemeStore
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: notice.style == .warning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(notice.style == .warning ? Color.orange : themeStore.accentColor)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Image(systemName: notice.style == .warning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(notice.style == .warning ? Color.orange : themeStore.accentColor)
 
-            Text(notice.message)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(themeStore.appForegroundPalette.primaryColor)
-                .fixedSize(horizontal: false, vertical: true)
+                Text(notice.message)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(themeStore.appForegroundPalette.primaryColor)
+                    .fixedSize(horizontal: false, vertical: true)
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
+            }
 
             if let actionTitle = notice.actionTitle {
-                Button(actionTitle, action: onAction)
-                    .buttonStyle(.plain)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(themeStore.accentColor)
+                HStack {
+                    Spacer(minLength: 0)
+
+                    Button(actionTitle, action: onAction)
+                        .buttonStyle(
+                            notice.style == .warning
+                                ? SidebarNoticeCapsuleButtonStyle(fillColor: Color.orange, labelColor: .white)
+                                : SidebarNoticeCapsuleButtonStyle(
+                                    accentColor: themeStore.accentColor,
+                                    accentNSColor: themeStore.accentNSColor
+                                )
+                        )
+                }
             }
         }
         .padding(.horizontal, 12)
@@ -1609,10 +1654,6 @@ private struct SidebarNoticeView: View {
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(themeStore.appForegroundPalette.primaryColor.opacity(0.055))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(themeStore.appForegroundPalette.secondaryColor.opacity(0.12), lineWidth: 0.5)
         )
     }
 }
@@ -1653,25 +1694,24 @@ private struct SidebarUpdateCompletedView: View {
                 .font(.caption)
                 .foregroundStyle(themeStore.appForegroundPalette.secondaryColor)
 
-            Button("查看更新日志", action: onShowReleaseNotes)
-                .font(.caption.weight(.semibold))
-                .buttonStyle(.plain)
-                .foregroundStyle(themeStore.accentColor)
-                .padding(.leading, 22)
-                .help("查看更新日志")
+            HStack {
+                Spacer(minLength: 0)
+
+                Button("查看更新日志", action: onShowReleaseNotes)
+                    .buttonStyle(
+                        SidebarNoticeCapsuleButtonStyle(
+                            accentColor: themeStore.accentColor,
+                            accentNSColor: themeStore.accentNSColor
+                        )
+                    )
+                    .help("查看更新日志")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 9)
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(Color.green.opacity(0.08))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    Color.green.opacity(0.25),
-                    lineWidth: 0.5
-                )
         )
     }
 }
@@ -1730,16 +1770,6 @@ private struct SidebarUpdateReadyView: View {
 
     @EnvironmentObject private var themeStore: ThemeStore
 
-    private var updateButtonLabelColor: Color {
-        let rgb = themeStore.accentNSColor.usingColorSpace(.deviceRGB)
-            ?? themeStore.accentNSColor
-        let luminance =
-            0.2126 * rgb.redComponent
-            + 0.7152 * rgb.greenComponent
-            + 0.0722 * rgb.blueComponent
-        return luminance > 0.56 ? Color.black.opacity(0.82) : Color.white.opacity(0.95)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
@@ -1779,9 +1809,9 @@ private struct SidebarUpdateReadyView: View {
                 Button("立即重启更新", action: onInstall)
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(
-                        SidebarUpdateInstallButtonStyle(
-                            fillColor: themeStore.accentColor,
-                            labelColor: updateButtonLabelColor
+                        SidebarNoticeCapsuleButtonStyle(
+                            accentColor: themeStore.accentColor,
+                            accentNSColor: themeStore.accentNSColor
                         )
                     )
             }
@@ -1792,19 +1822,27 @@ private struct SidebarUpdateReadyView: View {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(themeStore.appForegroundPalette.primaryColor.opacity(0.055))
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(
-                    themeStore.appForegroundPalette.secondaryColor.opacity(0.12),
-                    lineWidth: 0.5
-                )
-        )
     }
 }
 
-private struct SidebarUpdateInstallButtonStyle: ButtonStyle {
+private struct SidebarNoticeCapsuleButtonStyle: ButtonStyle {
     let fillColor: Color
     let labelColor: Color
+
+    init(fillColor: Color, labelColor: Color) {
+        self.fillColor = fillColor
+        self.labelColor = labelColor
+    }
+
+    init(accentColor: Color, accentNSColor: NSColor) {
+        self.fillColor = accentColor
+        let rgb = accentNSColor.usingColorSpace(.deviceRGB) ?? accentNSColor
+        let luminance =
+            0.2126 * rgb.redComponent
+            + 0.7152 * rgb.greenComponent
+            + 0.0722 * rgb.blueComponent
+        self.labelColor = luminance > 0.56 ? Color.black.opacity(0.82) : Color.white.opacity(0.95)
+    }
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -1820,6 +1858,8 @@ private struct SidebarUpdateInstallButtonStyle: ButtonStyle {
             .contentShape(Capsule(style: .continuous))
     }
 }
+
+private typealias SidebarUpdateInstallButtonStyle = SidebarNoticeCapsuleButtonStyle
 
 private struct SidebarTaskProgressView: View {
     let progress: SidebarTaskProgress
@@ -1899,11 +1939,18 @@ private struct SidebarTaskProgressView: View {
             }
 
             if let onShowReleaseNotes {
-                Button("查看更新日志", action: onShowReleaseNotes)
-                    .font(.caption.weight(.semibold))
-                    .buttonStyle(.plain)
-                    .foregroundStyle(themeStore.accentColor)
-                    .help("查看更新日志")
+                HStack {
+                    Spacer(minLength: 0)
+
+                    Button("查看更新日志", action: onShowReleaseNotes)
+                        .buttonStyle(
+                            SidebarNoticeCapsuleButtonStyle(
+                                accentColor: themeStore.accentColor,
+                                accentNSColor: themeStore.accentNSColor
+                            )
+                        )
+                        .help("查看更新日志")
+                }
             }
         }
         .padding(.horizontal, 12)
@@ -1911,10 +1958,6 @@ private struct SidebarTaskProgressView: View {
         .background(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .fill(themeStore.appForegroundPalette.primaryColor.opacity(0.055))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .strokeBorder(themeStore.appForegroundPalette.secondaryColor.opacity(0.12), lineWidth: 0.5)
         )
     }
 

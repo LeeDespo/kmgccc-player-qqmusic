@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import MotionKit
 import SwiftUI
 
 /// Mini player bar with true Liquid Glass capsule effect.
@@ -25,6 +26,9 @@ struct MiniPlayerView: View {
     /// favorite button for online-sourced tracks.
     @Environment(QQMusicOnlineCoordinator.self) private var qqMusicCoordinator: QQMusicOnlineCoordinator?
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.motionTokens) private var motionTokens
+    @Environment(\.motionPolicy) private var configuredMotionPolicy
     @EnvironmentObject private var themeStore: ThemeStore
     @ObservedObject private var fullscreenWindowManager = FullscreenWindowManager.shared
 
@@ -49,8 +53,11 @@ struct MiniPlayerView: View {
         let expandedWidth = presentation.source.isExternal ? 150 : playbackModeExpandedWidth
         return isPlaybackModeExpanded ? expandedWidth : playbackModeCollapsedWidth
     }
-    private var layoutAnimation: Animation {
-        .spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.08)
+    private var layoutAnimation: Animation? {
+        let policy = configuredMotionPolicy.resolving(
+            accessibilityReduceMotion: reduceMotion
+        )
+        return policy.animation(for: motionTokens[.layout])
     }
     private var trackInfoIdealWidth: CGFloat { 100 }
     private var trackInfoMinWidth: CGFloat { 32 }
@@ -162,7 +169,7 @@ struct MiniPlayerView: View {
             .contentShape(Capsule())
             .onTapGesture {}
         }
-        .animation(layoutAnimation, value: isPlaybackModeExpanded)
+        .motionAnimation(.layout, value: isPlaybackModeExpanded)
         .sheet(item: $trackToEdit) { track in
             TrackEditSheet(track: track)
                 .environmentObject(themeStore)
@@ -195,37 +202,17 @@ struct MiniPlayerView: View {
     // MARK: - Subviews
 
     private func controlsView(presentation: NowPlayingPresentation) -> some View {
-        let isEnabled = presentation.isControlEnabled
-        let isTrackControlEnabled = isEnabled && presentation.hasTrack
-        return HStack(spacing: 14) {
-            // Previous
-            AnimatedSkipButton(
-                direction: .previous,
-                enabled: isTrackControlEnabled,
-                metrics: .windowMiniPlayer,
-                color: controlPrimaryColor,
-                disabledColor: controlDisabledColor,
-                action: { playbackCoordinator.previous() }
-            )
-
-            // Play/Pause
-            AnimatedPlayPauseButton(
+        HStack(spacing: 14) {
+            PlaybackTransportControls(
                 isPlaying: presentation.isPlaying,
-                enabled: isEnabled,
+                isEnabled: presentation.isControlEnabled,
+                hasTrack: presentation.hasTrack,
                 metrics: .windowMiniPlayer,
                 color: controlPrimaryColor,
                 disabledColor: controlDisabledColor,
-                action: { playbackCoordinator.playPause() }
-            )
-
-            // Next
-            AnimatedSkipButton(
-                direction: .next,
-                enabled: isTrackControlEnabled,
-                metrics: .windowMiniPlayer,
-                color: controlPrimaryColor,
-                disabledColor: controlDisabledColor,
-                action: { playbackCoordinator.next() }
+                previous: { playbackCoordinator.previous() },
+                playPause: { playbackCoordinator.playPause() },
+                next: { playbackCoordinator.next() }
             )
 
             // Favorite. Only shown for online-sourced tracks when enabled in
@@ -347,8 +334,10 @@ struct MiniPlayerView: View {
         if uiState.isWindowPlaybackQueueVisible {
             uiState.hideWindowPlaybackQueue()
         } else {
-            AppKitMainSplitWindowController.setLyricsVisible(true, animated: true)
-            uiState.lyricsVisible = true
+            if !uiState.usesSkinScene {
+                AppKitMainSplitWindowController.setLyricsVisible(true, animated: true)
+                uiState.lyricsVisible = true
+            }
             uiState.showWindowPlaybackQueue()
         }
     }
@@ -463,7 +452,7 @@ struct MiniPlayerView: View {
             foregroundColor: controlPrimaryColor,
             enforceBrightForeground: false,
             spectrumUsesDarkForeground: colorScheme == .light,
-            ledToneVariant: settings.selectedNowPlayingSkinID == AppleStyleSkin.skinID
+            ledToneVariant: SkinRegistry.descriptor(for: settings.selectedNowPlayingSkinID).presentation.controlForeground == .fixedLight
                 ? .appleStyleBright
                 : .miniPlayer,
             adaptsWideVisualizationSegments: true,
@@ -785,7 +774,7 @@ private struct MiniPlayerLeftSection: View, Equatable {
         .onHover { hovering in
             isArtworkHovering = hovering && isEnabled
         }
-        .animation(.easeOut(duration: 0.15), value: isArtworkHovering)
+        .motionAnimation(.microInteraction, value: isArtworkHovering)
     }
 
     @ViewBuilder
@@ -846,12 +835,13 @@ private struct MiniPlayerLeftSection: View, Equatable {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.trailing, isRefetchingLyrics ? 20 : 0)
 
-            ProgressView()
-                .controlSize(.small)
-                .frame(width: 12, height: 12)
-                .opacity(isRefetchingLyrics ? 1 : 0)
-                .allowsHitTesting(false)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+            if isRefetchingLyrics {
+                ProgressView()
+                    .controlSize(.small)
+                    .allowsHitTesting(false)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+                    .transition(.opacity)
+            }
         }
         .frame(
             minWidth: trackInfoMinWidth,
@@ -860,7 +850,7 @@ private struct MiniPlayerLeftSection: View, Equatable {
             alignment: .leading
         )
         .clipped()
-        .animation(.easeInOut(duration: 0.15), value: isRefetchingLyrics)
+        .motionAnimation(.contentReplacement, value: isRefetchingLyrics)
     }
 
     @ViewBuilder
@@ -965,6 +955,8 @@ struct PlaybackModeSlider: View {
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.motionTokens) private var motionTokens
+    @Environment(\.motionPolicy) private var configuredMotionPolicy
     @State private var dragTranslation: CGFloat = 0
     @State private var isDragging: Bool = false
     @State private var animatedModeIndex: Int?
@@ -1026,7 +1018,7 @@ struct PlaybackModeSlider: View {
             let baseOffset = isExpanded ? CGFloat(modeIndex) * segmentWidth : 0
             let effectiveDrag = (isDragging && isExpanded) ? dragTranslation : 0
             let knobOffset = clampOffset(baseOffset + effectiveDrag, maxValue: totalWidth - segmentWidth)
-            let snap = Animation.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.08)
+            let snap = snapAnimation
 
             ZStack(alignment: .leading) {
                 Capsule()
@@ -1044,8 +1036,16 @@ struct PlaybackModeSlider: View {
                     .frame(width: segmentWidth, height: geometry.size.height - inset * 2)
                     .offset(x: knobOffset + inset)
                     .allowsHitTesting(false)
-                    .animation((reduceMotion || isDragging) ? .none : snap, value: modeIndex)
-                    .animation((reduceMotion || isDragging) ? .none : snap, value: isExpanded)
+                    .motionAnimation(
+                        .control,
+                        value: modeIndex,
+                        enabled: motionPolicy != .disabled && !isDragging
+                    )
+                    .motionAnimation(
+                        .control,
+                        value: isExpanded,
+                        enabled: motionPolicy != .disabled && !isDragging
+                    )
 
                 HStack(spacing: 0) {
                     ForEach(Array(visibleModes.enumerated()), id: \.offset) { pair in
@@ -1092,9 +1092,9 @@ struct PlaybackModeSlider: View {
         }
     }
 
-    private func commitModeChange(_ newMode: PlaybackOrderMode, snap: Animation) {
+    private func commitModeChange(_ newMode: PlaybackOrderMode, snap: Animation?) {
         onInteraction?()
-        if reduceMotion {
+        if motionPolicy == .disabled {
             var tx = Transaction()
             tx.disablesAnimations = true
             withTransaction(tx) {
@@ -1111,7 +1111,7 @@ struct PlaybackModeSlider: View {
     /// the release position to the selected segment. Resetting the drag state
     /// before changing `mode` makes the knob briefly jump back to its old
     /// segment before the mode animation starts.
-    private func finishDrag(at newMode: PlaybackOrderMode, snap: Animation) {
+    private func finishDrag(at newMode: PlaybackOrderMode, snap: Animation?) {
         if newMode != mode {
             // Keep the existing interaction pulse for a drag that commits a
             // new mode; `onEnded` already emitted the first interaction event.
@@ -1126,7 +1126,7 @@ struct PlaybackModeSlider: View {
             }
         }
 
-        if reduceMotion {
+        if motionPolicy == .disabled {
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction, update)
@@ -1135,7 +1135,7 @@ struct PlaybackModeSlider: View {
         }
     }
 
-    private func handleSegmentTap(_ tappedMode: PlaybackOrderMode, snap: Animation) {
+    private func handleSegmentTap(_ tappedMode: PlaybackOrderMode, snap: Animation?) {
         if tappedMode == mode {
             onInteraction?()
             onCurrentModeRetap(tappedMode)
@@ -1150,7 +1150,7 @@ struct PlaybackModeSlider: View {
         mode: PlaybackOrderMode,
         isSelected: Bool,
         width: CGFloat,
-        snap: Animation
+        snap: Animation?
     ) -> some View {
         Button {
             handleSegmentTap(mode, snap: snap)
@@ -1166,6 +1166,16 @@ struct PlaybackModeSlider: View {
         .buttonStyle(.plain)
         .frame(width: width, height: 28 * scale)
         .contentShape(Rectangle())
+    }
+
+    private var snapAnimation: Animation? {
+        motionPolicy.animation(for: motionTokens[.control])
+    }
+
+    private var motionPolicy: MotionPolicy {
+        configuredMotionPolicy.resolving(
+            accessibilityReduceMotion: reduceMotion
+        )
     }
 
     @ViewBuilder
@@ -1267,6 +1277,8 @@ struct AppleMusicPlaybackModeSlider: View {
     }
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.motionTokens) private var motionTokens
+    @Environment(\.motionPolicy) private var configuredMotionPolicy
     @State private var dragTranslation: CGFloat = 0
     @State private var isDragging: Bool = false
     @State private var animatedMode: AppleMusicPlaybackMode?
@@ -1289,7 +1301,7 @@ struct AppleMusicPlaybackModeSlider: View {
             let baseOffset = isExpanded ? CGFloat(modeIndex) * segmentWidth : 0
             let effectiveDrag = (isDragging && isExpanded) ? dragTranslation : 0
             let knobOffset = clampOffset(baseOffset + effectiveDrag, maxValue: totalWidth - segmentWidth)
-            let snap = Animation.spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.08)
+            let snap = snapAnimation
 
             ZStack(alignment: .leading) {
                 Capsule()
@@ -1307,8 +1319,16 @@ struct AppleMusicPlaybackModeSlider: View {
                     .frame(width: segmentWidth, height: geometry.size.height - inset * 2)
                     .offset(x: knobOffset + inset)
                     .allowsHitTesting(false)
-                    .animation((reduceMotion || isDragging) ? .none : snap, value: modeIndex)
-                    .animation((reduceMotion || isDragging) ? .none : snap, value: isExpanded)
+                    .motionAnimation(
+                        .control,
+                        value: modeIndex,
+                        enabled: motionPolicy != .disabled && !isDragging
+                    )
+                    .motionAnimation(
+                        .control,
+                        value: isExpanded,
+                        enabled: motionPolicy != .disabled && !isDragging
+                    )
 
                 HStack(spacing: 0) {
                     ForEach(Array(visibleModes.enumerated()), id: \.offset) { pair in
@@ -1358,9 +1378,9 @@ struct AppleMusicPlaybackModeSlider: View {
         }
     }
 
-    private func commitModeChange(_ newMode: AppleMusicPlaybackMode, snap: Animation) {
+    private func commitModeChange(_ newMode: AppleMusicPlaybackMode, snap: Animation?) {
         onInteraction?()
-        if reduceMotion {
+        if motionPolicy == .disabled {
             var tx = Transaction()
             tx.disablesAnimations = true
             withTransaction(tx) {
@@ -1373,7 +1393,7 @@ struct AppleMusicPlaybackModeSlider: View {
         }
     }
 
-    private func handleSegmentTap(_ tappedMode: AppleMusicPlaybackMode, snap: Animation) {
+    private func handleSegmentTap(_ tappedMode: AppleMusicPlaybackMode, snap: Animation?) {
         onInteraction?()
         if tappedMode == mode {
             onCurrentModeRetap?(tappedMode)
@@ -1387,7 +1407,7 @@ struct AppleMusicPlaybackModeSlider: View {
         mode: AppleMusicPlaybackMode,
         isSelected: Bool,
         width: CGFloat,
-        snap: Animation
+        snap: Animation?
     ) -> some View {
         Button {
             handleSegmentTap(mode, snap: snap)
@@ -1403,6 +1423,16 @@ struct AppleMusicPlaybackModeSlider: View {
         .buttonStyle(.plain)
         .frame(width: width, height: 28 * scale)
         .contentShape(Rectangle())
+    }
+
+    private var snapAnimation: Animation? {
+        motionPolicy.animation(for: motionTokens[.control])
+    }
+
+    private var motionPolicy: MotionPolicy {
+        configuredMotionPolicy.resolving(
+            accessibilityReduceMotion: reduceMotion
+        )
     }
 
     @ViewBuilder

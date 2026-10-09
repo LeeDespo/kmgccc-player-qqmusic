@@ -1,0 +1,877 @@
+//
+//  HorizontalFadeScrollContainer.swift
+//  myPlayer2
+//
+//  Universal horizontal scroll container for cards and carousels with:
+//  - Interactive pointer drag-to-scroll with physics momentum and MotionKit gesture settle
+//  - Directional gesture disambiguation to protect vertical page scrolling
+//  - Child tap gesture / button click arbitration (clicks preserved, cancelled on drag)
+//  - Edge fade masks that dynamically indicate scroll overflow
+//  - Optional edge hover scroll buttons
+//  - Hardware-accelerated 120fps display link clip view updates
+//  - Asymmetric leading/trailing scroll content padding
+//
+
+import AppKit
+import MotionKit
+import QuartzCore
+import SwiftUI
+
+struct HorizontalFadeScrollContainer<Content: View>: View {
+    let spacing: CGFloat
+    let fadeWidth: CGFloat
+    let verticalPadding: CGFloat
+    let leadingScrollPadding: CGFloat
+    let trailingScrollPadding: CGFloat
+    let showsEdgeFade: Bool
+    let showsScrollButtons: Bool
+    let scrollButtonLeadingInset: CGFloat
+    let scrollButtonTrailingInset: CGFloat
+    let onHorizontalScrollOffsetChange: ((CGFloat) -> Void)?
+    let onScrollMetricsChange: ((CGFloat, CGFloat, CGFloat) -> Void)?
+    @ViewBuilder var content: () -> Content
+
+    @State private var contentWidth: CGFloat = 0
+    @State private var viewportWidth: CGFloat = 0
+    @State private var scrollX: CGFloat = 0
+    @State private var canScrollLeft = false
+    @State private var canScrollRight = false
+    @State private var activeScrollEdge: HorizontalScrollEdge?
+    @State private var nativeScrollView: NSScrollView?
+    @State private var scrollAnimator = HorizontalScrollSpringAnimator()
+    @State private var dragDirection: HorizontalDragDirection = .undetermined
+    @State private var dragStartScrollX: CGFloat = 0
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.fullscreenSettingsPresentationStyle) private var presentationStyle
+    @Environment(\.accessibilityReduceMotion) private var accessibilityReduceMotion
+    @Environment(\.motionPolicy) private var configuredMotionPolicy
+    @Environment(\.motionTokens) private var motionTokens
+    init(
+        spacing: CGFloat = 0,
+        fadeWidth: CGFloat = 24,
+        verticalPadding: CGFloat = 12,
+        leadingScrollPadding: CGFloat = 16,
+        trailingScrollPadding: CGFloat = 16,
+        showsEdgeFade: Bool = true,
+        showsScrollButtons: Bool = false,
+        scrollButtonLeadingInset: CGFloat = 12,
+        scrollButtonTrailingInset: CGFloat = 12,
+        onHorizontalScrollOffsetChange: ((CGFloat) -> Void)? = nil,
+        onScrollMetricsChange: ((CGFloat, CGFloat, CGFloat) -> Void)? = nil,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.spacing = spacing
+        self.fadeWidth = fadeWidth
+        self.verticalPadding = verticalPadding
+        self.leadingScrollPadding = leadingScrollPadding
+        self.trailingScrollPadding = trailingScrollPadding
+        self.showsEdgeFade = showsEdgeFade
+        self.showsScrollButtons = showsScrollButtons
+        self.scrollButtonLeadingInset = scrollButtonLeadingInset
+        self.scrollButtonTrailingInset = scrollButtonTrailingInset
+        self.onHorizontalScrollOffsetChange = onHorizontalScrollOffsetChange
+        self.onScrollMetricsChange = onScrollMetricsChange
+        self.content = content
+    }
+
+    private var maxScroll: CGFloat {
+        max(0, contentWidth - viewportWidth)
+    }
+
+    private var isScrollable: Bool {
+        contentWidth > viewportWidth + 0.5
+    }
+
+    /// Smooth ramp from 0 (at far-left) to 1 (after ~18px of scroll).
+    private var leftFadeOpacity: Double {
+        guard isScrollable else { return 0 }
+        return min(1, max(0, Double(scrollX) / Double(presentationStyle.scaled(18))))
+    }
+
+    /// Smooth ramp from 1 (more content right) to 0 (at far-right).
+    private var rightFadeOpacity: Double {
+        guard isScrollable else { return 0 }
+        let remaining = maxScroll - scrollX
+        return min(1, max(0, Double(remaining) / Double(presentationStyle.scaled(18))))
+    }
+
+    var body: some View {
+        // The ScrollView and its high-frequency state (scroll-position
+        // tracking, geometry callbacks, native-view resolver) live in a
+        // child subtree so a per-scroll-frame body re-eval cannot bubble up
+        // into this container — and from there into the parent VStack of
+        // `HomeArtistsSection`/`HomeAlbumsSection`, where the cascade forces
+        // SwiftUI to remeasure every visible card's text on each frame.
+        // Parent state (`contentWidth`, `canScrollLeft`, etc.) is written
+        // via bindings only on material changes, so this body re-evaluates
+        // at most on edge-availability flips or coarse size changes.
+        HorizontalScrollSurface(
+            spacing: spacing,
+            leadingScrollPadding: leadingScrollPadding,
+            trailingScrollPadding: trailingScrollPadding,
+            verticalPadding: verticalPadding,
+            needsScrollMetrics: needsScrollMetrics,
+            needsExactScrollOffset: needsExactScrollOffset,
+            contentWidth: $contentWidth,
+            viewportWidth: $viewportWidth,
+            scrollX: $scrollX,
+            canScrollLeft: $canScrollLeft,
+            canScrollRight: $canScrollRight,
+            nativeScrollView: $nativeScrollView,
+            onHorizontalScrollOffsetChange: onHorizontalScrollOffsetChange,
+            onScrollMetricsChange: onScrollMetricsChange,
+            content: content
+        )
+        .contentShape(Rectangle())
+        .highPriorityGesture(dragGesture)
+        .modifier(ConditionalFadeMask(showsEdgeFade: showsEdgeFade, mask: scrollFadeMask))
+        .overlay {
+            if effectiveShowsScrollButtons {
+                HorizontalEdgeHoverTracker(
+                    edgeActivationWidth: edgeActivationWidth,
+                    leadingInset: scrollButtonLeadingInset,
+                    trailingInset: scrollButtonTrailingInset,
+                    canActivateLeading: canScrollLeft,
+                    canActivateTrailing: canScrollRight
+                ) { edge in
+                    activeScrollEdge = edge
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .leading) {
+            if showsLeftScrollButton {
+                edgeScrollButton(systemImage: "chevron.left", direction: -1)
+                    .padding(.leading, scrollButtonLeadingInset)
+                    .transition(.opacity)
+                    .onHover { hovering in
+                        updateActiveScrollEdge(.leading, hovering: hovering)
+                    }
+            }
+        }
+        .overlay(alignment: .trailing) {
+            if showsRightScrollButton {
+                edgeScrollButton(systemImage: "chevron.right", direction: 1)
+                    .padding(.trailing, scrollButtonTrailingInset)
+                    .transition(.opacity)
+                    .onHover { hovering in
+                        updateActiveScrollEdge(.trailing, hovering: hovering)
+                    }
+            }
+        }
+        .motionAnimation(
+            .microInteraction,
+            value: leftFadeOpacity,
+            enabled: showsEdgeFade
+        )
+        .motionAnimation(
+            .microInteraction,
+            value: rightFadeOpacity,
+            enabled: showsEdgeFade
+        )
+        .motionAnimation(.microInteraction, value: showsLeftScrollButton)
+        .motionAnimation(.microInteraction, value: showsRightScrollButton)
+        .onDisappear {
+            scrollAnimator.invalidate()
+        }
+    }
+
+    @ViewBuilder
+    private var scrollFadeMask: some View {
+        if showsEdgeFade {
+            HStack(spacing: 0) {
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(1 - leftFadeOpacity),
+                        Color.black,
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: fadeWidth)
+
+                Rectangle()
+                    .fill(Color.black)
+                    .frame(minWidth: 0)
+
+                LinearGradient(
+                    colors: [
+                        Color.black,
+                        Color.black.opacity(1 - rightFadeOpacity),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .frame(width: fadeWidth)
+            }
+        } else {
+            Rectangle()
+                .fill(Color.black)
+        }
+    }
+
+    private var needsScrollMetrics: Bool {
+        showsEdgeFade
+            || showsScrollButtons
+            || onHorizontalScrollOffsetChange != nil
+            || onScrollMetricsChange != nil
+    }
+
+    private var needsExactScrollOffset: Bool {
+        showsEdgeFade || onHorizontalScrollOffsetChange != nil || onScrollMetricsChange != nil
+    }
+
+    private var effectiveShowsScrollButtons: Bool {
+        showsScrollButtons
+    }
+
+    private var showsLeftScrollButton: Bool {
+        guard effectiveShowsScrollButtons, canScrollLeft, activeScrollEdge == .leading else {
+            return false
+        }
+        return true
+    }
+
+    private var showsRightScrollButton: Bool {
+        guard effectiveShowsScrollButtons, canScrollRight, activeScrollEdge == .trailing else {
+            return false
+        }
+        return true
+    }
+
+    private var edgeActivationWidth: CGFloat {
+        min(
+            max(viewportWidth * 0.16, presentationStyle.scaled(96)),
+            presentationStyle.scaled(150)
+        )
+    }
+
+    private func updateActiveScrollEdge(_ edge: HorizontalScrollEdge, hovering: Bool) {
+        if hovering {
+            activeScrollEdge = edge
+        } else if activeScrollEdge == edge {
+            activeScrollEdge = nil
+        }
+    }
+
+    private func edgeScrollButton(systemImage: String, direction: CGFloat) -> some View {
+        Button {
+            let currentX = nativeScrollView?.contentView.bounds.origin.x ?? scrollX
+            let step = max(presentationStyle.scaled(140), viewportWidth * 0.46)
+            let target = min(max(currentX + step * direction, 0), maxScroll)
+            scrollTo(target)
+        } label: {
+            Image(systemName: systemImage)
+                .font(.system(size: presentationStyle.scaled(15), weight: .bold))
+                .foregroundStyle(.primary.opacity(0.86))
+                .frame(
+                    width: presentationStyle.scaled(32),
+                    height: presentationStyle.scaled(68)
+                )
+                .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .liquidGlassPill(
+            colorScheme: colorScheme,
+            accentColor: nil,
+            materialStyle: .clear,
+            isFloating: true
+        )
+        .help(direction < 0 ? "向左滚动" : "向右滚动")
+    }
+
+    private func scrollTo(_ target: CGFloat) {
+        // Buttons only become visible after `onScrollGeometryChange` has
+        // fired with valid metrics, by which point the native-view resolver
+        // has already resolved the enclosing NSScrollView on a prior runloop
+        // tick. If the resolver hasn't caught up, drop the click silently —
+        // there is no SwiftUI `ScrollPosition` binding to fall back to.
+        guard let scrollView = nativeScrollView,
+              let documentView = scrollView.documentView
+        else { return }
+
+        let clipView = scrollView.contentView
+        let maxNativeX = max(0, documentView.bounds.width - clipView.bounds.width)
+        let targetX = min(max(target, 0), maxNativeX)
+        let policy = configuredMotionPolicy.resolving(
+            accessibilityReduceMotion: accessibilityReduceMotion
+        )
+        scrollAnimator.animate(
+            clipView: clipView,
+            targetX: targetX,
+            spec: motionTokens[.layout],
+            policy: policy
+        ) {
+            scrollView.reflectScrolledClipView(clipView)
+        }
+    }
+
+    // MARK: - Drag to Scroll
+
+    private var dragGesture: some Gesture {
+        DragGesture(minimumDistance: 4)
+            .onChanged { value in
+                handleDragChanged(value)
+            }
+            .onEnded { value in
+                handleDragEnded(value)
+            }
+    }
+
+    private func handleDragChanged(_ value: DragGesture.Value) {
+        guard let scrollView = nativeScrollView,
+              let documentView = scrollView.documentView
+        else { return }
+
+        let clipView = scrollView.contentView
+        let maxNativeX = max(0, documentView.bounds.width - clipView.bounds.width)
+        guard maxNativeX > 0.5 else { return }
+
+        let dx = abs(value.translation.width)
+        let dy = abs(value.translation.height)
+
+        if dragDirection == .undetermined {
+            if dx >= 4 && dx >= dy {
+                dragDirection = .horizontal
+                dragStartScrollX = clipView.bounds.origin.x
+                scrollAnimator.invalidate()
+            } else if dy >= 4 && dy > dx {
+                dragDirection = .vertical
+                return
+            } else {
+                return
+            }
+        }
+
+        guard dragDirection == .horizontal else { return }
+
+        let rawTargetX = dragStartScrollX - value.translation.width
+        let currentX: CGFloat
+
+        if rawTargetX < 0 {
+            currentX = rawTargetX * 0.35
+        } else if rawTargetX > maxNativeX {
+            let excess = rawTargetX - maxNativeX
+            currentX = maxNativeX + excess * 0.35
+        } else {
+            currentX = rawTargetX
+        }
+
+        clipView.setBoundsOrigin(NSPoint(x: currentX, y: clipView.bounds.origin.y))
+        scrollView.reflectScrolledClipView(clipView)
+    }
+
+    private func handleDragEnded(_ value: DragGesture.Value) {
+        guard dragDirection == .horizontal else {
+            dragDirection = .undetermined
+            return
+        }
+        dragDirection = .undetermined
+
+        guard let scrollView = nativeScrollView,
+              let documentView = scrollView.documentView
+        else { return }
+
+        let clipView = scrollView.contentView
+        let maxNativeX = max(0, documentView.bounds.width - clipView.bounds.width)
+        guard maxNativeX > 0.5 else { return }
+
+        let currentX = clipView.bounds.origin.x
+
+        let dragVelocity = Double(value.velocity.width)
+        let scrollVelocity = -dragVelocity
+
+        let policy = configuredMotionPolicy.resolving(
+            accessibilityReduceMotion: accessibilityReduceMotion
+        )
+
+        // Overscrolled at edges — bounce back with gestureSettle
+        if currentX < 0 {
+            scrollAnimator.animate(
+                clipView: clipView,
+                targetX: 0,
+                spec: motionTokens[.gestureSettle],
+                policy: policy,
+                initialVelocity: scrollVelocity
+            ) {
+                scrollView.reflectScrolledClipView(clipView)
+            }
+            return
+        }
+
+        if currentX > maxNativeX {
+            scrollAnimator.animate(
+                clipView: clipView,
+                targetX: maxNativeX,
+                spec: motionTokens[.gestureSettle],
+                policy: policy,
+                initialVelocity: scrollVelocity
+            ) {
+                scrollView.reflectScrolledClipView(clipView)
+            }
+            return
+        }
+
+        // Within bounds: if release velocity is negligible, settle at current position
+        if abs(scrollVelocity) < 30 {
+            return
+        }
+
+        let predictedOffset = dragStartScrollX - value.predictedEndTranslation.width
+        let coastingOffset = currentX + scrollVelocity * 0.22
+        let projectedX: CGFloat
+        if scrollVelocity > 0 {
+            projectedX = max(predictedOffset, coastingOffset)
+        } else {
+            projectedX = min(predictedOffset, coastingOffset)
+        }
+
+        let targetX = min(max(projectedX, 0), maxNativeX)
+
+        scrollAnimator.animate(
+            clipView: clipView,
+            targetX: targetX,
+            spec: motionTokens[.gestureSettle],
+            policy: policy,
+            initialVelocity: scrollVelocity
+        ) {
+            scrollView.reflectScrolledClipView(clipView)
+        }
+    }
+}
+
+private final class HorizontalScrollSpringAnimator: NSObject {
+    private weak var clipView: NSClipView?
+    private var frameLink: CADisplayLink?
+    private var retargetState: MotionRetargetState?
+    private var targetX = 0.0
+    private var startTime: CFTimeInterval = 0
+    private var completion: (() -> Void)?
+
+    func animate(
+        clipView: NSClipView,
+        targetX: CGFloat,
+        spec: MotionSpec,
+        policy: MotionPolicy,
+        initialVelocity: Double = 0,
+        completion: @escaping () -> Void
+    ) {
+        let now = CACurrentMediaTime()
+        let current: (value: Double, velocity: Double)
+        if var retargetState {
+            current = retargetState.advance(to: now)
+            self.retargetState = retargetState
+        } else {
+            current = (Double(clipView.bounds.origin.x), initialVelocity)
+        }
+        stop()
+
+        self.clipView = clipView
+        self.targetX = Double(targetX)
+        self.completion = completion
+
+        guard let resolvedSpec = policy.resolve(spec) else {
+            finish()
+            return
+        }
+
+        let startVelocity = abs(initialVelocity) > .leastNonzeroMagnitude ? initialVelocity : current.velocity
+        guard abs(self.targetX - current.value) > 0.5 || abs(startVelocity) > 5 else {
+            finish()
+            return
+        }
+
+        var retargetState = MotionRetargetState(
+            value: current.value,
+            velocity: startVelocity,
+            spec: resolvedSpec
+        )
+        retargetState.retarget(to: self.targetX, at: now)
+        self.retargetState = retargetState
+        self.startTime = now
+
+        let link = clipView.displayLink(target: self, selector: #selector(handleFrame(_:)))
+        link.add(to: .main, forMode: .common)
+        frameLink = link
+    }
+
+    func invalidate() {
+        stop()
+    }
+
+    private func stop() {
+        frameLink?.invalidate()
+        frameLink = nil
+        retargetState = nil
+        completion = nil
+    }
+
+    @objc private func handleFrame(_ link: CADisplayLink) {
+        guard let clipView, var retargetState else {
+            finish()
+            return
+        }
+
+        let elapsed = max(0, link.timestamp - startTime)
+        let state = retargetState.advance(to: link.timestamp)
+        self.retargetState = retargetState
+        clipView.setBoundsOrigin(
+            NSPoint(x: state.value, y: clipView.bounds.origin.y)
+        )
+
+        let settled = elapsed >= retargetState.visualCompletionDelay
+            || retargetState.isSettled(
+                at: link.timestamp,
+                positionEpsilon: 0.1,
+                velocityEpsilon: 0.1
+            )
+        if settled {
+            finish()
+        }
+    }
+
+    private func finish() {
+        guard let clipView else {
+            stop()
+            return
+        }
+
+        let targetX = retargetState?.target ?? self.targetX
+        clipView.setBoundsOrigin(
+            NSPoint(x: targetX, y: clipView.bounds.origin.y)
+        )
+        let onComplete = completion
+        stop()
+        onComplete?()
+    }
+}
+
+/// Hosts the actual `ScrollView` + `LazyHStack` content closure, paddings,
+/// native-view resolver, and the scroll-metrics modifier. Isolating these
+/// inside a child view keeps any per-scroll-frame state writes inside this
+/// subtree's invalidation scope and prevents them from re-evaluating the
+/// parent `HorizontalFadeScrollContainer.body` — which in turn would
+/// cascade up to `HomeArtistsSection` / `HomeAlbumsSection` and force
+/// SwiftUI to remeasure visible card text on every scroll/resize frame.
+private struct HorizontalScrollSurface<Content: View>: View {
+    let spacing: CGFloat
+    let leadingScrollPadding: CGFloat
+    let trailingScrollPadding: CGFloat
+    let verticalPadding: CGFloat
+    let needsScrollMetrics: Bool
+    let needsExactScrollOffset: Bool
+    @Binding var contentWidth: CGFloat
+    @Binding var viewportWidth: CGFloat
+    @Binding var scrollX: CGFloat
+    @Binding var canScrollLeft: Bool
+    @Binding var canScrollRight: Bool
+    @Binding var nativeScrollView: NSScrollView?
+    let onHorizontalScrollOffsetChange: ((CGFloat) -> Void)?
+    let onScrollMetricsChange: ((CGFloat, CGFloat, CGFloat) -> Void)?
+    @ViewBuilder var content: () -> Content
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            // LazyHStack: only on-screen + immediate-prefetch cards are
+            // realized. With ~15-20 artist/album cards per row, eager HStack
+            // builds and lays out every card as the parent vertical
+            // ScrollView scrolls — even cards far below the viewport. Lazy
+            // fixes that without changing any visible layout.
+            LazyHStack(spacing: spacing) {
+                content()
+            }
+            .background(
+                HorizontalNativeScrollViewResolver { scrollView in
+                    // Identity guard: the resolver's `updateNSView` fires on
+                    // every SwiftUI update of the host NSView, and writing
+                    // the same NSScrollView reference into `@State` would
+                    // still count as a state mutation for some Swift class
+                    // optional cases. Compare first.
+                    if scrollView !== nativeScrollView {
+                        nativeScrollView = scrollView
+                    }
+                }
+            )
+            // Asymmetric scroll content padding lets callers align the first
+            // item with the Home content left edge while still allowing items
+            // to drift left/right under adjacent glass regions when scrolling.
+            // Vertical padding keeps hover lift / soft shadows from clipping
+            // at the ScrollView content rect.
+            .padding(.leading, leadingScrollPadding)
+            .padding(.trailing, trailingScrollPadding)
+            .padding(.vertical, verticalPadding)
+        }
+        .scrollClipDisabled(true)
+        .modifier(
+            HorizontalScrollMetricsModifier(
+                isEnabled: needsScrollMetrics,
+                tracksExactScrollOffset: needsExactScrollOffset,
+                contentWidth: $contentWidth,
+                viewportWidth: $viewportWidth,
+                scrollX: $scrollX,
+                canScrollLeft: $canScrollLeft,
+                canScrollRight: $canScrollRight,
+                onHorizontalScrollOffsetChange: onHorizontalScrollOffsetChange,
+                onScrollMetricsChange: onScrollMetricsChange
+            )
+        )
+    }
+}
+
+private struct ScrollMetrics: Equatable {
+    var contentWidth: CGFloat
+    var viewportWidth: CGFloat
+    var offsetX: CGFloat
+}
+
+private enum HorizontalScrollEdge {
+    case leading
+    case trailing
+}
+
+private struct HorizontalNativeScrollViewResolver: NSViewRepresentable {
+    let onResolve: (NSScrollView?) -> Void
+
+    func makeNSView(context _: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            onResolve(view.enclosingScrollView)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context _: Context) {
+        DispatchQueue.main.async {
+            onResolve(nsView.enclosingScrollView)
+        }
+    }
+}
+
+private struct HorizontalEdgeHoverTracker: NSViewRepresentable {
+    let edgeActivationWidth: CGFloat
+    let leadingInset: CGFloat
+    let trailingInset: CGFloat
+    let canActivateLeading: Bool
+    let canActivateTrailing: Bool
+    let onActiveEdgeChange: (HorizontalScrollEdge?) -> Void
+
+    func makeNSView(context _: Context) -> EdgeHoverTrackingView {
+        let view = EdgeHoverTrackingView()
+        view.configure(
+            edgeActivationWidth: edgeActivationWidth,
+            leadingInset: leadingInset,
+            trailingInset: trailingInset,
+            canActivateLeading: canActivateLeading,
+            canActivateTrailing: canActivateTrailing,
+            onActiveEdgeChange: onActiveEdgeChange
+        )
+        return view
+    }
+
+    func updateNSView(_ nsView: EdgeHoverTrackingView, context _: Context) {
+        nsView.configure(
+            edgeActivationWidth: edgeActivationWidth,
+            leadingInset: leadingInset,
+            trailingInset: trailingInset,
+            canActivateLeading: canActivateLeading,
+            canActivateTrailing: canActivateTrailing,
+            onActiveEdgeChange: onActiveEdgeChange
+        )
+    }
+}
+
+private final class EdgeHoverTrackingView: NSView {
+    private var trackingArea: NSTrackingArea?
+    private var edgeActivationWidth: CGFloat = 0
+    private var leadingInset: CGFloat = 0
+    private var trailingInset: CGFloat = 0
+    private var canActivateLeading = false
+    private var canActivateTrailing = false
+    private var activeEdge: HorizontalScrollEdge?
+    private var onActiveEdgeChange: ((HorizontalScrollEdge?) -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    func configure(
+        edgeActivationWidth: CGFloat,
+        leadingInset: CGFloat,
+        trailingInset: CGFloat,
+        canActivateLeading: Bool,
+        canActivateTrailing: Bool,
+        onActiveEdgeChange: @escaping (HorizontalScrollEdge?) -> Void
+    ) {
+        self.edgeActivationWidth = edgeActivationWidth
+        self.leadingInset = leadingInset
+        self.trailingInset = trailingInset
+        self.canActivateLeading = canActivateLeading
+        self.canActivateTrailing = canActivateTrailing
+        self.onActiveEdgeChange = onActiveEdgeChange
+
+        if !canActivateLeading, activeEdge == .leading {
+            setActiveEdge(nil)
+        }
+        if !canActivateTrailing, activeEdge == .trailing {
+            setActiveEdge(nil)
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .inVisibleRect, .mouseEnteredAndExited, .mouseMoved],
+            owner: self,
+            userInfo: nil
+        )
+        trackingArea = area
+        addTrackingArea(area)
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        updateActiveEdge(for: event)
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        updateActiveEdge(for: event)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        setActiveEdge(nil)
+    }
+
+    private func updateActiveEdge(for event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(point) else {
+            setActiveEdge(nil)
+            return
+        }
+
+        let leadingStart = leadingInset
+        let leadingEnd = leadingStart + edgeActivationWidth
+        if canActivateLeading, point.x >= leadingStart, point.x <= leadingEnd {
+            setActiveEdge(.leading)
+            return
+        }
+
+        let trailingEnd = bounds.width - trailingInset
+        let trailingStart = trailingEnd - edgeActivationWidth
+        if canActivateTrailing, point.x >= trailingStart, point.x <= trailingEnd {
+            setActiveEdge(.trailing)
+            return
+        }
+
+        setActiveEdge(nil)
+    }
+
+    private func setActiveEdge(_ edge: HorizontalScrollEdge?) {
+        guard activeEdge != edge else { return }
+        activeEdge = edge
+        DispatchQueue.main.async { [onActiveEdgeChange] in
+            onActiveEdgeChange?(edge)
+        }
+    }
+}
+
+private struct HorizontalScrollMetricsModifier: ViewModifier {
+    let isEnabled: Bool
+    let tracksExactScrollOffset: Bool
+    @Binding var contentWidth: CGFloat
+    @Binding var viewportWidth: CGFloat
+    @Binding var scrollX: CGFloat
+    @Binding var canScrollLeft: Bool
+    @Binding var canScrollRight: Bool
+    let onHorizontalScrollOffsetChange: ((CGFloat) -> Void)?
+    let onScrollMetricsChange: ((CGFloat, CGFloat, CGFloat) -> Void)?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content
+                .onScrollGeometryChange(for: ScrollMetrics.self) { geo in
+                    ScrollMetrics(
+                        contentWidth: geo.contentSize.width,
+                        viewportWidth: geo.containerSize.width,
+                        offsetX: max(0, geo.contentOffset.x)
+                    )
+                } action: { _, newValue in
+                    // For non-fade rails (Artists/Albums) the only consumers of
+                    // `contentWidth`/`viewportWidth` are `isScrollable`,
+                    // `maxScroll`, and `edgeActivationWidth` — all tolerant of
+                    // sub-pixel rounding. Allowing every live-resize delta to
+                    // write parent `@State` would invalidate the rail
+                    // container body once per resize frame, cascading into a
+                    // SwiftUI remeasure of all visible card text. Fade rails
+                    // keep zero epsilon because their opacity ramp needs exact
+                    // offset precision.
+                    let sizeEpsilon: CGFloat = tracksExactScrollOffset ? 0 : 1
+                    let didChangeSize =
+                        abs(contentWidth - newValue.contentWidth) > sizeEpsilon
+                            || abs(viewportWidth - newValue.viewportWidth) > sizeEpsilon
+                    let newCanScrollLeft = newValue.offsetX > 8
+                    let newCanScrollRight =
+                        max(0, newValue.contentWidth - newValue.viewportWidth) - newValue.offsetX > 8
+                    let didChangeEdgeAvailability =
+                        canScrollLeft != newCanScrollLeft
+                            || canScrollRight != newCanScrollRight
+                    let shouldUpdateExactOffset = tracksExactScrollOffset && scrollX != newValue.offsetX
+                    guard
+                        didChangeSize
+                            || shouldUpdateExactOffset
+                            || didChangeEdgeAvailability
+                    else { return }
+                    contentWidth = newValue.contentWidth
+                    viewportWidth = newValue.viewportWidth
+                    canScrollLeft = newCanScrollLeft
+                    canScrollRight = newCanScrollRight
+
+                    if tracksExactScrollOffset {
+                        scrollX = newValue.offsetX
+                        if shouldUpdateExactOffset {
+                            onHorizontalScrollOffsetChange?(newValue.offsetX)
+                        }
+                        onScrollMetricsChange?(
+                            newValue.contentWidth,
+                            newValue.viewportWidth,
+                            newValue.offsetX
+                        )
+                    } else if didChangeEdgeAvailability {
+                        scrollX = newValue.offsetX
+                    }
+                }
+        } else {
+            content
+        }
+    }
+}
+
+/// Applies the fade mask only when edge fading is enabled.
+/// When `showsEdgeFade: false`, skipping the mask entirely avoids
+/// clipping card shadows that extend beyond the scroll viewport.
+private struct ConditionalFadeMask<M: View>: ViewModifier {
+    let showsEdgeFade: Bool
+    let mask: M
+
+    func body(content: Content) -> some View {
+        if showsEdgeFade {
+            content.mask(mask)
+        } else {
+            content
+        }
+    }
+}
+
+private enum HorizontalDragDirection {
+    case undetermined
+    case horizontal
+    case vertical
+}
+

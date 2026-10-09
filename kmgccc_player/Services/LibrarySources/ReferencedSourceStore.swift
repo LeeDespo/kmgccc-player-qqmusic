@@ -97,6 +97,27 @@ actor ReferencedSourceStore {
         return descriptor
     }
 
+    func updateDisplayName(sourceID: UUID, displayName: String) throws -> ReferencedSourceDescriptor {
+        let normalized = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty, normalized.count <= 120 else {
+            throw ReferencedSourceStoreError.invalidDisplayName
+        }
+        var descriptor = try load(id: sourceID)
+        descriptor.displayName = normalized
+        try save(descriptor)
+        return descriptor
+    }
+
+    func updateMonitorPolicy(
+        sourceID: UUID,
+        policy: ReferencedSourceMonitorPolicy
+    ) throws -> ReferencedSourceDescriptor {
+        var descriptor = try load(id: sourceID)
+        descriptor.monitorPolicy = policy
+        try save(descriptor)
+        return descriptor
+    }
+
     func ensurePlaylistBinding(
         sourceID: UUID,
         playlistID: UUID,

@@ -5,17 +5,28 @@
 //  Apple Music-style AMLL mesh background with classic foreground content.
 //
 
+import MotionKit
 import SwiftUI
 
 struct AppleStyleSkin: NowPlayingSkin {
     static let skinID = "appleStyle"
 
-    let id = AppleStyleSkin.skinID
-    let name = NSLocalizedString("skin.apple_style.name", comment: "")
-    let detail = NSLocalizedString("skin.apple_style.detail", comment: "")
-    let systemImage = "sparkles"
-    var isFullscreenCompatible: Bool { true }
-    var isNowPlayingCompatible: Bool { true }
+    let descriptor = SkinDescriptor(
+        id: AppleStyleSkin.skinID,
+        name: NSLocalizedString("skin.apple_style.name", comment: ""),
+        detail: NSLocalizedString("skin.apple_style.detail", comment: ""),
+        systemImage: "sparkles",
+        presentation: SkinPresentationPolicy(
+            windowBackgroundPlacement: .parent,
+            backgroundOwner: .skin,
+            backgroundDimming: .renderer,
+            lyricsBackdrop: .mesh,
+            controlForeground: .fixedLight
+        ),
+        audio: SkinAudioDefaults(window: .miniPlayerLED, fullscreen: .skinLED),
+        artwork: SkinArtworkDefaults(scale: 1.1, maximumScale: 1.45),
+        legacy: SkinLegacySettings(visualizerNamespace: "skin.appleStyle", defaultsMiniPlayerSpectrumOn: false)
+    )
 
     func makeBackground(context: SkinContext) -> AnyView {
         AnyView(AppleMeshBackground(context: context))
@@ -45,9 +56,10 @@ private struct AppleMeshBackground: View {
             AppleMeshFallbackBackground(context: context)
             AMLLMeshGradientBackgroundView(configuration: .init(
                 artworkData: context.track?.artworkData,
+                artworkFileURL: context.track?.artworkFileURL,
                 artworkChecksum: context.track?.artworkChecksum ?? 0,
                 isPlaying: context.playback.isPlaying,
-                dynamicBackgroundEnabled: dynamicBackgroundEnabled && !context.theme.reduceMotion,
+                dynamicBackgroundEnabled: dynamicBackgroundEnabled && context.motionPolicy == .full,
                 speed: AppleMeshBackgroundSpeed(rawValue: flowSpeed) ?? .standard
             ))
         }
@@ -189,7 +201,6 @@ private struct AppleStyleSettingsView: View {
             SlidingSelector(
                 segments: AppleMeshBackgroundSpeed.allCases,
                 selection: speedSelection,
-                animation: .spring(response: 0.34, dampingFraction: 0.82, blendDuration: 0.08),
                 hSpacing: 0,
                 background: {
                     Color.clear

@@ -146,3 +146,41 @@ QQ 音乐相关能力用于个人使用、技术研究与互操作性验证。�
 * 其他第三方来源与分发边界见 [NOTICE](NOTICE)，具体构建产物的许可证随运行组件打包。
 
 感谢 [kmgcc/kmgccc_player](https://github.com/kmgcc/kmgccc_player) 的播放器基础，以及 [QQMusicApi_HelperNext](https://github.com/LeeDespo/QQMusicApi_HelperNext) 与 [Aria2 Next](https://github.com/AnInsomniacy/aria2-next) 的独立组件维护。
+
+## 致谢
+
+上游播放器在开发过程中使用并修改了以下开源项目：
+
+- **[applemusic-like-lyrics (AMLL)](https://github.com/amll-dev/applemusic-like-lyrics)** — 歌词背景网格动效，通过项目维护的 [integration fork](https://github.com/kmgcc/applemusic-like-lyrics-kmgcccplayer-integration) 集成
+- **[MelismaKit](https://github.com/kmgcc/melismakit)** — 原生 Swift 歌词排版与动效渲染引擎
+- **[LDDC](https://github.com/chenmozhijin/LDDC)** — 歌词获取与匹配
+- **[apple-audio-visualization](https://github.com/taterboom/apple-audio-visualization)** — 音频频谱分析与可视化算法
+- **[ncmdump](https://github.com/taurusxin/ncmdump)** — NCM 格式解密
+- **[sacad](https://github.com/desbma/sacad)** — 专辑封面搜索与下载
+- **[QQMusicApi](https://github.com/L-1124/QQMusicApi)** — QQ 音乐元数据与封面查询
+- **[MediaRemote Adapter](https://github.com/ungive/mediaremote-adapter)** — macOS 外部播放状态读取与控制
+- **[WhatsNewKit](https://github.com/SvenTiigi/WhatsNewKit)** — 应用更新说明展示
+- **[PLCrashReporter](https://github.com/microsoft/plcrashreporter)** — 主 App 进程崩溃报告捕获
+- **[Sparkle](https://github.com/sparkle-project/Sparkle)** — 软件自动更新检查与交付框架
+
+## 常见问题
+
+- **AMLL submodule 缺失或 commit 不一致**：运行 `git submodule sync --recursive`，再 `git submodule update --init --recursive`。
+- **找不到 node 或 corepack**：安装 Node.js 22，确认两个命令都在 PATH 中。
+- **Python 版本或架构不符**：安装 ARM64 Python 3.12，或用 `KMGCCC_ARM_PYTHON=/path/to/python3.12 ./scripts/bootstrap.sh` 指定。
+- **找不到 CMake**：安装 CMake 3.15 或更新版本（MediaRemoteAdapter 需要）。
+- **Xcode 报外部组件产物缺失**：回到仓库根目录运行 `./scripts/bootstrap.sh`。
+- **产物被判定为 stale**：用 `./scripts/bootstrap.sh --force --component <name>` 重建对应组件。失败时查看 `.build/logs/`。
+- **Swift Package 解析失败**：确认网络可访问 GitHub 后重试。
+
+## 参与贡献
+
+缺陷和功能建议可提交到 [GitHub Issues](https://github.com/LeeDespo/kmgccc-player-qqmusic/issues)。请先搜索已有 Issue，附上 macOS 版本、Mac 架构、复现步骤和预期结果。安全问题不要发公开 Issue，请按 `SECURITY.md` 的私密渠道报告；上游播放器本身的缺陷请提到 [上游仓库](https://github.com/kmgcc/kmgccc_player/issues)。
+
+贡献代码前请阅读 `CONTRIBUTING.md`。
+
+## 美术素材版权声明
+
+除代码及另有说明的第三方内容外，本项目相关的美术素材（包括界面插画、UI 装饰、贴图、角色设计、图形元素及其他视觉素材）均为作者原创作品，著作权及相关权利均由作者保留。未经作者事先书面授权，不得复制、转载、分发、修改、改编、商用、二次创作、提取，或用于机器学习与生成式 AI 相关用途。
+
+保留一切权利。Copyright © kmg. All rights reserved.

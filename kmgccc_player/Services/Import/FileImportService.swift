@@ -42,6 +42,13 @@ nonisolated enum ImportEffectCommitError: LocalizedError, Sendable {
     }
 }
 
+private struct ImportExecutionOutcome {
+    let tracks: [Track]
+    let fileTrackMappings: [LibraryImportFileTrackMapping]
+
+    static let empty = ImportExecutionOutcome(tracks: [], fileTrackMappings: [])
+}
+
 nonisolated struct ImportPreview: Sendable {
     let title: String
     let artist: String
@@ -313,14 +320,16 @@ final class FileImportService: FileImportServiceProtocol {
 
         let beforeTrackIDs = Set((await repository.fetchTracks(in: nil)).map(\.id))
         let beforePlaylistCount = playlist?.trackCount ?? 0
-        let tracks = await importURLs(
+        let importOutcome = await importURLs(
             selectedURLs,
             to: playlist,
             metadataOverride: context.metadataOverride,
             presentation: .interactive,
             isManualSelection: true,
-            origin: context.origin
+            origin: context.origin,
+            enrichmentPolicy: context.enrichmentPolicy
         )
+        let tracks = importOutcome.tracks
         let newTrackCount = tracks.filter { !beforeTrackIDs.contains($0.id) }.count
         let sourceBindingCount: Int
         if case .playlist = context.destination {
@@ -341,7 +350,10 @@ final class FileImportService: FileImportServiceProtocol {
             wasRejectedAsStale: false,
             possibleDuplicatesCount: lastImportPossibleDuplicateCount,
             pendingNCMCount: lastImportPendingNCMCount,
-            alreadyInPlaylistCount: lastImportAlreadyInPlaylistCount
+            alreadyInPlaylistCount: lastImportAlreadyInPlaylistCount,
+            trackIDs: tracks.map(\.id),
+            newTrackIDs: tracks.filter { !beforeTrackIDs.contains($0.id) }.map(\.id),
+            fileTrackMappings: Self.uniqueFileTrackMappings(importOutcome.fileTrackMappings)
         )
         publishImportFailuresIfNeeded(result.failures, origin: context.origin)
         return result
@@ -354,7 +366,7 @@ final class FileImportService: FileImportServiceProtocol {
         to playlist: Playlist,
         metadataOverride: ImportMetadataOverride? = nil
     ) async -> Int {
-        let tracks = await importURLs(
+        let importOutcome = await importURLs(
             selectedURLs,
             to: playlist,
             metadataOverride: metadataOverride,
@@ -363,13 +375,13 @@ final class FileImportService: FileImportServiceProtocol {
             origin: .playlistDrop
         )
         publishImportFailuresIfNeeded(lastImportFailures, origin: .playlistDrop)
-        return tracks.count
+        return importOutcome.tracks.count
     }
 
     /// Production entry used by referenced-source reconciliation. It uses the same
     /// metadata, sidecar, and visibility pipeline without presenting AppKit UI.
     func importAutomatically(_ urls: [URL]) async -> [Track] {
-        let tracks = await importURLs(
+        let importOutcome = await importURLs(
             urls,
             to: nil,
             metadataOverride: nil,
@@ -378,7 +390,7 @@ final class FileImportService: FileImportServiceProtocol {
             origin: .sourceMonitor
         )
         publishImportFailuresIfNeeded(lastImportFailures, origin: .sourceMonitor)
-        return tracks
+        return importOutcome.tracks
     }
 
     /// Import audio this app produced itself into managed storage.
@@ -406,7 +418,7 @@ final class FileImportService: FileImportServiceProtocol {
             )
             return []
         }
-        let tracks = await importURLs(
+        let outcome = await importURLs(
             [audioURL],
             to: nil,
             metadataOverride: metadataOverride,
@@ -415,7 +427,7 @@ final class FileImportService: FileImportServiceProtocol {
             origin: origin
         )
         publishImportFailuresIfNeeded(lastImportFailures, origin: origin)
-        return tracks
+        return outcome.tracks
     }
 
     /// Record which online source a track came from and persist it.
@@ -446,7 +458,7 @@ final class FileImportService: FileImportServiceProtocol {
     /// Setup entry. The caller retains `selection` across this entire call so the
     /// backend can sign durable folder/file bookmarks before picker access expires.
     func importInitialSelection(_ selection: LibraryInitialImportSelection) async -> LibraryInitialImportResult {
-        let imported = await importURLs(
+        let importOutcome = await importURLs(
             selection.urls,
             to: nil,
             metadataOverride: nil,
@@ -454,6 +466,7 @@ final class FileImportService: FileImportServiceProtocol {
             isManualSelection: true,
             origin: .setup
         )
+        let imported = importOutcome.tracks
         let plan = storageBackend.lastPreparedInputPlan
         var failures = plan?.failures ?? []
         failures.append(contentsOf: lastImportFailures)
@@ -498,29 +511,41 @@ final class FileImportService: FileImportServiceProtocol {
         case automatic
     }
 
+    private static func uniqueFileTrackMappings(
+        _ mappings: [LibraryImportFileTrackMapping]
+    ) -> [LibraryImportFileTrackMapping] {
+        var seenPaths = Set<String>()
+        return mappings
+            .filter { seenPaths.insert($0.filePath).inserted }
+            .sorted { $0.filePath < $1.filePath }
+    }
+
     private func importURLs(
         _ selectedURLs: [URL],
         to playlist: Playlist?,
         metadataOverride: ImportMetadataOverride?,
         presentation: ImportPresentation,
         isManualSelection: Bool,
-        origin: LibraryImportOrigin
-    ) async -> [Track] {
+        origin: LibraryImportOrigin,
+        enrichmentPolicy: LibraryImportEnrichmentPolicy = .standard
+    ) async -> ImportExecutionOutcome {
         guard acceptsImports else {
             Log.warning("[Import] request rejected because the library session is quiescing", category: .import)
-            return []
+            return .empty
         }
-        let tracks = await enqueueImport { [weak self] in
-            guard let self else { return [] }
+        let outcome = await enqueueImport { [weak self] in
+            guard let self else { return .empty }
             return await self.performImport(
                 selectedURLs,
                 to: playlist,
                 metadataOverride: metadataOverride,
                 presentation: presentation,
                 isManualSelection: isManualSelection,
-                origin: origin
+                origin: origin,
+                enrichmentPolicy: enrichmentPolicy
             )
         }
+        let tracks = outcome.tracks
         if storageBackend.mode == .referenced {
             // Single-file sources are created up front in prepareInputs;
             // files that did not survive the import pipeline (for example
@@ -544,7 +569,7 @@ final class FileImportService: FileImportServiceProtocol {
                 importedSourceIDs: importedSourceIDs
             )
         }
-        return tracks
+        return outcome
     }
 
     /// Serializes imports per session. A second request waits for the first
@@ -552,11 +577,11 @@ final class FileImportService: FileImportServiceProtocol {
     /// Returns `false` when the waiting task was cancelled, so the queued
     /// request is rejected instead of leaking its continuation.
     private func enqueueImport(
-        _ work: @escaping @MainActor () async -> [Track]
-    ) async -> [Track] {
+        _ work: @escaping @MainActor () async -> ImportExecutionOutcome
+    ) async -> ImportExecutionOutcome {
         guard await acquireImportSlot() else {
             Log.info("[Import] request cancelled while waiting for the import slot", category: .import)
-            return []
+            return .empty
         }
         defer { releaseImportSlot() }
         return await work()
@@ -616,8 +641,9 @@ final class FileImportService: FileImportServiceProtocol {
         metadataOverride: ImportMetadataOverride?,
         presentation: ImportPresentation,
         isManualSelection: Bool,
-        origin: LibraryImportOrigin
-    ) async -> [Track] {
+        origin: LibraryImportOrigin,
+        enrichmentPolicy: LibraryImportEnrichmentPolicy
+    ) async -> ImportExecutionOutcome {
         lastImportFailures = []
         lastImportPossibleDuplicateCount = 0
         lastImportPendingNCMCount = 0
@@ -662,12 +688,12 @@ final class FileImportService: FileImportServiceProtocol {
                 url: selectedURLs[0],
                 message: "无法准备导入：\(error.localizedDescription)"
             ))
-            return []
+            return .empty
         }
 
-        if presentation == .interactive { uiPresentationObserver?() }
+        if presentation == .interactive, origin != .automation { uiPresentationObserver?() }
         let progressController = BatchImportProgressDialogController(
-            presentsWindow: presentation == .interactive,
+            presentsWindow: presentation == .interactive && origin != .automation,
             onCancelRequested: {
                 Task {
                     await cancellationToken.requestCancel()
@@ -709,6 +735,7 @@ final class FileImportService: FileImportServiceProtocol {
             isManualSelection: isManualSelection,
             session: importSession
         )
+        var fileTrackMappings = interpretation.fileTrackMappings
         var reusedTracks = interpretation.reusedTracks
         var reusedTrackIDs = interpretation.reusedTrackIDs
         var referencedReuseLocators = interpretation.referencedReuseLocators
@@ -727,7 +754,7 @@ final class FileImportService: FileImportServiceProtocol {
             Log.info("No supported audio files found in selection", category: .import)
             if await isImportCancellationRequested(progressController, cancellationToken) {
                 importSession.cleanupStaging()
-                return []
+                return .empty
             }
             do {
                 try await commitImportEffects(
@@ -743,7 +770,7 @@ final class FileImportService: FileImportServiceProtocol {
                     message: "无法保存播放列表导入结果：\(error.localizedDescription)"
                 ))
                 importSession.cleanupStaging()
-                return []
+                return .empty
             }
             importSession.cleanupStaging()
             lastImportAlreadyInPlaylistCount = playlist.map { _ in
@@ -751,17 +778,21 @@ final class FileImportService: FileImportServiceProtocol {
             } ?? 0
             crashBreadcrumbResult = "completed"
             crashBreadcrumbImportedCount = reusedTracks.count
-            return reusedTracks
+            return ImportExecutionOutcome(
+                tracks: reusedTracks,
+                fileTrackMappings: Self.uniqueFileTrackMappings(fileTrackMappings)
+            )
         }
 
         if await isImportCancellationRequested(progressController, cancellationToken) {
-            return await committer.finishCancelledImport(
+            return await finishCancelledImportOutcome(
                 session: importSession,
                 importedRecords: [],
                 createdTrackIDs: [],
                 to: playlist,
                 progressController: progressController,
-                totalCount: discoveredFileCount
+                totalCount: discoveredFileCount,
+                fileTrackMappings: fileTrackMappings
             )
         }
 
@@ -800,15 +831,17 @@ final class FileImportService: FileImportServiceProtocol {
         let resolvedFiles = conversion.resolvedFiles
         reusedTracks = conversion.reusedTracks
         reusedTrackIDs = conversion.reusedTrackIDs
+        fileTrackMappings.append(contentsOf: conversion.fileTrackMappings)
         lastImportFailures.append(contentsOf: conversion.failures)
         if conversion.cancelledAfterManagedConversion {
-            return await committer.finishCancelledImport(
+            return await finishCancelledImportOutcome(
                 session: importSession,
                 importedRecords: [],
                 createdTrackIDs: [],
                 to: playlist,
                 progressController: progressController,
-                totalCount: discoveredFileCount
+                totalCount: discoveredFileCount,
+                fileTrackMappings: fileTrackMappings
             )
         }
 
@@ -827,13 +860,14 @@ final class FileImportService: FileImportServiceProtocol {
         lastImportPossibleDuplicateCount = duplicateRows.count
 
         if await isImportCancellationRequested(progressController, cancellationToken) {
-            return await committer.finishCancelledImport(
+            return await finishCancelledImportOutcome(
                 session: importSession,
                 importedRecords: [],
                 createdTrackIDs: [],
                 to: playlist,
                 progressController: progressController,
-                totalCount: discoveredFileCount
+                totalCount: discoveredFileCount,
+                fileTrackMappings: fileTrackMappings
             )
         }
 
@@ -859,6 +893,7 @@ final class FileImportService: FileImportServiceProtocol {
                 for track in reuseResult.tracks where reusedTrackIDs.insert(track.id).inserted {
                     reusedTracks.append(track)
                 }
+                fileTrackMappings.append(contentsOf: reuseResult.fileTrackMappings)
                 referencedReuseLocators = reuseResult.locators
                 referencedReuseNCMOperationIDs = reuseResult.ncmOperationIDsByTrackID
                 lastImportFailures.append(contentsOf: reuseResult.failures)
@@ -941,8 +976,13 @@ final class FileImportService: FileImportServiceProtocol {
             totalCount: finalCandidates.count
         )
 
-        let enrichmentMode: ImportEnrichmentMode =
-            AppSettings.shared.deferImportEnrichment ? .deferred : .immediate
+        let enrichmentMode: ImportEnrichmentMode
+        switch enrichmentPolicy {
+        case .standard:
+            enrichmentMode = AppSettings.shared.deferImportEnrichment ? .deferred : .immediate
+        case .migration:
+            enrichmentMode = .skipped
+        }
         let importBatch = await committer.executeBatch(
             executionPlan.placements,
             progressController: progressController,
@@ -956,13 +996,14 @@ final class FileImportService: FileImportServiceProtocol {
 
         let importCancellationRequested = await isImportCancellationRequested(progressController, cancellationToken)
         if importBatch.cancelled || importCancellationRequested {
-            return await committer.finishCancelledImport(
+            return await finishCancelledImportOutcome(
                 session: importSession,
                 importedRecords: importedRecords,
                 createdTrackIDs: importBatch.createdTrackIDs,
                 to: playlist,
                 progressController: progressController,
-                totalCount: finalCandidates.count
+                totalCount: finalCandidates.count,
+                fileTrackMappings: fileTrackMappings
             )
         }
 
@@ -971,7 +1012,7 @@ final class FileImportService: FileImportServiceProtocol {
             if reusedTracks.isEmpty, !finalCandidates.isEmpty {
                 importSession.cleanupStaging()
                 _ = await committer.cleanupFailedImportResidue(reason: "importNoSuccessfulTracks")
-                return []
+                return .empty
             }
             do {
                 try await commitImportEffects(
@@ -988,7 +1029,7 @@ final class FileImportService: FileImportServiceProtocol {
                 ))
                 importSession.cleanupStaging()
                 _ = await committer.cleanupFailedImportResidue(reason: "importPlaylistCommitFailed")
-                return []
+                return .empty
             }
             importSession.cleanupStaging()
             _ = await committer.cleanupFailedImportResidue(reason: "importNoSuccessfulTracks")
@@ -997,7 +1038,10 @@ final class FileImportService: FileImportServiceProtocol {
             } ?? 0
             crashBreadcrumbResult = "completed"
             crashBreadcrumbImportedCount = reusedTracks.count
-            return reusedTracks
+            return ImportExecutionOutcome(
+                tracks: reusedTracks,
+                fileTrackMappings: Self.uniqueFileTrackMappings(fileTrackMappings)
+            )
         }
 
         let importedTracks = importedRecords.map(\.track)
@@ -1015,13 +1059,14 @@ final class FileImportService: FileImportServiceProtocol {
                 )
                 let enrichmentCancellationRequested = await isImportCancellationRequested(progressController, cancellationToken)
                 if enrichmentCancelled || enrichmentCancellationRequested {
-                    return await committer.finishCancelledImport(
+                    return await finishCancelledImportOutcome(
                         session: importSession,
                         importedRecords: importedRecords,
                         createdTrackIDs: importBatch.createdTrackIDs,
                         to: playlist,
                         progressController: progressController,
-                        totalCount: finalCandidates.count
+                        totalCount: finalCandidates.count,
+                        fileTrackMappings: fileTrackMappings
                     )
                 }
             } else {
@@ -1041,13 +1086,14 @@ final class FileImportService: FileImportServiceProtocol {
                 cancellationToken: cancellationToken,
                 failureURL: selectedURLs[0]
             ) else {
-                return await committer.finishCancelledImport(
+                return await finishCancelledImportOutcome(
                     session: importSession,
                     importedRecords: importedRecords,
                     createdTrackIDs: importBatch.createdTrackIDs,
                     to: playlist,
                     progressController: progressController,
-                    totalCount: finalCandidates.count
+                    totalCount: finalCandidates.count,
+                    fileTrackMappings: fileTrackMappings
                 )
             }
             persistedTracks = savedTracks
@@ -1082,13 +1128,14 @@ final class FileImportService: FileImportServiceProtocol {
                 cancellationToken: cancellationToken,
                 failureURL: selectedURLs[0]
             ) else {
-                return await committer.finishCancelledImport(
+                return await finishCancelledImportOutcome(
                     session: importSession,
                     importedRecords: importedRecords,
                     createdTrackIDs: importBatch.createdTrackIDs,
                     to: playlist,
                     progressController: progressController,
-                    totalCount: finalCandidates.count
+                    totalCount: finalCandidates.count,
+                    fileTrackMappings: fileTrackMappings
                 )
             }
             persistedTracks = savedTracks
@@ -1096,16 +1143,43 @@ final class FileImportService: FileImportServiceProtocol {
             deferredEnrichmentTracks = recordsNeedingEnrichment
                 .map(\.track)
                 .filter { persistedIDs.contains($0.id) }
+        case .skipped:
+            progressController.update(
+                stage: .enrichingMetadata,
+                progress: Self.progress(for: .enrichingMetadata, completed: 0, total: 0),
+                detail: "保留文件内信息，跳过在线补全",
+                completedCount: 0,
+                totalCount: 0
+            )
+            guard let savedTracks = await saveImportedTracksUnderMutation(
+                importedTracks,
+                progressController: progressController,
+                session: importSession,
+                cancellationToken: cancellationToken,
+                failureURL: selectedURLs[0]
+            ) else {
+                return await finishCancelledImportOutcome(
+                    session: importSession,
+                    importedRecords: importedRecords,
+                    createdTrackIDs: importBatch.createdTrackIDs,
+                    to: playlist,
+                    progressController: progressController,
+                    totalCount: finalCandidates.count,
+                    fileTrackMappings: fileTrackMappings
+                )
+            }
+            persistedTracks = savedTracks
         }
 
         if await isImportCancellationRequested(progressController, cancellationToken) {
-            return await committer.finishCancelledImport(
+            return await finishCancelledImportOutcome(
                 session: importSession,
                 importedRecords: importedRecords,
                 createdTrackIDs: importBatch.createdTrackIDs,
                 to: playlist,
                 progressController: progressController,
-                totalCount: finalCandidates.count
+                totalCount: finalCandidates.count,
+                fileTrackMappings: fileTrackMappings
             )
         }
 
@@ -1122,13 +1196,14 @@ final class FileImportService: FileImportServiceProtocol {
                 url: selectedURLs[0],
                 message: "无法保存播放列表导入结果：\(error.localizedDescription)"
             ))
-            return await committer.finishCancelledImport(
+            return await finishCancelledImportOutcome(
                 session: importSession,
                 importedRecords: importedRecords,
                 createdTrackIDs: importBatch.createdTrackIDs,
                 to: playlist,
                 progressController: progressController,
-                totalCount: finalCandidates.count
+                totalCount: finalCandidates.count,
+                fileTrackMappings: fileTrackMappings
             )
         }
 
@@ -1172,7 +1247,48 @@ final class FileImportService: FileImportServiceProtocol {
         Log.info("[Import] completed imported=\(persistedTracks.count) reused=\(reusedTracks.count)", category: .import)
         crashBreadcrumbResult = "completed"
         crashBreadcrumbImportedCount = persistedTracks.count + reusedTracks.count
-        return persistedTracks + reusedTracks
+        let importedMappings = importedRecords
+            .filter { persistedTrackIDs.contains($0.track.id) }
+            .flatMap { record in
+                record.originalInputFilePaths.map { filePath in
+                    LibraryImportFileTrackMapping(filePath: filePath, trackID: record.track.id)
+                }
+            }
+        return ImportExecutionOutcome(
+            tracks: persistedTracks + reusedTracks,
+            fileTrackMappings: Self.uniqueFileTrackMappings(fileTrackMappings + importedMappings)
+        )
+    }
+
+    private func finishCancelledImportOutcome(
+        session: ImportSession,
+        importedRecords: [ImportedTrackRecord],
+        createdTrackIDs: Set<UUID>,
+        to playlist: Playlist?,
+        progressController: BatchImportProgressDialogController,
+        totalCount: Int,
+        fileTrackMappings: [LibraryImportFileTrackMapping]
+    ) async -> ImportExecutionOutcome {
+        let retainedTracks = await committer.finishCancelledImport(
+            session: session,
+            importedRecords: importedRecords,
+            createdTrackIDs: createdTrackIDs,
+            to: playlist,
+            progressController: progressController,
+            totalCount: totalCount
+        )
+        let retainedIDs = Set(retainedTracks.map(\.id))
+        let retainedRecordMappings = importedRecords
+            .filter { retainedIDs.contains($0.track.id) }
+            .flatMap { record in
+                record.originalInputFilePaths.map { filePath in
+                    LibraryImportFileTrackMapping(filePath: filePath, trackID: record.track.id)
+                }
+            }
+        return ImportExecutionOutcome(
+            tracks: retainedTracks,
+            fileTrackMappings: Self.uniqueFileTrackMappings(fileTrackMappings + retainedRecordMappings)
+        )
     }
 
     /// Manual selection is an explicit request to retry items previously
@@ -1379,6 +1495,7 @@ final class FileImportService: FileImportServiceProtocol {
         let locators: [UUID: ReferencedFileLocator]
         let ncmOperationIDsByTrackID: [UUID: Set<UUID>]
         let failures: [ImportInputFailure]
+        let fileTrackMappings: [LibraryImportFileTrackMapping]
     }
 
     /// Resolves metadata-only duplicate suggestions for an interactive
@@ -1397,6 +1514,7 @@ final class FileImportService: FileImportServiceProtocol {
         var locators = existingLocators
         var ncmOperationIDsByTrackID: [UUID: Set<UUID>] = [:]
         var failures: [ImportInputFailure] = []
+        var fileTrackMappings: [LibraryImportFileTrackMapping] = []
 
         func recordFailure(_ candidate: ImportCandidate, message: String) {
             failures.append(.init(url: candidate.fileURL, message: message))
@@ -1481,6 +1599,9 @@ final class FileImportService: FileImportServiceProtocol {
                 if let operationID = candidate.ncmOperationID {
                     ncmOperationIDsByTrackID[existingTrackID, default: []].insert(operationID)
                 }
+                fileTrackMappings.append(contentsOf: candidate.originalInputFilePaths.map {
+                    LibraryImportFileTrackMapping(filePath: $0, trackID: existingTrackID)
+                })
                 if seenTrackIDs.insert(existingTrackID).inserted {
                     tracks.append(existingTrack)
                 }
@@ -1501,7 +1622,8 @@ final class FileImportService: FileImportServiceProtocol {
             tracks: tracks,
             locators: locators,
             ncmOperationIDsByTrackID: ncmOperationIDsByTrackID,
-            failures: failures
+            failures: failures,
+            fileTrackMappings: fileTrackMappings
         )
     }
 
