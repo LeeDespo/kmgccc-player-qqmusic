@@ -692,6 +692,16 @@ public final class AppSettings {
     @ObservationIgnored
     @AppStorage("lyricsFontSize") var lyricsFontSize: Double = 32.0
 
+    /// Whether lyric translations are shown on the lyric surfaces.
+    ///
+    /// Flipped from the player's own control bar: it is a display preference, not
+    /// a per-source option. The lyric surfaces rebuild their configuration from
+    /// it, so it takes effect on the spot — no component reload, no track change.
+    /// Like the rest of this block it is `@ObservationIgnored` here; whoever flips
+    /// it republishes the configuration itself.
+    @ObservationIgnored
+    @AppStorage("lyricsShowTranslation") var lyricsShowTranslation: Bool = true
+
     /// Lead-in milliseconds for near-switch lyric line advance
     @ObservationIgnored
     @AppStorage("lyricsLeadInMs") var lyricsLeadInMs: Double = 600

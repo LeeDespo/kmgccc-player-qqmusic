@@ -1,0 +1,46 @@
+diff --git a/kmgccc_player/Services/Lyrics/NativeLyricsConfigurationMapper.swift b/kmgccc_player/Services/Lyrics/NativeLyricsConfigurationMapper.swift
+index 740301d2..b6498219 100644
+--- a/kmgccc_player/Services/Lyrics/NativeLyricsConfigurationMapper.swift
++++ b/kmgccc_player/Services/Lyrics/NativeLyricsConfigurationMapper.swift
+@@ -102,12 +102,40 @@ enum NativeLyricsConfigurationMapper {
+         if role == .main { configuration.alignPosition = 0.27 }
+         configuration.glow = true
+         configuration.emphasis = true
+-        configuration.showTranslation = true
++        configuration.showTranslation = storedShowsTranslation
+         configuration.showRomanization = true
+         configuration.showRuby = true
+         return configuration
+     }
+ 
++    /// The listener's translation preference, read from storage.
++    ///
++    /// Every surface this mapper seeds starts from it — including the fullscreen
++    /// surface, whose tree carries neither an `AppSettings` instance nor a settings
++    /// observer — and the control that flips it is the icon in the player's own
++    /// bars. `AppSettings.lyricsShowTranslation` is the same key.
++    static var storedShowsTranslation: Bool {
++        let defaults = UserDefaults.standard
++        guard defaults.object(forKey: "lyricsShowTranslation") != nil else { return true }
++        return defaults.bool(forKey: "lyricsShowTranslation")
++    }
++
++    /// Push the preference to the lyric surfaces that are up right now.
++    ///
++    /// Not waiting for the configuration to be rebuilt is the point: a rebuild
++    /// would need a reload or a track change, and the toggle is meant to act like
++    /// the lyrics-visibility button next to it.
++    @MainActor
++    static func applyTranslationVisibility(_ shows: Bool) {
++        for role in LyricsSurfaceRole.allCases {
++            guard var configuration = NativeLyricsSurfaceManager.shared.configuration(for: role) else {
++                continue
++            }
++            configuration.showTranslation = shows
++            NativeLyricsSurfaceManager.shared.applyConfiguration(configuration, for: role)
++        }
++    }
++
+     /// Apply one of the existing fullscreen theme payloads. This lets the
+     /// fullscreen skin code keep its semantic color decisions while routing
+     /// the actual rendering through the package's public API.

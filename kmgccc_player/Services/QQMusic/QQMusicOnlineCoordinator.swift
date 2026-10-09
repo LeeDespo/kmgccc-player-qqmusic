@@ -2889,7 +2889,7 @@ final class QQMusicOnlineCoordinator {
             artist: nil,
             album: nil,
             artworkData: staging.artworkData,
-            lyrics: Self.combinedLyrics(staging)
+            lyrics: await Self.ttmlLyrics(staging)
         )
         let imported = await importService.importProducedAudio(
             at: staging.audioURL,
@@ -2950,17 +2950,35 @@ final class QQMusicOnlineCoordinator {
         return outcome
     }
 
-    /// Merge the QQ lyric and its translation into one LRC block.
+    /// Convert the component's word-level lyric and its translation into one TTML
+    /// document, with the translation carried as a translation span
+    /// (`ttm:role="x-translation"`) rather than as extra lyric lines.
     ///
-    /// The player's lyric pipeline understands LRC, and keeping both languages
-    /// in one document means the existing TTML conversion handles them without
-    /// new plumbing.
-    private static func combinedLyrics(_ staging: QQMusicStagedDownload) -> String? {
+    /// The import path takes TTML as it is, and the lyric surfaces hide
+    /// translation spans when the listener turns translation off — that is the
+    /// whole point of marking them. Appending the translation as plain lines
+    /// (`lyric + "\n" + translation`, which this used to do) made the translation
+    /// indistinguishable from the song: it could never be hidden, and it also
+    /// tipped the converter into classifying the whole document as line-level,
+    /// which collapsed every line to its first word.
+    private static func ttmlLyrics(_ staging: QQMusicStagedDownload) async -> String? {
         guard let lyric = staging.lyricText, !lyric.isEmpty else { return nil }
         guard let translation = staging.translatedLyricText, !translation.isEmpty else {
             return lyric
         }
-        return lyric + "\n" + translation
+        do {
+            return try await TTMLConverter.shared.convertToTTMLWithTranslation(
+                origLyrics: lyric,
+                transLyrics: translation,
+                stripMetadata: true
+            )
+        } catch {
+            Log.warning(
+                "[QQMusicOnline] lyric translation conversion failed, keeping the original lyric: \(error)",
+                category: .lyrics
+            )
+            return lyric
+        }
     }
 }
 

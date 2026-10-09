@@ -393,6 +393,9 @@ struct AppKitMainContentPaneRoot: View {
                 .environment(lyricsVM)
                 .environment(ledMeterProvider)
                 .environment(importEnrichmentService)
+                // The player's own bar offers the online favourite, so the
+                // fullscreen surface has to see the coordinator that owns it.
+                .environment(appSession.qqMusicOnlineCoordinator)
 
                 .environment(cacheServices)
                 .environment(skinManager)

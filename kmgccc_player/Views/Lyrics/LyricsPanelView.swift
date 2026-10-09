@@ -774,6 +774,9 @@ struct LyricsSettingsObserver: ViewModifier {
     @AppStorage("lyricsLeadInMs") private var lyricsLeadInMs: Double = 600
     @AppStorage("lyricsNearSwitchGapMs") private var lyricsNearSwitchGapMs: Double = 160
     @AppStorage("lyricsGlobalAdvanceMs") private var lyricsGlobalAdvanceMs: Double = 0
+    /// Toggled from the player's control bar; mirrored here so a change from any
+    /// writer republishes the configuration the way its sibling settings do.
+    @AppStorage("lyricsShowTranslation") private var lyricsShowTranslation: Bool = true
 
     func body(content: Content) -> some View {
         content
@@ -795,6 +798,7 @@ struct LyricsSettingsObserver: ViewModifier {
             .onChange(of: lyricsTranslationFontWeightDark) { _, _ in
                 refreshConfigIfActive()
             }
+            .onChange(of: lyricsShowTranslation) { _, _ in refreshConfigIfActive() }
     }
 
     private func refreshConfigIfActive() {

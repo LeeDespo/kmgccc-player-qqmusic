@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Models/AppSettings.swift b/kmgccc_player/Models/AppSettings.swift
-index 34e6d732..64f9fccb 100644
+index 34e6d732..79a011b0 100644
 --- a/kmgccc_player/Models/AppSettings.swift
 +++ b/kmgccc_player/Models/AppSettings.swift
 @@ -22,10 +22,24 @@ enum PlaybackStartPolicy: Equatable {
@@ -37,7 +37,24 @@ index 34e6d732..64f9fccb 100644
              return .sequence
          case .forceShuffleTemporary:
              return .shuffle
-@@ -1177,6 +1191,453 @@ public final class AppSettings {
+@@ -678,6 +692,16 @@ public final class AppSettings {
+     @ObservationIgnored
+     @AppStorage("lyricsFontSize") var lyricsFontSize: Double = 32.0
+ 
++    /// Whether lyric translations are shown on the lyric surfaces.
++    ///
++    /// Flipped from the player's own control bar: it is a display preference, not
++    /// a per-source option. The lyric surfaces rebuild their configuration from
++    /// it, so it takes effect on the spot — no component reload, no track change.
++    /// Like the rest of this block it is `@ObservationIgnored` here; whoever flips
++    /// it republishes the configuration itself.
++    @ObservationIgnored
++    @AppStorage("lyricsShowTranslation") var lyricsShowTranslation: Bool = true
++
+     /// Lead-in milliseconds for near-switch lyric line advance
+     @ObservationIgnored
+     @AppStorage("lyricsLeadInMs") var lyricsLeadInMs: Double = 600
+@@ -1177,6 +1201,453 @@ public final class AppSettings {
          static let sourcePreferences = "externalPlaybackSourcePreferences"
      }
  

@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/AppKit/AppKitMainSplitPanes.swift b/kmgccc_player/AppKit/AppKitMainSplitPanes.swift
-index fc1491e7..2be92bdb 100644
+index fc1491e7..da66c661 100644
 --- a/kmgccc_player/AppKit/AppKitMainSplitPanes.swift
 +++ b/kmgccc_player/AppKit/AppKitMainSplitPanes.swift
 @@ -197,12 +197,24 @@ struct AppKitMainContentPaneRoot: View {
@@ -62,7 +62,17 @@ index fc1491e7..2be92bdb 100644
                          .onGeometryChange(for: CGRect.self) { geometry in
                              geometry.frame(in: .global)
                          } action: { newRect in
-@@ -386,6 +412,7 @@ struct AppKitMainContentPaneRoot: View {
+@@ -367,6 +393,9 @@ struct AppKitMainContentPaneRoot: View {
+                 .environment(lyricsVM)
+                 .environment(ledMeterProvider)
+                 .environment(importEnrichmentService)
++                // The player's own bar offers the online favourite, so the
++                // fullscreen surface has to see the coordinator that owns it.
++                .environment(appSession.qqMusicOnlineCoordinator)
+ 
+                 .environment(cacheServices)
+                 .environment(skinManager)
+@@ -386,6 +415,7 @@ struct AppKitMainContentPaneRoot: View {
                      fullscreenWindowManager.isWindowedFullscreenActive
                  )
                  HomeWindowLayoutState.shared.setHomeMode(homeMode)
@@ -70,7 +80,7 @@ index fc1491e7..2be92bdb 100644
                  HomeWindowLayoutState.shared.setHomeSearchActive(homeSearchActive)
                  if shouldTriggerArtBackgroundTransition(playbackCoordinator: playbackCoordinator, uiState: uiState) {
                      _ = markNowPlayingArtBackgroundPresentationIfNeeded()
-@@ -394,6 +421,9 @@ struct AppKitMainContentPaneRoot: View {
+@@ -394,6 +424,9 @@ struct AppKitMainContentPaneRoot: View {
              .onChange(of: homeMode) { _, newValue in
                  HomeWindowLayoutState.shared.setHomeMode(newValue)
              }

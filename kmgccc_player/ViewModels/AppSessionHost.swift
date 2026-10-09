@@ -1522,7 +1522,8 @@ final class AppSessionHost: ObservableObject {
             ledMeterProvider: ledMeterProvider,
             cacheServices: session.cacheServices,
             skinManager: skinManager,
-            uiState: uiState
+            uiState: uiState,
+            qqMusicOnlineCoordinator: qqMusicOnlineCoordinator
         )
         AppDelegate.shared?.configureDockPlayback(playbackCoordinator: playbackCoordinator)
         UpdateCoordinator.shared.terminationPreparationHandler = { [weak self] completion in

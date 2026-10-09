@@ -56,6 +56,8 @@ final class FullscreenWindowManager: NSObject, NSWindowDelegate, ObservableObjec
     weak var uiState: UIStateViewModel?
     weak var coverDownloadService: CoverDownloadService?
     weak var netEaseCoverService: NetEaseCoverService?
+    /// Owns the online favourite the player's own bar now offers.
+    weak var qqMusicOnlineCoordinator: QQMusicOnlineCoordinator?
 
     private var suspendedMainLyricsVisibility: Bool?
     private var suspendedMainSidebarVisibility: Bool?
@@ -93,7 +95,8 @@ final class FullscreenWindowManager: NSObject, NSWindowDelegate, ObservableObjec
         ledMeterProvider: LEDMeterServiceProvider,
         cacheServices: LibraryCacheServices,
         skinManager: SkinManager,
-        uiState: UIStateViewModel
+        uiState: UIStateViewModel,
+        qqMusicOnlineCoordinator: QQMusicOnlineCoordinator?
     ) {
         self.libraryVM = libraryVM
         self.playerVM = playerVM
@@ -103,6 +106,7 @@ final class FullscreenWindowManager: NSObject, NSWindowDelegate, ObservableObjec
         self.cacheServices = cacheServices
         self.skinManager = skinManager
         self.uiState = uiState
+        self.qqMusicOnlineCoordinator = qqMusicOnlineCoordinator
     }
 
     func releaseLibrarySession() async {
@@ -136,6 +140,7 @@ final class FullscreenWindowManager: NSObject, NSWindowDelegate, ObservableObjec
         cacheServices = nil
         coverDownloadService = nil
         netEaseCoverService = nil
+        qqMusicOnlineCoordinator = nil
     }
 
     func configureEditorServices(
@@ -241,6 +246,7 @@ final class FullscreenWindowManager: NSObject, NSWindowDelegate, ObservableObjec
         .environment(ledMeterProvider)
         .environment(AppSettings.shared)
         .environment(skinManager)
+        .environment(qqMusicOnlineCoordinator)
         .environmentObject(ThemeStore.shared)
 
         let contentView: AnyView

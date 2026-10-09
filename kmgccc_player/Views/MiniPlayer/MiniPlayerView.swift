@@ -25,6 +25,10 @@ struct MiniPlayerView: View {
     /// Optional: present only when a library session is active. Drives the
     /// favorite button for online-sourced tracks.
     @Environment(QQMusicOnlineCoordinator.self) private var qqMusicCoordinator: QQMusicOnlineCoordinator?
+    /// Optional, like the coordinator: the bar is also mounted by surfaces that
+    /// carry no lyrics view model, and a missing one must not crash it.
+    @Environment(LyricsViewModel.self) private var lyricsVM: LyricsViewModel?
+    @AppStorage("lyricsShowTranslation") private var showsLyricsTranslation = true
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.motionTokens) private var motionTokens
@@ -220,7 +224,31 @@ struct MiniPlayerView: View {
             if settings.qqMusicShowLikeButton, let track = likeableTrack(presentation) {
                 likeButton(for: track)
             }
+
+            // On the playback page this bar is the only control surface, so the
+            // translation face of the lyrics belongs here — it applies on the
+            // spot (the lyric surfaces rebuild their configuration), which is why
+            // it is not a row in a settings window.
+            if uiState.contentMode == .nowPlaying, lyricsVM != nil {
+                lyricsTranslationButton
+            }
         }
+    }
+
+    /// Show or hide lyric translations, matching the player's leading capsule.
+    private var lyricsTranslationButton: some View {
+        Button {
+            showsLyricsTranslation.toggle()
+            NativeLyricsConfigurationMapper.applyTranslationVisibility(showsLyricsTranslation)
+        } label: {
+            Image(systemName: "translate")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(showsLyricsTranslation ? controlPrimaryColor : controlDisabledColor)
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .buttonStyle(.plain)
+        .help(showsLyricsTranslation ? "隐藏歌词翻译" : "显示歌词翻译")
+        .animation(.snappy(duration: 0.2), value: showsLyricsTranslation)
     }
 
     /// The current track, when it is an online-sourced one that can be liked.
