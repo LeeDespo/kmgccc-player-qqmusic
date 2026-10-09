@@ -2,8 +2,6 @@
 
 这里只记录本 fork 的 QQ Music / fork 集成变化。播放器上游历史仍保留在根 `CHANGELOG.md`。
 
-## [Unreleased]
-
 ## [1.2.0]
 
 - 上游基线升级到 kmgccc_player 2.3.4 之后的 `main`，重新迁移并验证集成（含一处 git 看不出的语义冲突）。

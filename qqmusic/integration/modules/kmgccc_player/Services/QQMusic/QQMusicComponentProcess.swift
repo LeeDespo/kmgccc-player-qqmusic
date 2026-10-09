@@ -428,11 +428,12 @@ nonisolated enum QQMusicBuildStamp {
 
     /// The version of the online-source patch itself.
     ///
-    /// Deliberately separate from the app's own version: this fork is upstream
-    /// 2.3.1 plus a patch, the two are released under names that say so, and a
-    /// patch can move without upstream moving. Bump it when the patch package is
-    /// released, not on every commit — the build stamp below covers those.
-    static let patchVersion = "1.1.0"
+    /// Deliberately separate from the app's own version: a patch can move without
+    /// upstream moving, and a patch release is tagged with this number alone. The
+    /// upstream version it was verified against is named in that release's notes.
+    /// Bump it when the patch package is released, not on every commit — the build
+    /// stamp below covers those.
+    static let patchVersion = "1.2.0"
 
     static var text: String {
         (Bundle.main.object(forInfoDictionaryKey: key) as? String) ?? "开发构建"
