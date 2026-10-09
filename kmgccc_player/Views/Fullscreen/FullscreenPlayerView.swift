@@ -95,6 +95,9 @@ struct FullscreenPlayerView: View {
     @Environment(LibraryCacheServices.self) private var cacheServices
     @Environment(LEDMeterServiceProvider.self) private var ledMeterProvider
     @Environment(AppSettings.self) private var settings
+    /// Optional: present only while a library session is active. The player's own
+    /// bar offers the online favourite, which this coordinator owns.
+    @Environment(QQMusicOnlineCoordinator.self) private var qqMusicOnlineCoordinator: QQMusicOnlineCoordinator?
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.motionTokens) private var motionTokens
@@ -1043,10 +1046,34 @@ struct FullscreenPlayerView: View {
     /// progress-bar area (which uses maxWidth: .infinity). Outer button spacing is
     /// unaffected; the group re-centers automatically.
     private let fullscreenMiniPlayerPillWidthReduction: CGFloat = 160
-    private let leadingControlsExpandedWidth: CGFloat = 180  // 3 buttons × 60pt
-    private let leadingControlsCollapsedWidth: CGFloat = 120  // 2 buttons × 60pt
+    /// The capsule's reserved width follows the buttons it carries — see
+    /// `leadingControlsAvailability`. A fixed two/three-button reservation left
+    /// the capsule wider than its slot once the online favourite and the
+    /// translation toggle joined it, so it overlapped the mini player.
+    private var leadingControlsExpandedWidth: CGFloat {
+        CGFloat(leadingControlsAvailability.buttonCount(expanded: true)) * fullscreenControlButtonSize
+    }
+    private var leadingControlsCollapsedWidth: CGFloat {
+        CGFloat(leadingControlsAvailability.buttonCount(expanded: false)) * fullscreenControlButtonSize
+    }
     private let volumeExpandedWidth: CGFloat = 180
     private let volumeCollapsedWidth: CGFloat = 60
+
+    /// Which buttons the leading capsule carries, decided here and handed to the
+    /// bar: the reserved widths above are derived from the same value, so the
+    /// capsule cannot end up wider than its slot.
+    private var leadingControlsAvailability: FullscreenLeadingControlsAvailability {
+        let presentation = playbackCoordinator.stablePresentation
+        let canLike = qqMusicOnlineCoordinator != nil
+            && settings.qqMusicShowLikeButton
+            && presentation.source == .local
+            && presentation.localTrack?.qqMusicSongMid?.isEmpty == false
+        return FullscreenLeadingControlsAvailability(
+            showsLyrics: true,
+            showsLike: canLike,
+            showsTranslation: true
+        )
+    }
     private let fullscreenSideControlsCollapseDelayNanoseconds: UInt64 = 180_000_000
 
     private var fullscreenBottomControlsGeometryConfiguration: FullscreenBottomControlsGeometry.Configuration {
@@ -1646,6 +1673,7 @@ struct FullscreenPlayerView: View {
                 },
                 dismissPlaybackModeRetapTip: dismissPlaybackModeRetapTip
             ),
+            leadingControlsAvailability: leadingControlsAvailability,
             controls: bottomControls,
             volume: volumeBinding
         )

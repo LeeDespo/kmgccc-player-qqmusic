@@ -838,6 +838,7 @@ struct QQMusicSettingsView: View {
                 title: "歌曲缓存",
                 subtitle: "播放时后台自动下载的歌曲。你自己点过播放或下载的歌曲属于曲库内容，不在这个上限之内，也不会被回收。",
                 usage: songCacheUsageText,
+                revealPath: songCacheDirectoryPath,
                 enabled: Binding(
                     get: { AppSettings.shared.qqMusicSongCacheLimitEnabled },
                     set: { AppSettings.shared.qqMusicSongCacheLimitEnabled = $0 }
@@ -856,6 +857,7 @@ struct QQMusicSettingsView: View {
                 title: "其他缓存",
                 subtitle: "歌单、推荐、排行榜等目录数据与封面图片。这些内容都能重新获取，回收只会让下次加载稍慢。",
                 usage: otherCacheUsageText,
+                revealPath: cacheDirectoryPath,
                 enabled: Binding(
                     get: { AppSettings.shared.qqMusicOtherCacheLimitEnabled },
                     set: { AppSettings.shared.qqMusicOtherCacheLimitEnabled = $0 }
@@ -881,6 +883,7 @@ struct QQMusicSettingsView: View {
         title: String,
         subtitle: String,
         usage: String,
+        revealPath: String?,
         enabled: Binding<Bool>,
         limitGB: Binding<Double>,
         reclaimPercent: Binding<Int>
@@ -897,7 +900,14 @@ struct QQMusicSettingsView: View {
             }
 
             VStack(alignment: .leading, spacing: 12) {
-                labeledValue("当前占用", usage)
+                // The reveal button sits with the number it belongs to: "where is
+                // this space going" is the question the figure raises.
+                HStack(spacing: 8) {
+                    labeledValue("当前占用", usage)
+                    if let revealPath {
+                        Button("在访达中显示") { revealDirectory(at: revealPath) }
+                    }
+                }
 
                 infoSwitchRow(
                 title: "限制大小",
@@ -960,6 +970,14 @@ struct QQMusicSettingsView: View {
     private var cacheDirectoryPath: String? {
         guard let root = coordinator?.libraryRootURL else { return nil }
         return root.appendingPathComponent("QQMusic", isDirectory: true).path
+    }
+
+    /// Where the auto-downloaded songs themselves live: the library's own track
+    /// storage. The cache is a subset of it (the reused tracks are not cache), and
+    /// the budget already says how much of it counts.
+    private var songCacheDirectoryPath: String? {
+        guard let root = coordinator?.libraryRootURL else { return nil }
+        return root.appendingPathComponent("Tracks", isDirectory: true).path
     }
 
     // MARK: - Actions
@@ -1242,6 +1260,10 @@ struct QQMusicSettingsView: View {
 
     private func revealCacheDirectory() {
         guard let path = cacheDirectoryPath else { return }
+        revealDirectory(at: path)
+    }
+
+    private func revealDirectory(at path: String) {
         let url = URL(fileURLWithPath: path, isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         NSWorkspace.shared.activateFileViewerSelecting([url])

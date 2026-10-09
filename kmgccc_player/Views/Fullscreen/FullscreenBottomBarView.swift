@@ -57,6 +57,9 @@ struct FullscreenBottomBarView: View {
     let metrics: FullscreenBottomBarMetrics
     let presentation: FullscreenBottomBarPresentation
     let actions: FullscreenBottomBarActions
+    /// Which buttons the leading capsule shows; the geometry above reserves their
+    /// width, so the two must be decided together.
+    var leadingControlsAvailability = FullscreenLeadingControlsAvailability()
 
     @Bindable var controls: FullscreenBottomControlsCoordinator
     @Binding var volume: Double
@@ -235,6 +238,12 @@ struct FullscreenBottomBarView: View {
     }
 
     private func leadingControlsPill(size: CGFloat) -> some View {
-        FullscreenLeadingControlsPill(size: size, presentation: presentation, actions: actions, controls: controls)
+        FullscreenLeadingControlsPill(
+            size: size,
+            presentation: presentation,
+            actions: actions,
+            controls: controls,
+            availability: leadingControlsAvailability
+        )
     }
 }

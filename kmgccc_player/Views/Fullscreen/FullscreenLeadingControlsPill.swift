@@ -1,6 +1,32 @@
 import MotionKit
 import SwiftUI
 
+/// Which buttons the leading capsule carries.
+///
+/// The bottom-controls geometry reserves the capsule's width from this, so the
+/// layout and the view cannot disagree. They did: the reservation was a fixed two
+/// or three buttons, and the online favourite and the translation toggle made the
+/// capsule wider than its slot — it overlapped the mini player, hovered or not.
+struct FullscreenLeadingControlsAvailability: Equatable {
+    /// The lyrics-visibility button. Skins can switch it off.
+    var showsLyrics = true
+    /// The online favourite, for a track that has an upstream id to write to.
+    var showsLike = false
+    /// The translation toggle, for a surface that renders lyrics at all.
+    var showsTranslation = false
+    /// Skin scenes may keep the quick-panel button on screen while collapsed.
+    var pinsQuickPanel = false
+
+    /// How many buttons the capsule shows in the given state.
+    func buttonCount(expanded: Bool) -> Int {
+        1  // exit
+            + (showsLyrics ? 1 : 0)
+            + (showsLike ? 1 : 0)
+            + (showsTranslation ? 1 : 0)
+            + ((expanded || pinsQuickPanel) ? 1 : 0)
+    }
+}
+
 /// Shared left capsule. The native player uses this exact view; authors may also place it alone.
 struct FullscreenLeadingControlsPill: View {
     let size: CGFloat
@@ -8,8 +34,7 @@ struct FullscreenLeadingControlsPill: View {
     let actions: FullscreenBottomBarActions
     @Bindable var controls: FullscreenBottomControlsCoordinator
     var isFullscreen = true
-    var showsLyricsButton = true
-    var alwaysShowsQuickPanel = false
+    var availability = FullscreenLeadingControlsAvailability()
     var onHoverStateChanged: ((Bool) -> Void)? = nil
 
     /// The online-source favourite, reachable from the player's own bar.
@@ -21,14 +46,13 @@ struct FullscreenLeadingControlsPill: View {
     @Environment(QQMusicOnlineCoordinator.self) private var qqMusicCoordinator: QQMusicOnlineCoordinator?
     @Environment(PlaybackCoordinator.self) private var playbackCoordinator: PlaybackCoordinator?
     @Environment(AppSettings.self) private var settings: AppSettings?
-    @Environment(LyricsViewModel.self) private var lyricsVM: LyricsViewModel?
     @AppStorage("lyricsShowTranslation") private var showsTranslation = true
 
     var body: some View {
         let controlColorScheme = presentation.glassStyle.colorScheme
         let foregroundProfile = presentation.miniPlayerForegroundProfile
-        let likeTrack = likeableOnlineTrack
-        let showsTranslationButton = lyricsVM != nil
+        let likeTrack = availability.showsLike ? likeableOnlineTrack : nil
+        let quickPanelVisible = availability.pinsQuickPanel || controls.isLeftActionsExpanded
 
         return HStack(spacing: 0) {
             leadingControlButton(size: size, help: isFullscreen ? "fullscreen.exit" : "全屏播放") {
@@ -42,27 +66,21 @@ struct FullscreenLeadingControlsPill: View {
                 actions.exitFullscreen()
             }
 
-            if showsLyricsButton { lyricsVisibilityButton(size: size) }
+            if availability.showsLyrics { lyricsVisibilityButton(size: size) }
 
             if let track = likeTrack, let coordinator = qqMusicCoordinator {
                 likeButton(size: size, track: track, coordinator: coordinator)
             }
 
-            if showsTranslationButton { translationButton(size: size) }
+            if availability.showsTranslation { translationButton(size: size) }
 
             quickAppearanceButton(size: size)
-                .opacity((alwaysShowsQuickPanel || controls.isLeftActionsExpanded) ? 1 : 0)
-                .allowsHitTesting(alwaysShowsQuickPanel || controls.isLeftActionsExpanded)
-                .accessibilityHidden(!alwaysShowsQuickPanel && !controls.isLeftActionsExpanded)
+                .opacity(quickPanelVisible ? 1 : 0)
+                .allowsHitTesting(quickPanelVisible)
+                .accessibilityHidden(!quickPanelVisible)
         }
         .frame(
-            width: size * CGFloat(
-                1
-                    + (showsLyricsButton ? 1 : 0)
-                    + (likeTrack == nil ? 0 : 1)
-                    + (showsTranslationButton ? 1 : 0)
-                    + ((alwaysShowsQuickPanel || controls.isLeftActionsExpanded) ? 1 : 0)
-            ),
+            width: size * CGFloat(availability.buttonCount(expanded: controls.isLeftActionsExpanded)),
             height: size,
             alignment: .leading
         )

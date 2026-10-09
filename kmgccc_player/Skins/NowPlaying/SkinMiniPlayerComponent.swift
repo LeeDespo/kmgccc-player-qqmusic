@@ -77,7 +77,12 @@ struct SkinLeadingCapsule: View {
                 size: 60 * configuration.number("scale", fallback: 1),
                 presentation: native.presentation, actions: native.actions, controls: model,
                 isFullscreen: surface == .fullscreen,
-                showsLyricsButton: configuration.boolean("showsLyricsButton", fallback: true),
+                // Skin scenes keep the capsule they have always had; the online
+                // favourite and the translation toggle belong to the player's own
+                // bar, whose layout reserves their width.
+                availability: .init(
+                    showsLyrics: configuration.boolean("showsLyricsButton", fallback: true)
+                ),
                 onHoverStateChanged: hoverChanged
             )
             .skinProvidesControls(configuration.boolean("showsLyricsButton", fallback: true)
