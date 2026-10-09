@@ -523,9 +523,9 @@ private final class AppKitMainRootViewController: NSViewController {
         splitViewController.splitView.layer?.backgroundColor = NSColor.clear.cgColor
         homeFullWindowHost.wantsLayer = true
         homeFullWindowHost.layer?.backgroundColor = NSColor.clear.cgColor
-        homeFullWindowHost.isHidden = !HomeWindowLayoutState.shared.isHomeMode
-        HomeWindowLayoutState.shared.onHomeModeChange = { [weak self] isHome in
-            self?.handleHomeModeChange(isHome)
+        homeFullWindowHost.isHidden = !HomeWindowLayoutState.shared.presentsFullWindowSurface
+        HomeWindowLayoutState.shared.onFullWindowSurfaceChange = { [weak self] presents in
+            self?.handleFullWindowSurfaceChange(presents)
         }
         fileDropOverlayHost.wantsLayer = true
         fileDropOverlayHost.layer?.backgroundColor = NSColor.clear.cgColor
@@ -657,10 +657,10 @@ private final class AppKitMainRootViewController: NSViewController {
         return effects
     }
 
-    private func handleHomeModeChange(_ isHome: Bool) {
-        // PagePresentation owns entry. Remove the outgoing Home surface at
-        // the route boundary so it cannot show behind another live page.
-        homeFullWindowHost.isHidden = !isHome
+    private func handleFullWindowSurfaceChange(_ presents: Bool) {
+        // PagePresentation owns entry. Remove the outgoing surface at the route
+        // boundary so it cannot show behind another live page.
+        homeFullWindowHost.isHidden = !presents
     }
 
     private func setFileDropOverlayVisible(_ isVisible: Bool) {

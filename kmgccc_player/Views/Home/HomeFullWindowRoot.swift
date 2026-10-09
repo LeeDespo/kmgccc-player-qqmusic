@@ -86,7 +86,7 @@ struct HomeFullWindowRoot: View {
         // like an empty window, and the online surface leaves no other trace.
         .onChange(of: presentedSurface, initial: true) { _, _ in
             Log.info(
-                "[HomeHost] surface=\(presentedSurface) contentMode=\(appSession.uiState.contentMode)",
+                "[HomeHost] surface=\(presentedSurface) contentMode=\(appSession.uiState.contentMode) allows=\(layout.allowsHomeInteraction) coordinator=\(appSession.qqMusicOnlineCoordinator != nil) embeddedFullscreen=\(layout.isEmbeddedFullscreenActive) searchActive=\(layout.isHomeSearchActive)",
                 category: .ui
             )
         }

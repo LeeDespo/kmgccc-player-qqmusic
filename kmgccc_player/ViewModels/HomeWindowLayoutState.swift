@@ -277,8 +277,16 @@ final class HomeWindowLayoutState {
         return isQQMusicMode || (isHomeMode && !isHomeSearchActive)
     }
 
+    /// Whether the shared full-window host is on screen at all.
+    ///
+    /// The visibility counterpart of `allowsHomeInteraction`: Home and the online
+    /// browse surface are drawn by the same AppKit host, so hiding that host on
+    /// `isHomeMode` alone hides the entire online surface — and nothing inside its
+    /// subtree can unhide a window's view.
+    var presentsFullWindowSurface: Bool { isHomeMode || isQQMusicMode }
+
     @ObservationIgnored
-    var onHomeModeChange: ((Bool) -> Void)?
+    var onFullWindowSurfaceChange: ((Bool) -> Void)?
 
     /// Live frame of the Mini Player view in SwiftUI `.global` coordinates
     /// (top-left origin, matching the topmost `NSHostingView`'s bounds).
@@ -375,7 +383,7 @@ final class HomeWindowLayoutState {
     func setHomeMode(_ active: Bool) {
         guard isHomeMode != active else { return }
         isHomeMode = active
-        onHomeModeChange?(active)
+        onFullWindowSurfaceChange?(presentsFullWindowSurface)
         if !active {
             // Keep the bounded Home artwork caches for the return transition.
             // Memory-pressure and fullscreen paths still release them explicitly.
@@ -386,6 +394,8 @@ final class HomeWindowLayoutState {
     func setQQMusicMode(_ active: Bool) {
         guard isQQMusicMode != active else { return }
         isQQMusicMode = active
+        // The same notification Home sends: the host is shown for either surface.
+        onFullWindowSurfaceChange?(presentsFullWindowSurface)
     }
 
     func setEmbeddedFullscreenActive(_ active: Bool) {

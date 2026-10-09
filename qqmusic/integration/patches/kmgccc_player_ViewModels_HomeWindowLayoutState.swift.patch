@@ -1,8 +1,8 @@
 diff --git a/kmgccc_player/ViewModels/HomeWindowLayoutState.swift b/kmgccc_player/ViewModels/HomeWindowLayoutState.swift
-index 4608ae93..2e803cc5 100644
+index 4608ae93..493d9963 100644
 --- a/kmgccc_player/ViewModels/HomeWindowLayoutState.swift
 +++ b/kmgccc_player/ViewModels/HomeWindowLayoutState.swift
-@@ -251,8 +251,30 @@ final class HomeWindowLayoutState {
+@@ -251,12 +251,42 @@ final class HomeWindowLayoutState {
      /// is showing all-song search results instead of routing events to Home.
      var isHomeSearchActive: Bool = false
  
@@ -33,14 +33,38 @@ index 4608ae93..2e803cc5 100644
 +        return isQQMusicMode || (isHomeMode && !isHomeSearchActive)
      }
  
++    /// Whether the shared full-window host is on screen at all.
++    ///
++    /// The visibility counterpart of `allowsHomeInteraction`: Home and the online
++    /// browse surface are drawn by the same AppKit host, so hiding that host on
++    /// `isHomeMode` alone hides the entire online surface — and nothing inside its
++    /// subtree can unhide a window's view.
++    var presentsFullWindowSurface: Bool { isHomeMode || isQQMusicMode }
++
      @ObservationIgnored
-@@ -361,6 +383,11 @@ final class HomeWindowLayoutState {
+-    var onHomeModeChange: ((Bool) -> Void)?
++    var onFullWindowSurfaceChange: ((Bool) -> Void)?
+ 
+     /// Live frame of the Mini Player view in SwiftUI `.global` coordinates
+     /// (top-left origin, matching the topmost `NSHostingView`'s bounds).
+@@ -353,7 +383,7 @@ final class HomeWindowLayoutState {
+     func setHomeMode(_ active: Bool) {
+         guard isHomeMode != active else { return }
+         isHomeMode = active
+-        onHomeModeChange?(active)
++        onFullWindowSurfaceChange?(presentsFullWindowSurface)
+         if !active {
+             // Keep the bounded Home artwork caches for the return transition.
+             // Memory-pressure and fullscreen paths still release them explicitly.
+@@ -361,6 +391,13 @@ final class HomeWindowLayoutState {
          }
      }
  
 +    func setQQMusicMode(_ active: Bool) {
 +        guard isQQMusicMode != active else { return }
 +        isQQMusicMode = active
++        // The same notification Home sends: the host is shown for either surface.
++        onFullWindowSurfaceChange?(presentsFullWindowSurface)
 +    }
 +
      func setEmbeddedFullscreenActive(_ active: Bool) {

@@ -188,6 +188,10 @@ struct QQMusicPageCanvas<Content: View>: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onChange(of: snap, initial: true) { _, newValue in
+            Log.info(
+                "[QQMusicCanvas] snapshot valid=\(newValue.hasValidLayout) left=\(newValue.leftInset) right=\(newValue.rightInset) mode=\(newValue.mode.rawValue) bucket=\(newValue.contentWidthBucket) settled=\(settled != nil)",
+                category: .ui
+            )
             guard newValue.hasValidLayout else { return }
             settled = (
                 QQMusicColumnInsets(left: CGFloat(newValue.leftInset), right: CGFloat(newValue.rightInset)),
