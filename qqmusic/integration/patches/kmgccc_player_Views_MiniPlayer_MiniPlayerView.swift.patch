@@ -1,22 +1,18 @@
 diff --git a/kmgccc_player/Views/MiniPlayer/MiniPlayerView.swift b/kmgccc_player/Views/MiniPlayer/MiniPlayerView.swift
-index dc10fabc..2e19126c 100644
+index dc10fabc..100a4d4c 100644
 --- a/kmgccc_player/Views/MiniPlayer/MiniPlayerView.swift
 +++ b/kmgccc_player/Views/MiniPlayer/MiniPlayerView.swift
-@@ -22,6 +22,13 @@ struct MiniPlayerView: View {
+@@ -22,6 +22,9 @@ struct MiniPlayerView: View {
      @Environment(LibraryViewModel.self) private var libraryVM
      @Environment(LibraryCacheServices.self) private var cacheServices
      @Environment(UIStateViewModel.self) private var uiState
 +    /// Optional: present only when a library session is active. Drives the
 +    /// favorite button for online-sourced tracks.
 +    @Environment(QQMusicOnlineCoordinator.self) private var qqMusicCoordinator: QQMusicOnlineCoordinator?
-+    /// Optional, like the coordinator: the bar is also mounted by surfaces that
-+    /// carry no lyrics view model, and a missing one must not crash it.
-+    @Environment(LyricsViewModel.self) private var lyricsVM: LyricsViewModel?
-+    @AppStorage("lyricsShowTranslation") private var showsLyricsTranslation = true
      @Environment(\.colorScheme) private var colorScheme
      @Environment(\.accessibilityReduceMotion) private var reduceMotion
      @Environment(\.motionTokens) private var motionTokens
-@@ -199,17 +206,91 @@ struct MiniPlayerView: View {
+@@ -199,17 +202,67 @@ struct MiniPlayerView: View {
      // MARK: - Subviews
  
      private func controlsView(presentation: NowPlayingPresentation) -> some View {
@@ -49,31 +45,7 @@ index dc10fabc..2e19126c 100644
 +            if settings.qqMusicShowLikeButton, let track = likeableTrack(presentation) {
 +                likeButton(for: track)
 +            }
-+
-+            // On the playback page this bar is the only control surface, so the
-+            // translation face of the lyrics belongs here — it applies on the
-+            // spot (the lyric surfaces rebuild their configuration), which is why
-+            // it is not a row in a settings window.
-+            if uiState.contentMode == .nowPlaying, lyricsVM != nil {
-+                lyricsTranslationButton
-+            }
 +        }
-+    }
-+
-+    /// Show or hide lyric translations, matching the player's leading capsule.
-+    private var lyricsTranslationButton: some View {
-+        Button {
-+            showsLyricsTranslation.toggle()
-+            NativeLyricsConfigurationMapper.applyTranslationVisibility(showsLyricsTranslation)
-+        } label: {
-+            Image(systemName: "translate")
-+                .font(.system(size: 15, weight: .medium))
-+                .foregroundStyle(showsLyricsTranslation ? controlPrimaryColor : controlDisabledColor)
-+                .contentTransition(.symbolEffect(.replace))
-+        }
-+        .buttonStyle(.plain)
-+        .help(showsLyricsTranslation ? "隐藏歌词翻译" : "显示歌词翻译")
-+        .animation(.snappy(duration: 0.2), value: showsLyricsTranslation)
 +    }
 +
 +    /// The current track, when it is an online-sourced one that can be liked.
