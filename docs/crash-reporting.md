@@ -41,7 +41,7 @@ PLCrashReporter pending report 只有在自有队列保存成功后才会被清�
 
 ## 用户选择和投递状态
 
-“自动发送崩溃报告”默认开启，与匿名使用统计分别控制。每份新报告在下次启动时都会显示一次主窗口附属 sheet，用户说明允许留空。
+本构建是修改版 fork：`CrashReportPreferences.automaticUploadEnabled` 默认返回 `false`，设置页的“帮助改进 kmgccc_player”和“自动发送崩溃报告”两个开关以锁定且不可开启的形式显示（`DataManagementSettingsView.swift`）。本 fork 不会自动上传崩溃报告，本地 record 只保留供排查。下表记录上游的投递语义，其中“开启”一列在本 fork 不可达。
 
 | 设置 | 用户操作 | 技术报告 | 用户说明 |
 | --- | --- | --- | --- |

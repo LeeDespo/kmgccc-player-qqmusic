@@ -38,6 +38,7 @@
 | replayable patch 内容 | 工作树经 `qqmusic/integration/sync.sh` 生成；禁止直接维护生成文件 |
 | HelperNext / Aria2 精确版本与 SHA | `qqmusic/integration/components.lock.json` |
 | QQ Music 架构/功能入口 | `qqmusic/README.md` |
+| QQ Music 按功能的历史/开发记录（非当前真源） | `docs/` 下的 `qqmusic/` 编号文档，索引见其 `00-overview.md` |
 | 发布规则 | `qqmusic/RELEASING.md` |
 | QQ Music 版本历史 | `qqmusic/CHANGELOG.md` + `qqmusic/release-notes/` |
 | 上游播放器通用技术文档 | `docs/` |

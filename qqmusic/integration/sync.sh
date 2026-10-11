@@ -146,15 +146,17 @@ stale=0
 # --- removals.txt ------------------------------------------------------------
 if [[ $CHECK -eq 1 ]]; then
   if (( ${#deleted[@]} > 0 )); then
-    printf '%s\n' "${deleted[@]}" > /tmp/qqmusic-removals-expected.txt
+    removals_expected="$(mktemp)"
+    printf '%s\n' "${deleted[@]}" > "$removals_expected"
     # Comments and blanks are not paths; apply.sh skips them the same way.
-    if ! diff -q <(sort /tmp/qqmusic-removals-expected.txt) \
+    if ! diff -q <(sort "$removals_expected") \
                  <(grep -vE '^[[:space:]]*(#|$)' "$HERE/removals.txt" 2>/dev/null | sort) >/dev/null 2>&1; then
       echo "-- removals.txt: STALE"
       stale=1
     else
       echo "-- removals.txt: up to date (${#deleted[@]} paths)"
     fi
+    rm -f "$removals_expected"
   elif [[ -f "$HERE/removals.txt" ]]; then
     echo "-- removals.txt: STALE (feature no longer deletes anything)"
     stale=1

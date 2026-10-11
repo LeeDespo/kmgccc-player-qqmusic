@@ -5,6 +5,8 @@ Tools/QQMusicHelper/build-universal.sh
 Tools/QQMusicHelper/main.py
 Tools/QQMusicHelper/requirements.txt
 kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
+kmgccc_playerTests/DynamicAuthorizedSourceRootsTests.swift
+kmgccc_playerTests/ReferencedFileIdentityTests.swift
 pages/appcast.xml
 pages/assets/ap16.jpeg
 pages/assets/ap30.jpeg
