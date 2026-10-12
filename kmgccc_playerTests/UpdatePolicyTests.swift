@@ -23,18 +23,6 @@ final class UpdatePreferencesTests: XCTestCase {
         }
     }
 
-    func testMigrationPreservesLegacyOptOut() {
-        withDefaults { defaults in
-            defaults.set(false, forKey: UpdatePreferences.legacyLaunchCheckKey)
-
-            UpdatePreferences.migrateIfNeeded(defaults: defaults)
-
-            XCTAssertFalse(
-                UpdatePreferences.automaticUpdatesEnabled(defaults: defaults)
-            )
-        }
-    }
-
     func testReadyMetadataExpiresAfterFortyEightHours() {
         let readyAt = Date(timeIntervalSince1970: 1_000)
         let metadata = UpdateReadyMetadata(

@@ -145,8 +145,8 @@ nonisolated enum MP3EmbeddedTagService {
         let version = sourceValues.version
         var newFrames = preservedFrames
         for field in fields.keys.sorted() {
-            guard let frameID = frameIDs[field],
-            let value = fields[field] ?? nil else { continue }
+            let frameID = frameIDs[field]!
+            guard let value = fields[field] ?? nil else { continue }
             newFrames.append(try makeFrame(id: frameID, value: value, version: version))
         }
         let body = newFrames.reduce(into: Data()) { $0.append($1) }

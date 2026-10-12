@@ -119,16 +119,6 @@ final class QQMusicNavigationTests: XCTestCase {
         XCTAssertEqual(page.loadKey, "playlist:42")
     }
 
-    /// Only finite lists offer batch download/select-all, so this predicate is
-    /// what stops a "全选" appearing on an endless feed.
-    func testEndlessListsAreNotFinite() {
-        XCTAssertFalse(QQMusicPage.recommend.isFiniteList)
-        XCTAssertFalse(QQMusicPage.radio.isFiniteList)
-        XCTAssertFalse(QQMusicPage.artist(QQMusicArtistRef(singerMid: "x", name: "X")).isFiniteList)
-        XCTAssertTrue(QQMusicPage.likedSongs.isFiniteList)
-        XCTAssertTrue(QQMusicPage.playlist(id: 1, title: "P").isFiniteList)
-    }
-
     func testDisplayKeyDistinguishesPages() {
         XCTAssertNotEqual(
             QQMusicPage.search(.songs).loadKey,

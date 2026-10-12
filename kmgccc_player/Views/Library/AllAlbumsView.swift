@@ -275,25 +275,6 @@ struct AllAlbumsView: View {
         )
     }
 
-    private func compareInt(_ a: Int, _ b: Int) -> ComparisonResult {
-        a == b ? .orderedSame : (a < b ? .orderedAscending : .orderedDescending)
-    }
-    private func compareDouble(_ a: Double, _ b: Double) -> ComparisonResult {
-        a == b ? .orderedSame : (a < b ? .orderedAscending : .orderedDescending)
-    }
-    private func compareDate(_ a: Date, _ b: Date) -> ComparisonResult {
-        a == b ? .orderedSame : (a < b ? .orderedAscending : .orderedDescending)
-    }
-
-    private func compareAggregateMetric(
-        _ lhs: LibraryAggregateStats.Metric,
-        _ rhs: LibraryAggregateStats.Metric
-    ) -> ComparisonResult {
-        if lhs.hasData != rhs.hasData {
-            return lhs.hasData ? .orderedDescending : .orderedAscending
-        }
-        return compareDouble(lhs.value, rhs.value)
-    }
 }
 
 // MARK: - Row

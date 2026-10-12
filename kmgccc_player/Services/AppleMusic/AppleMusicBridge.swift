@@ -59,7 +59,6 @@ final class AppleMusicBridge: @unchecked Sendable {
         var info: NowPlayingInfo
     }
 
-    nonisolated(unsafe) private var fetchPositionScript: NSAppleScript?
     nonisolated(unsafe) private var fetchFullScript: NSAppleScript?
     nonisolated(unsafe) private var controlScripts: [ControlScript: NSAppleScript] = [:]
     private let pollingScriptLock = NSLock()
@@ -84,20 +83,6 @@ final class AppleMusicBridge: @unchecked Sendable {
             return false
         }
         return NSWorkspace.shared.open(URL(fileURLWithPath: path))
-    }
-
-    nonisolated func fetchPositionInfo() -> NowPlayingInfo {
-        guard isMusicAppRunning() else {
-            return NowPlayingInfo(state: .stopped)
-        }
-        guard let descriptor = execute(fetchPositionScript, lock: pollingScriptLock),
-              descriptor.numberOfItems >= 2 else {
-            return NowPlayingInfo(state: .unknown)
-        }
-
-        let position = descriptor.atIndex(1)?.doubleValue ?? 0
-        let stateRaw = descriptor.atIndex(2)?.stringValue ?? ""
-        return NowPlayingInfo(position: position, state: PlayerState(rawValue: stateRaw) ?? .unknown)
     }
 
     nonisolated func fetchFullInfo() -> NowPlayingInfo {
@@ -201,10 +186,6 @@ final class AppleMusicBridge: @unchecked Sendable {
             shuffleEnabled: descriptor.atIndex(startIndex + 11)?.booleanValue ?? false,
             songRepeat: RepeatMode(rawValue: repeatRaw) ?? .unknown
         )
-    }
-
-    nonisolated func fetchCurrentArtworkData() -> Data? {
-        fetchCurrentArtworkSnapshot()?.data
     }
 
     nonisolated func fetchCurrentArtworkSnapshot() -> ArtworkSnapshot? {
@@ -318,20 +299,6 @@ final class AppleMusicBridge: @unchecked Sendable {
     }
 
     @discardableResult
-    nonisolated func setRepeatMode(_ mode: RepeatMode) -> Bool {
-        switch mode {
-        case .off:
-            return runMusicCommand("set song repeat to off")
-        case .one:
-            return runMusicCommand("set song repeat to one")
-        case .all:
-            return runMusicCommand("set song repeat to all")
-        case .unknown:
-            return false
-        }
-    }
-
-    @discardableResult
     nonisolated func setPlaybackMode(shuffleEnabled: Bool, repeatMode: RepeatMode) -> Bool {
         guard repeatMode != .unknown else { return false }
         return runMusicCommand(
@@ -343,20 +310,6 @@ final class AppleMusicBridge: @unchecked Sendable {
     }
 
     private nonisolated func compileScripts() {
-        fetchPositionScript = compile(
-            """
-            with timeout of 3 seconds
-                tell application "Music"
-                    try
-                        return {player position, player state as string}
-                    on error
-                        return {0, "stopped"}
-                    end try
-                end tell
-            end timeout
-            """
-        )
-
         fetchFullScript = compile(
             """
             with timeout of 4 seconds

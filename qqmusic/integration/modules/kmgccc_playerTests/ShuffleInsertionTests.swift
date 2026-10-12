@@ -156,32 +156,6 @@ final class ShuffleInsertionTests: XCTestCase {
 @MainActor
 final class ShufflePoolStarvationTests: XCTestCase {
 
-    private func harness() throws -> (SmartPlaybackController, URL) {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let paths = kmgccc_player.LibraryPaths(rootURL: root)
-        let stats = PreferenceStatsService()
-        let controller = SmartPlaybackController(
-            playbackHistoryStore: .inMemory(),
-            preferenceStatsService: stats,
-            libraryService: LocalLibraryService(paths: paths, preferenceStatsService: stats)
-        )
-        return (controller, root)
-    }
-
-    private func track(_ name: String, _ root: URL) -> Track {
-        Track(
-            title: name,
-            fileBookmarkData: Data("b".utf8),
-            mediaLocator: .referenced(kmgccc_player.ReferencedFileLocator(
-                fileBookmarkData: Data("b".utf8),
-                lastKnownPath: root.appendingPathComponent("\(name).mp3").path
-            )),
-            libraryRootSnapshot: root.path
-        )
-    }
-
     /// Online sessions start with ONE track. The controller's shuffle session
     /// therefore has a one-element source pool, so anything it generates on its
     /// own can only ever be that same track. This checks what it reaches for
@@ -257,32 +231,6 @@ final class ShufflePoolStarvationTests: XCTestCase {
 @MainActor
 final class ShuffleAutoAdvanceTests: XCTestCase {
 
-    private func harness() throws -> (SmartPlaybackController, URL) {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let paths = kmgccc_player.LibraryPaths(rootURL: root)
-        let stats = PreferenceStatsService()
-        let controller = SmartPlaybackController(
-            playbackHistoryStore: .inMemory(),
-            preferenceStatsService: stats,
-            libraryService: LocalLibraryService(paths: paths, preferenceStatsService: stats)
-        )
-        return (controller, root)
-    }
-
-    private func track(_ name: String, _ root: URL) -> Track {
-        Track(
-            title: name,
-            fileBookmarkData: Data("b".utf8),
-            mediaLocator: .referenced(kmgccc_player.ReferencedFileLocator(
-                fileBookmarkData: Data("b".utf8),
-                lastKnownPath: root.appendingPathComponent("\(name).mp3").path
-            )),
-            libraryRootSnapshot: root.path
-        )
-    }
-
     /// A one-track pool cannot generate a successor: this is the mechanism
     /// behind "playback stops after the preloaded tracks".
     func testOneTrackPoolCannotAutoAdvance() throws {
@@ -330,32 +278,6 @@ final class ShuffleAutoAdvanceTests: XCTestCase {
 /// assert playback reaches the end of the order without stalling.
 @MainActor
 final class ShuffleSustainedFeedingTests: XCTestCase {
-
-    private func harness() throws -> (SmartPlaybackController, URL) {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let paths = kmgccc_player.LibraryPaths(rootURL: root)
-        let stats = PreferenceStatsService()
-        let controller = SmartPlaybackController(
-            playbackHistoryStore: .inMemory(),
-            preferenceStatsService: stats,
-            libraryService: LocalLibraryService(paths: paths, preferenceStatsService: stats)
-        )
-        return (controller, root)
-    }
-
-    private func track(_ name: String, _ root: URL) -> Track {
-        Track(
-            title: name,
-            fileBookmarkData: Data("b".utf8),
-            mediaLocator: .referenced(kmgccc_player.ReferencedFileLocator(
-                fileBookmarkData: Data("b".utf8),
-                lastKnownPath: root.appendingPathComponent("\(name).mp3").path
-            )),
-            libraryRootSnapshot: root.path
-        )
-    }
 
     /// Mirrors the coordinator: keep one track queued ahead through
     /// `addToQueuePool` (the prefetch call), advancing the way natural
@@ -436,4 +358,37 @@ final class ShuffleSustainedFeedingTests: XCTestCase {
             )
         }
     }
+}
+
+// MARK: - Shared harness
+
+/// A controller plus a fresh temporary root, shared by the suites above. Every
+/// call builds its own directory and in-memory history store, so the tests stay
+/// independent of one another.
+@MainActor
+private func harness() throws -> (SmartPlaybackController, URL) {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    let paths = kmgccc_player.LibraryPaths(rootURL: root)
+    let stats = PreferenceStatsService()
+    let controller = SmartPlaybackController(
+        playbackHistoryStore: .inMemory(),
+        preferenceStatsService: stats,
+        libraryService: LocalLibraryService(paths: paths, preferenceStatsService: stats)
+    )
+    return (controller, root)
+}
+
+@MainActor
+private func track(_ name: String, _ root: URL) -> Track {
+    Track(
+        title: name,
+        fileBookmarkData: Data("b".utf8),
+        mediaLocator: .referenced(kmgccc_player.ReferencedFileLocator(
+            fileBookmarkData: Data("b".utf8),
+            lastKnownPath: root.appendingPathComponent("\(name).mp3").path
+        )),
+        libraryRootSnapshot: root.path
+    )
 }

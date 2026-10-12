@@ -1,0 +1,47 @@
+diff --git a/kmgccc_player/Services/Audio/PreferenceScorerV2.swift b/kmgccc_player/Services/Audio/PreferenceScorerV2.swift
+index 5954ada1..db849725 100644
+--- a/kmgccc_player/Services/Audio/PreferenceScorerV2.swift
++++ b/kmgccc_player/Services/Audio/PreferenceScorerV2.swift
+@@ -400,42 +400,3 @@ final class PreferenceScorerV2 {
+         return max(exposureFactor, staleFactor)
+     }
+ }
+-
+-// MARK: - Sample Calculation Helpers
+-
+-extension PreferenceScorerV2 {
+-    /// 计算并打印典型样本（用于调试和验证）
+-    static func calculateAndPrintSample(
+-        playCount: Int,
+-        completePlayCount: Int,
+-        skipCount: Int,
+-        quickSkipCount: Int,
+-        totalPlayedSeconds: Double,
+-        duration: Double,
+-        manualLikeState: ManualLikeState = .none,
+-        label: String
+-    ) {
+-        var stats = TrackPreferenceStats()
+-        stats.playCount = playCount
+-        stats.completePlayCount = completePlayCount
+-        stats.skipCount = skipCount
+-        stats.quickSkipCount = quickSkipCount
+-        stats.totalPlayedSeconds = totalPlayedSeconds
+-        stats.manualLikeState = manualLikeState
+-
+-        let result = calculateScore(stats: stats, duration: duration, manualLikeState: manualLikeState)
+-
+-        print("""
+-        [Sample: \(label)]
+-          plays: \(Int(result.features.plays)), complete: \(completePlayCount), skip: \(skipCount), quickSkip: \(quickSkipCount)
+-          avgListenRatio: \(String(format: "%.2f", result.features.avgListenRatio))
+-          confidence: \(String(format: "%.2f", result.features.confidence))
+-          rawPreference: \(String(format: "%.3f", result.rawPreference))
+-          conservativePref: \(String(format: "%.3f", result.conservativePreference))
+-          finalPreference: \(String(format: "%.3f", result.finalPreference))
+-          boundedPreference: \(String(format: "%.3f", result.boundedPreference))
+-          baseWeight: \(String(format: "%.3f", result.baseWeight))
+-          => \(result.preferenceDescription)
+-        """)
+-    }
+-}

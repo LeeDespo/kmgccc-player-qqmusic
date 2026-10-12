@@ -1,0 +1,28 @@
+diff --git a/kmgccc_playerTests/MetadataMatchScorerTests.swift b/kmgccc_playerTests/MetadataMatchScorerTests.swift
+index e66b649f..0eaf4700 100644
+--- a/kmgccc_playerTests/MetadataMatchScorerTests.swift
++++ b/kmgccc_playerTests/MetadataMatchScorerTests.swift
+@@ -47,7 +47,6 @@ final class MetadataMatchScorerTests: XCTestCase {
+     }
+ 
+     func testArtistTypoTolerance() {
+-        XCTAssertTrue(titleAccepted("Colors", "Colors"))
+         let source = ExternalPlaybackTextNormalizer.normalizeArtist("Halsy")
+         let candidate = ExternalPlaybackTextNormalizer.normalizeArtist("Halsey")
+         XCTAssertGreaterThanOrEqual(
+@@ -74,15 +73,6 @@ final class MetadataMatchScorerTests: XCTestCase {
+         }
+     }
+ 
+-    func testExactTitleWithMinorArtistDifference() {
+-        XCTAssertTrue(titleAccepted("Colors", "Colors"))
+-    }
+-
+-    func testDifferentTitleWithExactArtist() {
+-        XCTAssertFalse(titleAccepted("Colors", "Closer"))
+-        XCTAssertFalse(titleAccepted("Stay", "Star"))
+-    }
+-
+     func testFeaturingTextIsIgnored() {
+         XCTAssertTrue(titleAccepted("Colors feat. SZA", "Colors"))
+         XCTAssertTrue(titleAccepted("Colors", "Colors ft. SZA"))

@@ -1,0 +1,19 @@
+diff --git a/kmgccc_player/Services/AppleMusic/AppleMusicPlaybackAdapter.swift b/kmgccc_player/Services/AppleMusic/AppleMusicPlaybackAdapter.swift
+index 240cc613..f0e5734e 100644
+--- a/kmgccc_player/Services/AppleMusic/AppleMusicPlaybackAdapter.swift
++++ b/kmgccc_player/Services/AppleMusic/AppleMusicPlaybackAdapter.swift
+@@ -724,14 +724,6 @@ final class AppleMusicPlaybackAdapter {
+         artworkTask = nil
+     }
+ 
+-    private func updateEmptyPlayingPresentation(from info: AppleMusicBridge.NowPlayingInfo) {
+-        updateUnavailablePresentation(
+-            from: info,
+-            titleKey: "apple_music.not_playing",
+-            connectionState: .runningTemporarilyUnavailable
+-        )
+-    }
+-
+     private func updateUnavailablePresentation(
+         from info: AppleMusicBridge.NowPlayingInfo,
+         titleKey: String,

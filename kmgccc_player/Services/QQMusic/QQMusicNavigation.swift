@@ -147,28 +147,6 @@ nonisolated enum QQMusicPage: Hashable, Sendable {
         }
     }
 
-    /// Whether this page's list has a fixed end.
-    ///
-    /// Describes the *page kind*: an endless feed has no "all", so a whole-list
-    /// action there would promise something it cannot deliver.
-    ///
-    /// Note that the batch-download predicate is deliberately **not** derived
-    /// from this — it is `QQMusicOnlineCoordinator.offersBatchDownload`, which
-    /// this cannot answer because it also calls the landing page finite (there is
-    /// no list there) and because it does not know which pages hold tracks rather
-    /// than entities.
-    var isFiniteList: Bool {
-        switch self {
-        // A station's rotation and the recommendation feed are endless; the
-        // others here are not track lists at all.
-        case .recommend, .search, .radio, .radioStation, .artist, .toplists,
-             .userPlaylists, .likedAlbums, .followedArtists:
-            return false
-        case .home, .likedSongs, .newSongs, .playlist, .album, .toplist:
-            return true
-        }
-    }
-
     /// Stable key for `.task`/`.onAppear` keying, so re-entering a page reloads
     /// only when the page actually changed.
     var loadKey: String {

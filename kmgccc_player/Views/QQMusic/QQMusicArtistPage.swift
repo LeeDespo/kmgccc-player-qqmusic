@@ -280,10 +280,6 @@ struct QQMusicArtistPage: View {
         }
     }
 
-    private var ownedSongMids: Set<String> {
-        Set(songs.map(\.songMid).filter { coordinator.isUserDownloaded($0) })
-    }
-
     // MARK: - Loading
 
     /// Load the tab on screen, once.

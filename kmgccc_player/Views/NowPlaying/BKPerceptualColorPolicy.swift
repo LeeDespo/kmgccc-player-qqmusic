@@ -3,18 +3,12 @@
 //  myPlayer2
 //
 //  OKLCH-first policy for BK art background roles. Production enters through
-//  BKColorEngine.make / makeShapeSwatches / stabilize; legacy HSB entry points
-//  remain available for parity and DEBUG diagnostics.
+//  BKColorEngine.make / makeShapeSwatches / stabilize.
 //
 
 import AppKit
 import CoreGraphics
 import Foundation
-
-nonisolated enum BKPerceptualPolicy: String, Sendable {
-    case legacyHSB = "legacy-hsb"
-    case candidateOKLCH = "candidate-oklch"
-}
 
 nonisolated enum BKSemanticColorRole: String, CaseIterable, Sendable {
     case backgroundBase = "background-base"
@@ -53,72 +47,6 @@ nonisolated enum BKLayerContractClassification: String, Sendable {
     case pass
     case reviewRequired = "review-required"
     case blocker
-}
-
-nonisolated enum BKInputPalettePolicy {
-    static func selectedPalette(
-        analysis: ArtworkColorAnalysis?,
-        basePalette: [NSColor],
-        richPalette: [NSColor],
-        fallbackPalette: [NSColor] = BKExtractedPalettePolicy.fallbackPalette
-    ) -> [NSColor] {
-        BKExtractedPalettePolicy.select(
-            analysis: analysis,
-            basePalette: basePalette,
-            richPalette: richPalette,
-            fallbackPalette: fallbackPalette
-        )
-    }
-}
-
-nonisolated enum BKLegacyHSBPolicy {
-    static func palette(
-        extracted: [NSColor],
-        fallback: [NSColor],
-        isDark: Bool,
-        analysis: ArtworkColorAnalysis?
-    ) -> HarmonizedPalette {
-        BKColorEngine.makeLegacyHSB(
-            extracted: extracted,
-            fallback: fallback,
-            isDark: isDark,
-            analysis: analysis
-        )
-    }
-
-    static func shapeSwatches(
-        seed: UInt64,
-        extracted: [NSColor],
-        fallback: [NSColor],
-        isDark: Bool,
-        analysis: ArtworkColorAnalysis?
-    ) -> BKColorEngine.ShapeSwatchResult {
-        BKColorEngine.makeLegacyHSBShapeSwatches(
-            seed: seed,
-            extracted: extracted,
-            fallback: fallback,
-            isDark: isDark,
-            analysis: analysis
-        )
-    }
-
-    static func stabilize(
-        color: CGColor,
-        kind: ElementKind,
-        palette: HarmonizedPalette,
-        hueJitter: CGFloat = 0,
-        saturationJitter: CGFloat = 0,
-        brightnessJitter: CGFloat = 0
-    ) -> CGColor {
-        BKColorEngine.stabilizeLegacyHSB(
-            color: color,
-            kind: kind,
-            palette: palette,
-            hueJitter: hueJitter,
-            saturationJitter: saturationJitter,
-            brightnessJitter: brightnessJitter
-        )
-    }
 }
 
 nonisolated enum BKPerceptualRolePolicy {
@@ -230,8 +158,7 @@ nonisolated enum BKPerceptualRolePolicy {
                 hueSpread: BKPerceptualColorMath.hueSpreadDegrees(converted),
                 swatchCount: converted.count,
                 chromaticClusterCount: neutral ? 0 : legacy.diagnostics.chromaticClusterCount,
-                swatchHSB: converted.map(BKPerceptualColorMath.hsbDebugString(for:)),
-                nearestCandidateHueDiff: legacy.diagnostics.nearestCandidateHueDiff
+                swatchHSB: converted.map(BKPerceptualColorMath.hsbDebugString(for:))
             )
         )
     }
@@ -799,21 +726,6 @@ nonisolated enum BKPerceptualColorMath {
 
 extension BKColorEngine {
     nonisolated static func makeCandidateOKLCH(
-        extracted: [NSColor],
-        fallback: [NSColor],
-        isDark: Bool,
-        analysis: ArtworkColorAnalysis? = nil
-    ) -> HarmonizedPalette {
-        let legacy = makeLegacyHSB(
-            extracted: extracted,
-            fallback: fallback,
-            isDark: isDark,
-            analysis: analysis
-        )
-        return makeCandidateOKLCH(fromLegacy: legacy, analysis: analysis)
-    }
-
-    nonisolated static func makeCandidateOKLCH(
         fromLegacy legacy: HarmonizedPalette,
         analysis: ArtworkColorAnalysis? = nil
     ) -> HarmonizedPalette {
@@ -823,51 +735,6 @@ extension BKColorEngine {
         )
     }
 
-    nonisolated static func makeCandidateOKLCHShapeSwatches(
-        seed: UInt64,
-        extracted: [NSColor],
-        fallback: [NSColor],
-        isDark: Bool,
-        analysis: ArtworkColorAnalysis? = nil,
-        candidatePalette: HarmonizedPalette? = nil
-    ) -> ShapeSwatchResult {
-        let legacy = makeLegacyHSBShapeSwatches(
-            seed: seed,
-            extracted: extracted,
-            fallback: fallback,
-            isDark: isDark,
-            analysis: analysis
-        )
-        let palette = candidatePalette ?? makeCandidateOKLCH(
-            extracted: extracted,
-            fallback: fallback,
-            isDark: isDark,
-            analysis: analysis
-        )
-        return BKPerceptualRolePolicy.candidateShapeSwatches(
-            legacy: legacy,
-            palette: palette,
-            analysis: analysis
-        )
-    }
-
-    nonisolated static func stabilizeCandidateOKLCH(
-        color: CGColor,
-        kind: ElementKind,
-        palette: HarmonizedPalette,
-        hueJitter: CGFloat = 0,
-        saturationJitter: CGFloat = 0,
-        brightnessJitter: CGFloat = 0
-    ) -> CGColor {
-        BKStabilizationPolicy.candidateOKLCHStabilize(
-            color: color,
-            kind: kind,
-            palette: palette,
-            hueJitter: hueJitter,
-            saturationJitter: saturationJitter,
-            brightnessJitter: brightnessJitter
-        )
-    }
 }
 
 private extension Array {

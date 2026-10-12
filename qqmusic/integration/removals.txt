@@ -4,7 +4,11 @@
 Tools/QQMusicHelper/build-universal.sh
 Tools/QQMusicHelper/main.py
 Tools/QQMusicHelper/requirements.txt
+kmgccc_player/Services/Audio/PreferenceScorerV2Samples.swift
+kmgccc_player/Services/Cache/PlaylistStatsCache.swift
+kmgccc_player/Services/Library/LibraryTrackSnapshotBuilder.swift
 kmgccc_player/Services/QQMusic/QQMusicHelperProcess.swift
+kmgccc_player/Views/Library/PlaylistDetailSessionController.swift
 kmgccc_playerTests/DynamicAuthorizedSourceRootsTests.swift
 kmgccc_playerTests/ReferencedFileIdentityTests.swift
 pages/appcast.xml

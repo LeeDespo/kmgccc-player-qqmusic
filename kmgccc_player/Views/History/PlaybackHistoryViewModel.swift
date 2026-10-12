@@ -219,21 +219,6 @@ final class PlaybackHistoryViewModel {
     }
 
     @discardableResult
-    func delete(eventID: UUID, using store: PlaybackHistoryStore) -> Bool {
-        let didDelete = store.delete(itemID: eventID)
-        guard didDelete else { return false }
-        selectedEventIDs.remove(eventID)
-        if activeEventID == eventID {
-            activeEventID = nil
-        }
-        if selectionAnchorEventID == eventID {
-            selectionAnchorEventID = nil
-        }
-        items.removeAll { $0.id == eventID }
-        return true
-    }
-
-    @discardableResult
     func deleteSelected(using store: PlaybackHistoryStore) -> Bool {
         let ids = selectedEventIDs
         guard !ids.isEmpty else { return true }

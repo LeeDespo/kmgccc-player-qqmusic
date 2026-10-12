@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Views/Fullscreen/FullscreenLeadingControlsPill.swift b/kmgccc_player/Views/Fullscreen/FullscreenLeadingControlsPill.swift
-index 6b62146b..c34fb3a1 100644
+index 6b62146b..62953c94 100644
 --- a/kmgccc_player/Views/Fullscreen/FullscreenLeadingControlsPill.swift
 +++ b/kmgccc_player/Views/Fullscreen/FullscreenLeadingControlsPill.swift
 @@ -1,6 +1,32 @@
@@ -35,7 +35,7 @@ index 6b62146b..c34fb3a1 100644
  /// Shared left capsule. The native player uses this exact view; authors may also place it alone.
  struct FullscreenLeadingControlsPill: View {
      let size: CGFloat
-@@ -8,13 +34,25 @@ struct FullscreenLeadingControlsPill: View {
+@@ -8,13 +34,24 @@ struct FullscreenLeadingControlsPill: View {
      let actions: FullscreenBottomBarActions
      @Bindable var controls: FullscreenBottomControlsCoordinator
      var isFullscreen = true
@@ -52,7 +52,6 @@ index 6b62146b..c34fb3a1 100644
 +    /// carry these services, and a missing one must not crash the surface.
 +    @Environment(QQMusicOnlineCoordinator.self) private var qqMusicCoordinator: QQMusicOnlineCoordinator?
 +    @Environment(PlaybackCoordinator.self) private var playbackCoordinator: PlaybackCoordinator?
-+    @Environment(AppSettings.self) private var settings: AppSettings?
 +    @AppStorage("lyricsShowTranslation") private var showsTranslation = true
 +
      var body: some View {
@@ -63,7 +62,7 @@ index 6b62146b..c34fb3a1 100644
  
          return HStack(spacing: 0) {
              leadingControlButton(size: size, help: isFullscreen ? "fullscreen.exit" : "全屏播放") {
-@@ -28,15 +66,21 @@ struct FullscreenLeadingControlsPill: View {
+@@ -28,15 +65,21 @@ struct FullscreenLeadingControlsPill: View {
                  actions.exitFullscreen()
              }
  
@@ -90,16 +89,15 @@ index 6b62146b..c34fb3a1 100644
              height: size,
              alignment: .leading
          )
-@@ -114,4 +158,68 @@ struct FullscreenLeadingControlsPill: View {
+@@ -114,4 +157,67 @@ struct FullscreenLeadingControlsPill: View {
          }
          .disabled(!presentation.hasTrack)
      }
 +
-+    /// The track the online favourite applies to, or nil when this bar should not
-+    /// offer the button: a local-only track has no upstream id to write to, and
-+    /// the QQ Music setting can hide the button entirely.
++    /// The track the online favourite applies to: the currently playing local
++    /// track that carries an upstream id to write to. Whether this bar offers the
++    /// button at all is decided by `availability.showsLike`.
 +    private var likeableOnlineTrack: Track? {
-+        guard settings?.qqMusicShowLikeButton == true, qqMusicCoordinator != nil else { return nil }
 +        guard let presentation = playbackCoordinator?.stablePresentation,
 +              presentation.source == .local,
 +              let track = presentation.localTrack,

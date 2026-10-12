@@ -1,0 +1,30 @@
+diff --git a/kmgccc_player/Services/FeatureTips/AppVersionGate.swift b/kmgccc_player/Services/FeatureTips/AppVersionGate.swift
+index e76ce3ac..e207358e 100644
+--- a/kmgccc_player/Services/FeatureTips/AppVersionGate.swift
++++ b/kmgccc_player/Services/FeatureTips/AppVersionGate.swift
+@@ -131,10 +131,6 @@ final class AppVersionGate {
+ 
+     }
+ 
+-    func wasUpgradedFromBuildBelow(_ buildNumber: Int) -> Bool {
+-        wasUpgradedFromBuildBelow(AppBuild(buildNumber))
+-    }
+-
+     func wasUpgradedFromBuildBelow(_ build: AppBuild) -> Bool {
+         guard let previous = previousInstalledBuild else {
+             // Missing previousInstalledBuild means the migration state was never
+@@ -222,14 +218,6 @@ final class AppVersionGate {
+         defaults.set(true, forKey: featureTipReadyForNextLaunchKey(featureKey))
+     }
+ 
+-    func shouldShowFeatureTip(featureKey: String, introducedBuild: AppBuild) -> Bool {
+-        shouldShowFeatureTip(
+-            featureKey: featureKey,
+-            introducedBuild: introducedBuild,
+-            maxDisplayCount: 4
+-        )
+-    }
+-
+     func shouldShowFeatureTip(
+         featureKey: String,
+         introducedBuild: AppBuild,

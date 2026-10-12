@@ -28,7 +28,7 @@ nonisolated struct SourceReconnectMatcher: Sendable {
                 continue
             }
 
-            if let identity = item.fingerprint?.identity, identity.isStableForReconnect {
+            if let identity = item.fingerprint?.identity, identity.isStablePhysicalIdentity {
                 let identityMatches = available.filter { index in
                     candidates[index].fingerprint.identity == identity
                 }
@@ -127,11 +127,5 @@ nonisolated struct SourceReconnectMatcher: Sendable {
     ) -> Bool {
         if lhs.relativePath != rhs.relativePath { return lhs.relativePath < rhs.relativePath }
         return lhs.trackID.uuidString < rhs.trackID.uuidString
-    }
-}
-
-nonisolated private extension ReferencedFileIdentity {
-    var isStableForReconnect: Bool {
-        volumeUUID?.isEmpty == false && resourceIdentifierArchive?.isEmpty == false
     }
 }

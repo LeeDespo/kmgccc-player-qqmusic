@@ -176,7 +176,7 @@ public final class FullscreenPresentationCoordinator {
             skinID: skinID,
             visualizerMode: targetVisualizerMode
         )
-        updateConfiguration(applyingMiniPlayerSpectrumDefaultIfNeeded(to: proposed))
+        updateConfiguration(proposed)
     }
 
     public func setVisualizerMode(_ mode: FullscreenVisualizerMode) {
@@ -263,11 +263,9 @@ public final class FullscreenPresentationCoordinator {
     @discardableResult
     public func normalizeConfiguration() -> FullscreenPresentationConfiguration {
         let current = configuration
-        let normalized = applyingMiniPlayerSpectrumDefaultIfNeeded(
-            to: FullscreenPresentationConfiguration(
-                skinID: current.skinID,
-                visualizerMode: current.visualizerMode
-            )
+        let normalized = FullscreenPresentationConfiguration(
+            skinID: current.skinID,
+            visualizerMode: current.visualizerMode
         )
         if normalized != current {
             updateConfiguration(normalized)
@@ -320,12 +318,6 @@ public final class FullscreenPresentationCoordinator {
             skinID: skinID,
             visualizerMode: Self.mode(for: selection)
         )
-    }
-
-    private func applyingMiniPlayerSpectrumDefaultIfNeeded(
-        to config: FullscreenPresentationConfiguration
-    ) -> FullscreenPresentationConfiguration {
-        config
     }
 
     private func clearSkinVisualizer(for skinID: String) {
@@ -412,10 +404,6 @@ public final class FullscreenPresentationCoordinator {
     }
 
     private func migrateAndNormalize() {
-        _ = normalizeConfiguration()
-    }
-
-    public func validateOnStartup() {
         _ = normalizeConfiguration()
     }
 

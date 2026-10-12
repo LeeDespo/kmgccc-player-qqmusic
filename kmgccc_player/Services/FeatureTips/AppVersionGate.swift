@@ -131,10 +131,6 @@ final class AppVersionGate {
 
     }
 
-    func wasUpgradedFromBuildBelow(_ buildNumber: Int) -> Bool {
-        wasUpgradedFromBuildBelow(AppBuild(buildNumber))
-    }
-
     func wasUpgradedFromBuildBelow(_ build: AppBuild) -> Bool {
         guard let previous = previousInstalledBuild else {
             // Missing previousInstalledBuild means the migration state was never
@@ -220,14 +216,6 @@ final class AppVersionGate {
         let featureKey = FeatureTipCatalog.PlaybackModeRetap.key
         guard featureTipDisplayCount(featureKey: featureKey) > 0 else { return }
         defaults.set(true, forKey: featureTipReadyForNextLaunchKey(featureKey))
-    }
-
-    func shouldShowFeatureTip(featureKey: String, introducedBuild: AppBuild) -> Bool {
-        shouldShowFeatureTip(
-            featureKey: featureKey,
-            introducedBuild: introducedBuild,
-            maxDisplayCount: 4
-        )
     }
 
     func shouldShowFeatureTip(

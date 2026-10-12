@@ -119,7 +119,6 @@ actor QQMusicDownloadService {
     /// Deduplicates concurrent downloads of the same song so a double tap
     /// joins the first attempt instead of fetching twice.
     private var inFlight: [String: Task<QQMusicStagedDownload, Error>] = [:]
-    private var phases: [String: QQMusicDownloadPhase] = [:]
 
     init(
         helper: QQMusicComponentProcess = .shared,
@@ -145,10 +144,6 @@ actor QQMusicDownloadService {
         configuration.timeoutIntervalForResource = 600
         configuration.waitsForConnectivity = true
         return URLSession(configuration: configuration)
-    }
-
-    func phase(for songMid: String) -> QQMusicDownloadPhase {
-        phases[songMid] ?? .idle
     }
 
     /// Fetch audio, cover and lyrics into `stagingDirectory`.
@@ -182,7 +177,6 @@ actor QQMusicDownloadService {
         for songMid: String,
         handler: (@Sendable (QQMusicDownloadPhase) -> Void)?
     ) {
-        phases[songMid] = phase
         handler?(phase)
     }
 

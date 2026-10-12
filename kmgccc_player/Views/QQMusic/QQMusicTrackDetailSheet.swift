@@ -50,7 +50,7 @@ nonisolated enum QQMusicTrackDetail {
             lines.append("专辑：\(album)")
         }
         if let duration = track.duration, duration > 0 {
-            lines.append(String(format: "时长：%d:%02d", duration / 60, duration % 60))
+            lines.append("时长：" + QQMusicTrackListChrome.duration(duration))
         }
         lines.append("音质：\(availabilityText(for: track))")
         lines.append("曲库状态：\(libraryState.description)")
@@ -67,8 +67,9 @@ nonisolated enum QQMusicTrackDetail {
     }
 
     /// "歌曲 - 歌手", the same composition the library's resolver uses, so the
-    /// two sheets read alike.
-    private static func subtitle(for track: QQMusicOnlineTrack) -> String {
+    /// two sheets read alike. Shared with `QQMusicTrackDescriptionSheet`, which
+    /// shows the same line above the same cover.
+    static func subtitle(for track: QQMusicOnlineTrack) -> String {
         let title = track.title.trimmingCharacters(in: .whitespacesAndNewlines)
         let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
         if !title.isEmpty, !artist.isEmpty { return "\(title) - \(artist)" }

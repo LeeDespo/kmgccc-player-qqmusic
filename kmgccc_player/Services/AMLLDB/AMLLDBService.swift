@@ -196,61 +196,13 @@ final class AMLLDBService: ObservableObject {
         return try await client.downloadLyricsByRawFile(rawLyricFile)
     }
 
-    /// Download TTML lyrics by NCM ID (legacy method)
-    /// - Parameter ncmMusicId: NetEase Cloud Music ID
-    /// - Returns: TTML lyrics content
-    func downloadLyrics(ncmMusicId: String) async throws -> String {
-        Self.logger.info("[AMLLDB] Downloading lyrics for NCM ID: \(ncmMusicId)")
-        return try await client.downloadLyrics(ncmMusicId: ncmMusicId)
-    }
-
     // MARK: - Index Management
-
-    /// Check and update index if needed
-    @discardableResult
-    func checkAndUpdateIfNeeded(forceRebuild: Bool = false) async throws -> AMLLDBIndexStatus {
-        Self.logger.info("[AMLLDB] checkAndUpdateIfNeeded called, force=\(forceRebuild)")
-
-        if forceRebuild {
-            let success = await cache.refreshIndex()
-            isReady = success
-            entryCount = cache.entryCount
-        } else {
-            let ready = await cache.ensureReady()
-            isReady = ready
-            entryCount = cache.entryCount
-        }
-
-        return getIndexStatus()
-    }
 
     /// Clear all cached data
     func clearIndex() async throws {
         try cache.clearCache()
         isReady = false
         entryCount = 0
-    }
-
-    // MARK: - Backward Compatibility
-
-    /// Backwards-compatible check
-    func isIndexAvailable() -> Bool {
-        cache.isReady || cache.hasLocalCache()
-    }
-
-    /// Get entry count
-    func getIndexEntryCount() -> Int {
-        cache.entryCount
-    }
-
-    /// Get last update time (not used in new implementation)
-    func getLastUpdateTime() -> Date? {
-        nil
-    }
-
-    /// Check if update is needed
-    func shouldUpdateIndex() -> Bool {
-        !cache.isReady && !cache.hasLocalCache()
     }
 
     // MARK: - Private

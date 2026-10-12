@@ -130,11 +130,6 @@ final class ThemeStore: ObservableObject {
         }
     }
 
-    /// Legacy entrypoint kept for compatibility with old call sites.
-    func updateArtwork(_ data: Data?) async {
-        await updateThemeFromArtworkData(data, artworkIdentity: nil, assetTrackID: nil)
-    }
-
     /// Primary entrypoint: update theme based on current track.
     /// - Uses artwork identity cache to avoid repeated extraction on the same artwork.
     /// - Falls back to default blue when artwork is missing or extraction fails.

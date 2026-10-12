@@ -45,7 +45,6 @@ struct FullscreenLeadingControlsPill: View {
     /// carry these services, and a missing one must not crash the surface.
     @Environment(QQMusicOnlineCoordinator.self) private var qqMusicCoordinator: QQMusicOnlineCoordinator?
     @Environment(PlaybackCoordinator.self) private var playbackCoordinator: PlaybackCoordinator?
-    @Environment(AppSettings.self) private var settings: AppSettings?
     @AppStorage("lyricsShowTranslation") private var showsTranslation = true
 
     var body: some View {
@@ -159,11 +158,10 @@ struct FullscreenLeadingControlsPill: View {
         .disabled(!presentation.hasTrack)
     }
 
-    /// The track the online favourite applies to, or nil when this bar should not
-    /// offer the button: a local-only track has no upstream id to write to, and
-    /// the QQ Music setting can hide the button entirely.
+    /// The track the online favourite applies to: the currently playing local
+    /// track that carries an upstream id to write to. Whether this bar offers the
+    /// button at all is decided by `availability.showsLike`.
     private var likeableOnlineTrack: Track? {
-        guard settings?.qqMusicShowLikeButton == true, qqMusicCoordinator != nil else { return nil }
         guard let presentation = playbackCoordinator?.stablePresentation,
               presentation.source == .local,
               let track = presentation.localTrack,

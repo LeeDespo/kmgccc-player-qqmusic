@@ -92,7 +92,6 @@ struct BKColorEngine {
         let swatchCount: Int
         let chromaticClusterCount: Int
         let swatchHSB: [String]
-        let nearestCandidateHueDiff: [CGFloat]
     }
 
     struct ShapeSwatchResult {
@@ -522,8 +521,7 @@ struct BKColorEngine {
                     hueSpread: 0,
                     swatchCount: nearMonoShapePreset.count,
                     chromaticClusterCount: 0,
-                    swatchHSB: nearMonoShapePreset.compactMap(hsb(from:)).map(hsbString(_:)),
-                    nearestCandidateHueDiff: [0]
+                    swatchHSB: nearMonoShapePreset.compactMap(hsb(from:)).map(hsbString(_:))
                 )
             )
         }
@@ -603,8 +601,7 @@ struct BKColorEngine {
                     hueSpread: 0,
                     swatchCount: 1,
                     chromaticClusterCount: 0,
-                    swatchHSB: [hsbString(fallbackHSB)],
-                    nearestCandidateHueDiff: [0]
+                    swatchHSB: [hsbString(fallbackHSB)]
                 )
             )
         }
@@ -864,9 +861,6 @@ struct BKColorEngine {
 
         var swatches: [HSBColor] = []
         swatches.reserveCapacity(safeTargetCount)
-        var nearestDiffs: [CGFloat] = []
-        nearestDiffs.reserveCapacity(safeTargetCount)
-        let candidateHues = candidates.map { normalizeHue($0.color.h) }
 
         for index in 0..<safeTargetCount {
             let cluster = clusters[index % max(1, min(clusters.count, safeTargetCount))]
@@ -908,9 +902,6 @@ struct BKColorEngine {
             )
             let swatch = HSBColor(h: hue, s: sat, b: bri, a: 1)
             swatches.append(swatch)
-
-            let nearest = candidateHues.map { hueDistance($0, hue) }.min() ?? 0
-            nearestDiffs.append(nearest)
         }
 
         return ShapeSwatchResult(
@@ -920,8 +911,7 @@ struct BKColorEngine {
                 hueSpread: hueSpread,
                 swatchCount: safeTargetCount,
                 chromaticClusterCount: clusterCount,
-                swatchHSB: swatches.map(hsbString(_:)),
-                nearestCandidateHueDiff: nearestDiffs
+                swatchHSB: swatches.map(hsbString(_:))
             )
         )
     }
@@ -942,97 +932,6 @@ struct BKColorEngine {
             saturationJitter: saturationJitter,
             brightnessJitter: brightnessJitter
         )
-    }
-
-    nonisolated static func stabilizeLegacyHSB(
-        color: CGColor,
-        kind: ElementKind,
-        palette: HarmonizedPalette,
-        hueJitter: CGFloat = 0,
-        saturationJitter: CGFloat = 0,
-        brightnessJitter: CGFloat = 0
-    ) -> CGColor {
-        if palette.usesStrictNeutralRendering {
-            return neutralShapeColor(
-                color,
-                brightnessJitter: brightnessJitter,
-                kind: kind,
-                palette: palette
-            )
-        }
-
-        guard var hsb = hsb(from: color) else { return color }
-        let effectiveHueJitter: CGFloat
-        if hsb.b < 0.18 {
-            effectiveHueJitter = clamp(hueJitter, min: -2, max: 2)
-        } else {
-            effectiveHueJitter = hueJitter
-        }
-        hsb.h = normalizeHue(hsb.h + effectiveHueJitter)
-        hsb.s = clamp01(hsb.s + saturationJitter)
-        hsb.b = clamp01(hsb.b + brightnessJitter)
-
-        var triggered = Set<RiskFlag>()
-        let ranges = ranges(for: kind, palette: palette)
-        let safe = sanitize(
-            hsb,
-            kind: kind,
-            bRange: ranges.b,
-            sRange: ranges.s,
-            complexity: palette.complexity,
-            isNearGray: palette.isNearGray,
-            isDark: palette.isDark,
-            triggered: &triggered
-        )
-        return toCGColor(safe)
-    }
-
-    fileprivate nonisolated static func neutralShapeColor(
-        _ color: CGColor,
-        brightnessJitter: CGFloat,
-        kind: ElementKind,
-        palette: HarmonizedPalette
-    ) -> CGColor {
-        guard let ns = NSColor(cgColor: color)?.usingColorSpace(.deviceRGB) else {
-            return color
-        }
-        let fallbackB: CGFloat
-        switch kind {
-        case .background:
-            fallbackB = midpoint(palette.bgBRange)
-        case .shape:
-            fallbackB = midpoint(palette.fgBRange)
-        case .dot:
-            fallbackB = midpoint(palette.dotBRange)
-        }
-        let lch = OKColor.nsColorToOKLCH(ns)
-        let sourceL = lch?.l ?? fallbackB
-        let minL: CGFloat
-        let maxL: CGFloat
-        switch kind {
-        case .background:
-            minL = palette.isDark ? 0.08 : 0.80
-            maxL = palette.isDark ? 0.36 : 0.940
-        case .shape:
-            minL = palette.isDark ? 0.34 : 0.44
-            maxL = palette.isDark ? 0.76 : 0.82
-        case .dot:
-            minL = palette.isDark ? 0.36 : 0.54
-            maxL = palette.isDark ? 0.76 : 0.72
-        }
-        let l = clamp(
-            sourceL + brightnessJitter,
-            min: minL,
-            max: maxL
-        )
-        let neutral = OKColor.OKLCH(l: l, c: 0, h: 0)
-        let nsNeutral = OKColor.okLCHToNSColor(neutral, alpha: ns.alphaComponent)
-        return (nsNeutral.usingColorSpace(.deviceRGB) ?? nsNeutral).cgColor
-    }
-
-    static func hsbDebugString(for color: CGColor) -> String {
-        guard let hsb = hsb(from: color) else { return "h=0.0 s=0.000 b=0.000" }
-        return hsbString(hsb)
     }
 }
 
@@ -1809,19 +1708,6 @@ extension BKColorEngine {
             return lower...upper
         }
         return upper...upper
-    }
-
-    fileprivate nonisolated static func ranges(for kind: ElementKind, palette: HarmonizedPalette)
-        -> (b: ClosedRange<CGFloat>, s: ClosedRange<CGFloat>)
-    {
-        switch kind {
-        case .background:
-            return (palette.bgBRange, palette.bgSRange)
-        case .shape:
-            return (palette.fgBRange, palette.fgSRange)
-        case .dot:
-            return (palette.dotBRange, palette.dotSRange)
-        }
     }
 
     fileprivate nonisolated static func makeGrayscalePalette(

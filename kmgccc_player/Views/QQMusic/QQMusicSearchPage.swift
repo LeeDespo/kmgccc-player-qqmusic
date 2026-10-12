@@ -132,7 +132,6 @@ struct QQMusicSearchPage: View {
                 artworkURL: results.first?.imageURL,
                 placeholderSystemImage: "magnifyingglass",
                 onPlay: { playAll(results) },
-                canPlay: !results.isEmpty,
                 columnLeftPad: insets.left,
                 columnRightPad: insets.right
             ) {

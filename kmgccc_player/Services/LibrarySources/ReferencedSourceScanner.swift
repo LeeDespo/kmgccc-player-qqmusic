@@ -229,11 +229,11 @@ actor ReferencedSourceScanner {
     ) -> (ReferencedSourceDiff, [ReferencedSourceScanEntry]) {
         let oldByPath = Dictionary(uniqueKeysWithValues: previous.map { ($0.relativePath, $0) })
         var oldByIdentity: [ReferencedFileIdentity: ReferencedSourceScanEntry] = [:]
-        for entry in previous where entry.identity?.isStable == true { oldByIdentity[entry.identity!] = entry }
-        let oldFallbackGroups = Dictionary(grouping: previous.filter { $0.identity?.isStable != true }) {
+        for entry in previous where entry.identity?.isStablePhysicalIdentity == true { oldByIdentity[entry.identity!] = entry }
+        let oldFallbackGroups = Dictionary(grouping: previous.filter { $0.identity?.isStablePhysicalIdentity != true }) {
             ReferencedPhysicalIdentityKey($0.fingerprint)
         }
-        let currentFallbackGroups = Dictionary(grouping: current.filter { $0.identity?.isStable != true }) {
+        let currentFallbackGroups = Dictionary(grouping: current.filter { $0.identity?.isStablePhysicalIdentity != true }) {
             ReferencedPhysicalIdentityKey($0.fingerprint)
         }
         var consumedOldPaths = Set<String>()
@@ -255,7 +255,7 @@ actor ReferencedSourceScanner {
                 } else if old.fingerprint != entry.fingerprint, let trackID = old.trackID {
                     diff.replacements.append(.init(trackID: trackID, relativePath: entry.relativePath, oldFingerprint: old.fingerprint, newFingerprint: entry.fingerprint))
                 }
-            } else if let identity = entry.identity, identity.isStable, let old = oldByIdentity[identity] {
+            } else if let identity = entry.identity, identity.isStablePhysicalIdentity, let old = oldByIdentity[identity] {
                 consumedOldPaths.insert(old.relativePath)
                 entry.trackID = old.trackID
                 if let trackID = old.trackID {
@@ -263,7 +263,7 @@ actor ReferencedSourceScanner {
                 } else {
                     diff.added.append(.init(relativePath: entry.relativePath, fingerprint: entry.fingerprint))
                 }
-            } else if entry.identity?.isStable != true {
+            } else if entry.identity?.isStablePhysicalIdentity != true {
                 let key = ReferencedPhysicalIdentityKey(entry.fingerprint)
                 let oldMatches = oldFallbackGroups[key] ?? []
                 let currentMatches = currentFallbackGroups[key] ?? []
@@ -321,10 +321,6 @@ actor ReferencedSourceScanner {
         guard contains(url, in: root), url.path != root.path else { return nil }
         return String(url.path.dropFirst(root.path.count + 1))
     }
-}
-
-nonisolated private extension ReferencedFileIdentity {
-    var isStable: Bool { volumeUUID?.isEmpty == false && resourceIdentifierArchive?.isEmpty == false }
 }
 
 nonisolated private extension StringProtocol {

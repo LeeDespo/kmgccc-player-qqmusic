@@ -82,12 +82,8 @@ private final class PartialLocatorWriter: @unchecked Sendable {
     private var failNextIDs = Set<UUID>()
     private var counts: [UUID: Int] = [:]
 
-    var failOnceID: UUID? {
-        get { nil }
-        set {
-            guard let newValue else { return }
-            lock.withLock { _ = failNextIDs.insert(newValue) }
-        }
+    func failOnce(_ id: UUID) {
+        lock.withLock { _ = failNextIDs.insert(id) }
     }
 
     func write(_ track: Track) -> Bool {
@@ -460,7 +456,7 @@ final class ReferencedSourceReconcilerTests: XCTestCase {
         try await fixture.reconciler.reconcile(sourceIDs: [fixture.sourceID])
         let importedTracks = await fixture.repository.fetchTracks(in: nil)
         let track = try XCTUnwrap(importedTracks.first)
-        writer.failOnceID = track.id
+        writer.failOnce(track.id)
         try FileManager.default.moveItem(at: fixture.sourceRoot, to: fixture.offlineRoot)
 
         do {
@@ -561,7 +557,7 @@ final class ReferencedSourceReconcilerTests: XCTestCase {
                 )
             ]
         )
-        writer.failOnceID = track.id
+        writer.failOnce(track.id)
 
         do {
             try await fixture.reconciler.reconnectSource(
@@ -1007,7 +1003,7 @@ final class ReferencedSourceReconcilerTests: XCTestCase {
         let first = fixture.makeTrack(title: "First", path: "/first-old")
         let second = fixture.makeTrack(title: "Second", path: "/second-old")
         _ = await fixture.repository.commitImportedTracks([first, second])
-        writer.failOnceID = second.id
+        writer.failOnce(second.id)
         let mutations = [first, second].map { track -> ReferencedSourceLocatorMutation in
             var locator = track.mediaLocator.referencedFile!
             locator.lastKnownPath += "-new"
@@ -1541,7 +1537,7 @@ final class ReferencedSourceReconcilerTests: XCTestCase {
         let songB = sourceBRoot.appendingPathComponent("b.mp3")
         try Data("audio-b".utf8).write(to: songB)
 
-        writer.failOnceID = trackA.id
+        writer.failOnce(trackA.id)
         try FileManager.default.moveItem(at: fixture.sourceRoot, to: fixture.offlineRoot)
 
         let outcome = try await LibrarySession.runInitialReconcile(

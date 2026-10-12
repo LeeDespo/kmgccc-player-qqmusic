@@ -12,7 +12,6 @@ import SwiftUI
 struct UnifiedNowPlayingBackground: View {
     let context: SkinContext
 
-    @State private var cachedTrackID: UUID?
     @State private var artworkPalette: [NSColor] = []
 
     var body: some View {
@@ -39,10 +38,10 @@ struct UnifiedNowPlayingBackground: View {
         }
         .ignoresSafeArea()
         .onAppear {
-            refreshPaletteIfNeeded(force: true)
+            refreshPaletteIfNeeded()
         }
         .onChange(of: context.track?.id) { _, _ in
-            refreshPaletteIfNeeded(force: true)
+            refreshPaletteIfNeeded()
         }
     }
 
@@ -66,12 +65,7 @@ struct UnifiedNowPlayingBackground: View {
         ]
     }
 
-    private func refreshPaletteIfNeeded(force: Bool = false) {
-        let trackID = context.track?.id
-        if !force, cachedTrackID == trackID {
-            return
-        }
-        cachedTrackID = trackID
+    private func refreshPaletteIfNeeded() {
         artworkPalette = context.theme.artworkPalette
     }
 

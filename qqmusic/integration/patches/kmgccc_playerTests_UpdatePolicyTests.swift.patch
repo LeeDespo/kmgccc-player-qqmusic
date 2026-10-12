@@ -1,8 +1,8 @@
 diff --git a/kmgccc_playerTests/UpdatePolicyTests.swift b/kmgccc_playerTests/UpdatePolicyTests.swift
-index 412727ab..df3b65cc 100644
+index 412727ab..449d7313 100644
 --- a/kmgccc_playerTests/UpdatePolicyTests.swift
 +++ b/kmgccc_playerTests/UpdatePolicyTests.swift
-@@ -2,14 +2,24 @@ import Foundation
+@@ -2,25 +2,23 @@ import Foundation
  import XCTest
  
  final class UpdatePreferencesTests: XCTestCase {
@@ -19,13 +19,21 @@ index 412727ab..df3b65cc 100644
                  UpdatePreferences.automaticUpdatesEnabled(defaults: defaults)
              )
              XCTAssertTrue(defaults.bool(forKey: UpdatePreferences.migrationCompletedKey))
-+
+-        }
+-    }
+-
+-    func testMigrationPreservesLegacyOptOut() {
+-        withDefaults { defaults in
+-            defaults.set(false, forKey: UpdatePreferences.legacyLaunchCheckKey)
+-
+-            UpdatePreferences.migrateIfNeeded(defaults: defaults)
+ 
 +            // And it cannot be switched back on.
 +            UpdatePreferences.setAutomaticUpdatesEnabled(true, defaults: defaults)
-+            XCTAssertFalse(
+             XCTAssertFalse(
+-                UpdatePreferences.automaticUpdatesEnabled(defaults: defaults)
 +                UpdatePreferences.automaticUpdatesEnabled(defaults: defaults),
 +                "enabling must not take effect"
-+            )
+             )
          }
      }
- 

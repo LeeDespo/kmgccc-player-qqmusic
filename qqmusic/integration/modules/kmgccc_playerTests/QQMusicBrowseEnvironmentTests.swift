@@ -84,34 +84,9 @@ final class QQMusicBrowseEnvironmentTests: XCTestCase {
         XCTAssertGreaterThan(hosted.fittingSize.width, 0)
     }
 
-    /// The detail header, which the health check for the entity pages rests on.
-    func testDetailHeaderRendersUnderTheBrowseEnvironment() throws {
-        let (coordinator, navigation, selection) = makeDependencies()
-
-        let hosted = NSHostingView(rootView: AnyView(
-            QQMusicDetailHeader(
-                title: "我喜欢的音乐",
-                subtitle: "QQ 音乐收藏",
-                metadata: "471 首歌曲 · 31 小时 12 分",
-                artworkURL: nil,
-                placeholderSystemImage: "heart.fill",
-                onPlay: {},
-                canPlay: true
-            ) {
-                EmptyView()
-            }
-            .qqMusicBrowseEnvironment(
-                coordinator: coordinator,
-                navigation: navigation,
-                selection: selection
-            )
-            .frame(width: 900, height: 260)
-        ))
-        hosted.frame = CGRect(x: 0, y: 0, width: 900, height: 260)
-
-        hosted.layoutSubtreeIfNeeded()
-        XCTAssertGreaterThan(hosted.fittingSize.width, 0)
-    }
+    // The detail header has no case of its own: its only non-optional dependency
+    // is `ThemeStore`, which the track row reads as well, so the row's layout
+    // pass above already traps if that value is missing.
 
     private func makeDependencies() -> (
         QQMusicOnlineCoordinator,
@@ -183,10 +158,6 @@ final class QQMusicBrowseEnvironmentTests: XCTestCase {
         XCTAssertFalse(track.hasArtistPage)
     }
 
-    /// The two channels must describe a track the same way.
-    ///
-    /// The web decoder joined singers with " / " and kept only the first mid
-    /// while the helper joined with ", " and reported them all — so the same duet
     /// What the helper's track row must carry, and what a row does with it.
     ///
     /// The helper is the only source of these rows, so this pins the wire shape

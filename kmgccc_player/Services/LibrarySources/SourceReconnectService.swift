@@ -514,9 +514,7 @@ final class SourceReconnectService {
         selected: ReferencedFileFingerprint
     ) -> Bool {
         guard let original else { return false }
-        if let identity = original.identity,
-           identity.volumeUUID?.isEmpty == false,
-           identity.resourceIdentifierArchive?.isEmpty == false {
+        if let identity = original.identity, identity.isStablePhysicalIdentity {
             return identity == selected.identity
         }
         return original.fileSize == selected.fileSize

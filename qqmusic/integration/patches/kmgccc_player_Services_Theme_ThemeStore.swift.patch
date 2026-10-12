@@ -1,0 +1,16 @@
+diff --git a/kmgccc_player/Services/Theme/ThemeStore.swift b/kmgccc_player/Services/Theme/ThemeStore.swift
+index 8d5248a1..3d3799f9 100644
+--- a/kmgccc_player/Services/Theme/ThemeStore.swift
++++ b/kmgccc_player/Services/Theme/ThemeStore.swift
+@@ -130,11 +130,6 @@ final class ThemeStore: ObservableObject {
+         }
+     }
+ 
+-    /// Legacy entrypoint kept for compatibility with old call sites.
+-    func updateArtwork(_ data: Data?) async {
+-        await updateThemeFromArtworkData(data, artworkIdentity: nil, assetTrackID: nil)
+-    }
+-
+     /// Primary entrypoint: update theme based on current track.
+     /// - Uses artwork identity cache to avoid repeated extraction on the same artwork.
+     /// - Falls back to default blue when artwork is missing or extraction fails.

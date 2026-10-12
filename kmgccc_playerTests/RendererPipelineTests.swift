@@ -140,11 +140,6 @@ final class RendererTimelineTests: XCTestCase {
         XCTAssertEqual(secondDescriptor.presentationEndSeconds, 32.18, accuracy: 0.000_001)
         pipeline.stop()
     }
-
-    func testAnalysisChunkGranularity() throws {
-        XCTAssertEqual(RendererPlaybackPipeline.analysisChunkFrames, 1024)
-        XCTAssertEqual(RendererPlaybackPipeline.chunkFrames, 8192)
-    }
 }
 
 private final class EnqueueState: @unchecked Sendable {

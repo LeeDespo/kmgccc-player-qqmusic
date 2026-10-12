@@ -1337,7 +1337,7 @@ actor QQMusicComponentProcess {
     /// avoiding a cold start.
     private var idleTimeoutSeconds: TimeInterval = 300
 
-    private var idleTimeout: TimeInterval { max(10, idleTimeoutSeconds) }
+    private var idleTimeout: TimeInterval { idleTimeoutSeconds }
 
     /// Apply the idle-keepalive window. Called from the main actor.
     func applyIdleTimeout(_ seconds: TimeInterval) {
@@ -1414,14 +1414,9 @@ actor QQMusicComponentProcess {
         return response?.breaker
     }
 
-    /// What the component reports it is enforcing, for the settings page.
-    func breakerConfiguration() async -> QQMusicBreakerConfiguration? {
-        await pushBreaker(configuration: circuitConfiguration)
-    }
-
     private var failureWindow: TimeInterval { circuitConfiguration.failureWindow }
     private var circuitOpenDuration: TimeInterval { circuitConfiguration.openDuration }
-    private var failureThreshold: Int { max(1, circuitConfiguration.threshold) }
+    private var failureThreshold: Int { circuitConfiguration.threshold }
     private var isCircuitBreakerEnabled: Bool { circuitConfiguration.isEnabled }
     private let recentLogLimit = 8_000
 
@@ -1772,16 +1767,6 @@ actor QQMusicComponentProcess {
             params: EmptyParams()
         )
         return response.toplistGroups ?? []
-    }
-
-    /// Tracks of a playlist (`songlistId`) or a ranking (`topId`).
-    func fetchPlaylistTracks(
-        songlistId: Int? = nil,
-        topId: Int? = nil,
-        limit: Int = 50,
-        page: Int = 1
-    ) async throws -> [QQMusicOnlineTrack] {
-        try await fetchPlaylistTracksPage(songlistId: songlistId, topId: topId, limit: limit, page: page).tracks
     }
 
     /// One page of a playlist, with the list's own size when the helper reports
@@ -2435,7 +2420,7 @@ actor QQMusicComponentProcess {
     }
 
     private func handleResponseLine(_ line: String) {
-        guard let data = line.data(using: .utf8) else { return }
+        let data = Data(line.utf8)
         let response: QQMusicComponentResponse
         do {
             response = try decoder.decode(QQMusicComponentResponse.self, from: data)

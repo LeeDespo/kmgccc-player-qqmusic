@@ -1,0 +1,175 @@
+diff --git a/kmgccc_player/Utilities/SemanticPalette.swift b/kmgccc_player/Utilities/SemanticPalette.swift
+index ba2a9a70..4682a53a 100644
+--- a/kmgccc_player/Utilities/SemanticPalette.swift
++++ b/kmgccc_player/Utilities/SemanticPalette.swift
+@@ -2233,31 +2233,6 @@ nonisolated enum SemanticPaletteFactory {
+         analysis.topPalette.dropFirst().first ?? analysis.dominantColor
+     }
+ 
+-    nonisolated fileprivate static func legacyReadableTextOnArtwork(analysis: ArtworkColorAnalysis) -> NSColor {
+-        let hsl = ColorMath.hsl(of: analysis.bestTextSourceColor)
+-        if analysis.usesDarkForeground {
+-            return ColorMath.color(
+-                h: hsl.h,
+-                s: ColorMath.clamp(
+-                    hsl.s + ColorSystemTokens.ReadableText.darkForegroundSaturationLift,
+-                    ColorSystemTokens.ReadableText.darkForegroundSatLo,
+-                    ColorSystemTokens.ReadableText.darkForegroundSatHi
+-                ),
+-                l: ColorSystemTokens.ReadableText.darkForegroundLightness
+-            )
+-        } else {
+-            return ColorMath.color(
+-                h: hsl.h,
+-                s: ColorMath.clamp(
+-                    hsl.s,
+-                    ColorSystemTokens.ReadableText.lightForegroundSatLo,
+-                    ColorSystemTokens.ReadableText.lightForegroundSatHi
+-                ),
+-                l: ColorSystemTokens.ReadableText.lightForegroundLightness
+-            )
+-        }
+-    }
+-
+     nonisolated fileprivate static func readableTextOnArtworkOKLCH(
+         analysis: ArtworkColorAnalysis,
+         polarity: ArtworkForegroundPolarity
+@@ -2326,25 +2301,6 @@ nonisolated enum SemanticPaletteFactory {
+         }
+     }
+ 
+-    /// Backward-compatible overload: selects polarity from the global gate
+-    /// baked into `analysis.usesDarkForeground`.
+-    nonisolated fileprivate static func readableTextOnArtworkOKLCH(analysis: ArtworkColorAnalysis) -> NSColor {
+-        readableTextOnArtworkOKLCH(
+-            analysis: analysis,
+-            polarity: analysis.usesDarkForeground ? .darkOnLightBackground : .lightOnDarkBackground
+-        )
+-    }
+-
+-    nonisolated fileprivate static func readableTextOnArtwork(analysis: ArtworkColorAnalysis) -> NSColor {
+-        return readableTextOnArtworkOKLCH(analysis: analysis)
+-    }
+-
+-    fileprivate static func secondaryTextOnArtwork(analysis: ArtworkColorAnalysis) -> NSColor {
+-        analysis.bestTextSourceColor.withAlphaComponent(
+-            ColorSystemTokens.ReadableText.secondaryAlpha
+-        )
+-    }
+-
+     nonisolated fileprivate static func windowLyricActive(
+         analysis: ArtworkColorAnalysis,
+         isDark: Bool
+@@ -2392,26 +2348,6 @@ nonisolated enum SemanticPaletteFactory {
+         neutraliseLyricIfNearMono(analysis.averageColor, analysis: analysis)
+     }
+ 
+-    fileprivate static func legacyCoverGradientDominant(
+-        analysis: ArtworkColorAnalysis,
+-        isDark: Bool
+-    ) -> NSColor {
+-        // Drive cover-overlay tint from dominant hue. Keep moderate saturation
+-        // and never push past the cover's own brightness band.
+-        let hsl = ColorMath.hsl(of: analysis.dominantColor)
+-        let s = ColorMath.clamp(
+-            hsl.s * ColorSystemTokens.CoverGradient.dominantSaturationScale,
+-            ColorSystemTokens.CoverGradient.dominantSaturationLo,
+-            ColorSystemTokens.CoverGradient.dominantSaturationHi
+-        )
+-        let l = ColorMath.clamp(
+-            hsl.l,
+-            ColorSystemTokens.CoverGradient.dominantLightnessLo,
+-            ColorSystemTokens.CoverGradient.dominantLightnessHi
+-        )
+-        return ColorMath.color(h: hsl.h, s: s, l: l)
+-    }
+-
+     fileprivate static func coverGradientDominantOKLCH(
+         analysis: ArtworkColorAnalysis,
+         isDark: Bool
+@@ -2434,33 +2370,6 @@ nonisolated enum SemanticPaletteFactory {
+         return coverGradientDominantOKLCH(analysis: analysis, isDark: isDark)
+     }
+ 
+-    fileprivate static func legacyCoverGradientText(analysis: ArtworkColorAnalysis) -> NSColor {
+-        // Stronger contrast bias than readableTextOnArtwork — used over a blurred
+-        // cover, not a solid surface.
+-        let hsl = ColorMath.hsl(of: analysis.bestTextSourceColor)
+-        if analysis.usesDarkForeground {
+-            return ColorMath.color(
+-                h: hsl.h,
+-                s: ColorMath.clamp(
+-                    hsl.s,
+-                    ColorSystemTokens.CoverGradient.darkTextSatLo,
+-                    ColorSystemTokens.CoverGradient.darkTextSatHi
+-                ),
+-                l: ColorSystemTokens.CoverGradient.darkTextLightness
+-            )
+-        } else {
+-            return ColorMath.color(
+-                h: hsl.h,
+-                s: ColorMath.clamp(
+-                    hsl.s,
+-                    ColorSystemTokens.CoverGradient.lightTextSatLo,
+-                    ColorSystemTokens.CoverGradient.lightTextSatHi
+-                ),
+-                l: ColorSystemTokens.CoverGradient.lightTextLightness
+-            )
+-        }
+-    }
+-
+     fileprivate static func coverGradientTextOKLCH(
+         analysis: ArtworkColorAnalysis,
+         polarity: ArtworkForegroundPolarity
+@@ -2556,20 +2465,6 @@ nonisolated enum SemanticPaletteSelfCheck {
+         SemanticPaletteFactory.coverGradientTextCandidates(analysis: analysis)
+     }
+ 
+-    nonisolated static func readableTextOnArtworkOKLCH(
+-        _ analysis: ArtworkColorAnalysis,
+-        polarity: ArtworkForegroundPolarity
+-    ) -> NSColor {
+-        SemanticPaletteFactory.readableTextOnArtworkOKLCH(analysis: analysis, polarity: polarity)
+-    }
+-
+-    nonisolated static func coverGradientTextOKLCH(
+-        _ analysis: ArtworkColorAnalysis,
+-        polarity: ArtworkForegroundPolarity
+-    ) -> NSColor {
+-        SemanticPaletteFactory.coverGradientTextOKLCH(analysis: analysis, polarity: polarity)
+-    }
+-
+     nonisolated static func neutralAchromaticControl() -> NSColor {
+         SemanticPaletteFactory.neutralAchromaticControl()
+     }
+@@ -2600,30 +2495,6 @@ nonisolated enum SemanticPaletteSelfCheck {
+         )
+     }
+ 
+-    nonisolated static func legacyReadableTextOnArtwork(
+-        _ analysis: ArtworkColorAnalysis
+-    ) -> NSColor {
+-        SemanticPaletteFactory.legacyReadableTextOnArtwork(analysis: analysis)
+-    }
+-
+-    nonisolated static func legacyCoverGradientText(
+-        _ analysis: ArtworkColorAnalysis
+-    ) -> NSColor {
+-        SemanticPaletteFactory.legacyCoverGradientText(analysis: analysis)
+-    }
+-
+-    nonisolated static func readableTextOnArtworkOKLCH(
+-        _ analysis: ArtworkColorAnalysis
+-    ) -> NSColor {
+-        SemanticPaletteFactory.readableTextOnArtworkOKLCH(analysis: analysis)
+-    }
+-
+-    nonisolated static func coverGradientTextOKLCH(
+-        _ analysis: ArtworkColorAnalysis
+-    ) -> NSColor {
+-        SemanticPaletteFactory.coverGradientTextOKLCH(analysis: analysis)
+-    }
+-
+     nonisolated static func lyricsPalette(
+         analysis: ArtworkColorAnalysis,
+         scheme: ColorScheme,

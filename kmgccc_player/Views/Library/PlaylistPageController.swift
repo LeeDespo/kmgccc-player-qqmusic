@@ -958,11 +958,6 @@ final class PlaylistPageController {
             guard let track = displayedTrackByID[record.id] else { return nil }
             return PlaylistPageRowModel(record: record, artworkData: track.artworkData)
         }
-        guard queueTracks.count == buildResult.queueTrackIDs.count,
-              rows.count == buildResult.rowRecords.count
-        else {
-            return
-        }
 
         let pageModel = PlaylistPageModel(
             selection: selection,
@@ -1706,8 +1701,7 @@ final class PlaylistPageController {
         }
     }
 
-    private func triggerHaloCrossfadeIfNeeded(identity: String, image: NSImage?, resolveToken: UUID) {
-        guard let image else { return }
+    private func triggerHaloCrossfadeIfNeeded(identity: String, image: NSImage, resolveToken: UUID) {
         guard currentArtworkPresentationIdentity == identity else { return }
         didFadeHaloIdentity = identity
         haloFadeTask?.cancel()

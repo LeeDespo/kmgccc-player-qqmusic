@@ -1620,7 +1620,7 @@ final class AutomationIPCServer {
                         continue
                     }
                     if let filter,
-                       try !matchesTrackFilter(
+                       !matchesTrackFilter(
                            track,
                            filter: .object(filter),
                            playlists: viewModel.playlists,
@@ -1980,10 +1980,6 @@ final class AutomationIPCServer {
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 let expectedRevision = try parameters.string("expectedRevision")
                 let dryRun = try parameters.boolean("dryRun", default: false)
-                guard requestedTrackIDs.count <= 10_000,
-                      Set(requestedTrackIDs).count == requestedTrackIDs.count else {
-                    throw AutomationParameterError.invalidValue("trackIDs")
-                }
                 if let name, (name.isEmpty || name.count > 120) {
                     throw AutomationParameterError.invalidValue("name")
                 }
@@ -2011,8 +2007,8 @@ final class AutomationIPCServer {
                 }
                 let selectedTrackIDs: [UUID]
                 if let filter {
-                    selectedTrackIDs = try viewModel.allTracks.compactMap { track in
-                        try matchesTrackFilter(
+                    selectedTrackIDs = viewModel.allTracks.compactMap { track in
+                        matchesTrackFilter(
                             track,
                             filter: filter,
                             playlists: viewModel.playlists,
@@ -2972,7 +2968,7 @@ final class AutomationIPCServer {
             do {
                 let parameters = try AutomationParameters(request)
                 let playlistIDs = try parameters.uuidArray("playlistIDs", required: true)
-                guard (2...100).contains(playlistIDs.count), Set(playlistIDs).count == playlistIDs.count else {
+                guard (2...100).contains(playlistIDs.count) else {
                     throw AutomationParameterError.invalidValue("playlistIDs")
                 }
                 let operation = try parameters.string("operation", required: true)!
@@ -4158,9 +4154,6 @@ final class AutomationIPCServer {
                 case AutomationMethod.playbackToggle:
                     session.playbackCoordinator.playPause()
                 case AutomationMethod.playbackPause:
-                    guard request.params == nil || request.params == .null || isObject(request.params) else {
-                        throw AutomationParameterError.invalidShape
-                    }
                     session.playbackCoordinator.pause()
                 case AutomationMethod.playbackNext:
                     session.playbackCoordinator.next()
@@ -4742,7 +4735,7 @@ final class AutomationIPCServer {
                 let artworks: [AutomationArtworkInfo]
                 let revision: String
                 if !trackIDs.isEmpty {
-                    guard try !hasArtworkTargetParameters(parameters, excludingTrackIDs: true) else {
+                    guard try !hasArtworkTargetParameters(parameters) else {
                         throw AutomationParameterError.invalidValue("trackIDs")
                     }
                     let tracksByID = Dictionary(
@@ -4794,7 +4787,7 @@ final class AutomationIPCServer {
                         session: session
                     )
                 }
-                guard try !hasArtworkTargetParameters(parameters, excludingTrackIDs: true) else {
+                guard try !hasArtworkTargetParameters(parameters) else {
                     throw AutomationParameterError.invalidValue("trackIDs")
                 }
                 let clear = try parameters.boolean("clear", default: false)
@@ -5080,7 +5073,7 @@ final class AutomationIPCServer {
                     }
                     trackIDs = [trackID]
                 }
-                guard !trackIDs.isEmpty, Set(trackIDs).count == trackIDs.count else {
+                guard !trackIDs.isEmpty else {
                     throw AutomationParameterError.missing("trackID or trackIDs")
                 }
                 let tracksByID = Dictionary(
@@ -5091,7 +5084,7 @@ final class AutomationIPCServer {
                 }
                 var results: [AutomationEmbeddedTagTrack] = []
                 for trackID in trackIDs {
-                    guard let track = tracksByID[trackID] else { continue }
+                    let track = tracksByID[trackID]!
                     do {
                         let fileURL = try embeddedAudioFileURL(for: track, session: session)
                         let snapshot = await readEmbeddedTags(from: fileURL)
@@ -5147,7 +5140,7 @@ final class AutomationIPCServer {
                     }
                     trackIDs = [trackID]
                 }
-                guard !trackIDs.isEmpty, Set(trackIDs).count == trackIDs.count else {
+                guard !trackIDs.isEmpty else {
                     throw AutomationParameterError.missing("trackID or trackIDs")
                 }
                 guard let rawFields = try parameters.object("fields"), !rawFields.isEmpty,
@@ -5185,7 +5178,7 @@ final class AutomationIPCServer {
                 var previews: [AutomationEmbeddedTagTrack] = []
                 var writeRequests: [MP3EmbeddedTagService.WriteRequest] = []
                 for trackID in trackIDs {
-                    guard let track = tracksByID[trackID] else { continue }
+                    let track = tracksByID[trackID]!
                     let trackRevision = session.libraryViewModel.automationTrackRevision(for: track)
                     guard expectedRevisions[trackID] == trackRevision else {
                         previews.append(AutomationEmbeddedTagTrack(
@@ -5326,8 +5319,7 @@ final class AutomationIPCServer {
                 let limit: Int
                 let total: Int
                 if !requestedTrackIDs.isEmpty {
-                    guard Set(requestedTrackIDs).count == requestedTrackIDs.count,
-                          parameters.values["offset"] == nil,
+                    guard parameters.values["offset"] == nil,
                           parameters.values["limit"] == nil else {
                         throw AutomationParameterError.invalidValue("trackIDs/limit/offset")
                     }
@@ -8141,16 +8133,12 @@ final class AutomationIPCServer {
     }
 
     private func hasArtworkTargetParameters(
-        _ parameters: AutomationParameters,
-        excludingTrackIDs: Bool = false
+        _ parameters: AutomationParameters
     ) throws -> Bool {
         let trackID = try parameters.uuid("trackID")
         let artistID = try parameters.uuid("artistID")
         let albumKey = try parameters.string("albumKey")
         let playlistID = try parameters.uuid("playlistID")
-        if excludingTrackIDs {
-            return trackID != nil || artistID != nil || albumKey != nil || playlistID != nil
-        }
         return trackID != nil || artistID != nil || albumKey != nil || playlistID != nil
     }
 
@@ -8593,9 +8581,6 @@ final class AutomationIPCServer {
         let dryRun = try parameters.boolean("dryRun", default: false)
         let target: MetadataTarget
         if let trackID = try parameters.uuid("trackID") {
-            guard try !hasMetadataEntityTarget(parameters) else {
-                throw AutomationParameterError.invalidValue("metadata target")
-            }
             guard let track = session.libraryViewModel.allTracks.first(where: { $0.id == trackID }) else {
                 throw AutomationParameterError.missingResource("trackID")
             }
@@ -11548,8 +11533,8 @@ final class AutomationIPCServer {
         let preferenceStatsByTrackID = AutomationTrackPreferenceQuery.requiresHistoryRead(in: filter)
             ? viewModel.preferenceStats(for: viewModel.allTracks.map(\.id))
             : [:]
-        let trackIDs = try viewModel.allTracks.compactMap { track in
-            try matchesTrackFilter(
+        let trackIDs = viewModel.allTracks.compactMap { track in
+            matchesTrackFilter(
                 track,
                 filter: filter,
                 playlists: viewModel.playlists,
@@ -11672,21 +11657,23 @@ final class AutomationIPCServer {
         return count
     }
 
+    /// Whether one track matches a filter.
+    ///
+    /// Non-throwing: `validateTrackFilter` is the single place a filter's shape is
+    /// rejected, and every caller validates before matching, so this needs no guard
+    /// of its own — malformed input (already excluded upstream) simply does not
+    /// match.
     private func matchesTrackFilter(
         _ track: Track,
         filter: AutomationJSONValue,
         playlists: [Playlist],
         preferenceStatsByTrackID: [UUID: TrackPreferenceStats] = [:]
-    ) throws -> Bool {
-        guard case .object(let values) = filter else {
-            throw AutomationParameterError.invalidType("filter", expected: "object")
-        }
+    ) -> Bool {
+        guard case .object(let values) = filter else { return false }
 
         if let all = values["all"] {
-            guard case .array(let filters) = all else {
-                throw AutomationParameterError.invalidType("filter.all", expected: "array")
-            }
-            for child in filters where try !matchesTrackFilter(
+            guard case .array(let filters) = all else { return false }
+            for child in filters where !matchesTrackFilter(
                 track,
                 filter: child,
                 playlists: playlists,
@@ -11696,11 +11683,9 @@ final class AutomationIPCServer {
             }
         }
         if let any = values["any"] {
-            guard case .array(let filters) = any, !filters.isEmpty else {
-                throw AutomationParameterError.invalidType("filter.any", expected: "non-empty array")
-            }
+            guard case .array(let filters) = any, !filters.isEmpty else { return false }
             var matched = false
-            for child in filters where try matchesTrackFilter(
+            for child in filters where matchesTrackFilter(
                 track,
                 filter: child,
                 playlists: playlists,
@@ -11712,7 +11697,7 @@ final class AutomationIPCServer {
             if !matched { return false }
         }
         if let not = values["not"] {
-            if try matchesTrackFilter(
+            if matchesTrackFilter(
                 track,
                 filter: not,
                 playlists: playlists,
@@ -11737,117 +11722,87 @@ final class AutomationIPCServer {
             case "id":
                 guard case .string(let raw) = value, UUID(uuidString: raw) == track.id else { return false }
             case "ids":
-                guard case .array(let rawIDs) = value else {
-                    throw AutomationParameterError.invalidType("filter.ids", expected: "array")
-                }
-                let ids = try rawIDs.map { value -> UUID in
-                    guard case .string(let raw) = value, let id = UUID(uuidString: raw) else {
-                        throw AutomationParameterError.invalidValue("filter.ids")
+                guard case .array(let rawIDs) = value else { return false }
+                var ids: [UUID] = []
+                ids.reserveCapacity(rawIDs.count)
+                for rawID in rawIDs {
+                    guard case .string(let raw) = rawID, let id = UUID(uuidString: raw) else {
+                        return false
                     }
-                    return id
+                    ids.append(id)
                 }
                 if !ids.contains(track.id) { return false }
             case "text":
-                guard case .string(let text) = value else {
-                    throw AutomationParameterError.invalidType("filter.text", expected: "string")
-                }
+                guard case .string(let text) = value else { return false }
                 if !track.title.localizedCaseInsensitiveContains(text)
                     && !track.artist.localizedCaseInsensitiveContains(text)
                     && !track.album.localizedCaseInsensitiveContains(text) {
                     return false
                 }
             case "titleContains":
-                if try contains(value, key: key, in: track.title) == false { return false }
+                if (try? contains(value, key: key, in: track.title)) == false { return false }
             case "artistContains":
-                if try contains(value, key: key, in: track.artist) == false { return false }
+                if (try? contains(value, key: key, in: track.artist)) == false { return false }
             case "albumContains":
-                if try contains(value, key: key, in: track.album) == false { return false }
+                if (try? contains(value, key: key, in: track.album)) == false { return false }
             case "genreContains":
                 let genres = track.genreTags.joined(separator: " ")
-                if try contains(value, key: key, in: genres) == false { return false }
+                if (try? contains(value, key: key, in: genres)) == false { return false }
             case "sourceID":
-                guard case .string(let raw) = value, let sourceID = UUID(uuidString: raw) else {
-                    throw AutomationParameterError.invalidValue("filter.sourceID")
-                }
+                guard case .string(let raw) = value, let sourceID = UUID(uuidString: raw) else { return false }
                 if !memberships.contains(where: { $0.sourceID == sourceID }) { return false }
             case "playlistID":
-                guard case .string(let raw) = value, let playlistID = UUID(uuidString: raw) else {
-                    throw AutomationParameterError.invalidValue("filter.playlistID")
-                }
+                guard case .string(let raw) = value, let playlistID = UUID(uuidString: raw) else { return false }
                 if !playlistIDs.contains(playlistID) { return false }
             case "availability":
-                guard case .string(let availability) = value else {
-                    throw AutomationParameterError.invalidType("filter.availability", expected: "string")
-                }
+                guard case .string(let availability) = value else { return false }
                 if track.availability.rawValue != availability { return false }
             case "missing":
-                guard case .boolean(let missing) = value else {
-                    throw AutomationParameterError.invalidType("filter.missing", expected: "boolean")
-                }
+                guard case .boolean(let missing) = value else { return false }
                 if (track.availability == .missing) != missing { return false }
             case "hasLyrics":
-                guard case .boolean(let expected) = value else {
-                    throw AutomationParameterError.invalidType("filter.hasLyrics", expected: "boolean")
-                }
+                guard case .boolean(let expected) = value else { return false }
                 if (lyricsStatus != "none") != expected { return false }
             case "lyricsStatus":
-                guard case .string(let expected) = value else {
-                    throw AutomationParameterError.invalidType("filter.lyricsStatus", expected: "string")
-                }
+                guard case .string(let expected) = value else { return false }
                 if lyricsStatus != expected { return false }
             case "hasArtwork":
-                guard case .boolean(let expected) = value else {
-                    throw AutomationParameterError.invalidType("filter.hasArtwork", expected: "boolean")
-                }
+                guard case .boolean(let expected) = value else { return false }
                 if artworkAvailable != expected { return false }
             case "addedAfter":
-                if let date = try filterDate(value, key: key), track.addedAt <= date { return false }
+                if let date = try? filterDate(value, key: key), track.addedAt <= date { return false }
             case "addedBefore":
-                if let date = try filterDate(value, key: key), track.addedAt >= date { return false }
+                if let date = try? filterDate(value, key: key), track.addedAt >= date { return false }
             case "releaseAfter":
                 guard let releaseDate = track.releaseDate,
-                      let date = try filterDate(value, key: key), releaseDate > date else { return false }
+                      let date = try? filterDate(value, key: key), releaseDate > date else { return false }
             case "releaseBefore":
                 guard let releaseDate = track.releaseDate,
-                      let date = try filterDate(value, key: key), releaseDate < date else { return false }
+                      let date = try? filterDate(value, key: key), releaseDate < date else { return false }
             case "durationMin":
-                guard case .number(let minimum) = value else {
-                    throw AutomationParameterError.invalidType("filter.durationMin", expected: "number")
-                }
+                guard case .number(let minimum) = value else { return false }
                 if track.duration < minimum { return false }
             case "durationMax":
-                guard case .number(let maximum) = value else {
-                    throw AutomationParameterError.invalidType("filter.durationMax", expected: "number")
-                }
+                guard case .number(let maximum) = value else { return false }
                 if track.duration > maximum { return false }
             case "metadataConfidenceMin":
-                guard case .number(let minimum) = value else {
-                    throw AutomationParameterError.invalidType("filter.metadataConfidenceMin", expected: "number")
-                }
+                guard case .number(let minimum) = value else { return false }
                 if (track.metadataConfidence ?? 0) < minimum { return false }
             case "codec":
-                guard case .string(let expected) = value else {
-                    throw AutomationParameterError.invalidType("filter.codec", expected: "string")
-                }
+                guard case .string(let expected) = value else { return false }
                 if audio?.codec?.localizedCaseInsensitiveCompare(expected) != .orderedSame { return false }
             case "format":
-                guard case .string(let expected) = value else {
-                    throw AutomationParameterError.invalidType("filter.format", expected: "string")
-                }
+                guard case .string(let expected) = value else { return false }
                 if audio?.format?.localizedCaseInsensitiveCompare(expected) != .orderedSame { return false }
             case "sampleRateHz":
                 guard case .number(let expected) = value,
                       expected.isFinite,
-                      expected.rounded() == expected else {
-                    throw AutomationParameterError.invalidValue("filter.sampleRateHz")
-                }
+                      expected.rounded() == expected else { return false }
                 if audio?.sampleRateHz != Int(expected) { return false }
             case "bitDepth":
                 guard case .number(let expected) = value,
                       expected.isFinite,
-                      expected.rounded() == expected else {
-                    throw AutomationParameterError.invalidValue("filter.bitDepth")
-                }
+                      expected.rounded() == expected else { return false }
                 if audio?.bitDepth != Int(expected) { return false }
             case "likeState", "playCountMin", "playCountMax", "completePlayCountMin",
                  "skipCountMin", "lastPlayedAfter", "lastPlayedBefore",
@@ -11860,7 +11815,7 @@ final class AutomationIPCServer {
                     return false
                 }
             default:
-                throw AutomationParameterError.invalidValue("filter.\(key)")
+                return false
             }
         }
         return true
@@ -12750,13 +12705,6 @@ private struct AutomationParameters {
         case nil, .some(.null):
             values = [:]
         case .some(.object(let values)):
-            let unknown = AutomationToolCatalog.unknownParameterKeys(
-                for: request.method,
-                params: .object(values)
-            )
-            guard unknown.isEmpty else {
-                throw AutomationParameterError.unknown(unknown)
-            }
             self.values = values
         default:
             throw AutomationParameterError.invalidShape

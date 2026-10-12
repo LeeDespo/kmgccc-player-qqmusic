@@ -474,15 +474,7 @@ nonisolated struct TrackSidecar: Codable, Sendable {
         album = try c.decode(String.self, forKey: .album)
         albumArtist = try c.decodeIfPresent(String.self, forKey: .albumArtist)
         description = try c.decodeIfPresent(String.self, forKey: .description)
-        if let tags = try? c.decode([String].self, forKey: .genreTags) {
-            genreTags = tags
-        } else if let tags = try? c.decode(String.self, forKey: .genreTags) {
-            genreTags = tags.split(separator: ",").map {
-                String($0).trimmingCharacters(in: .whitespacesAndNewlines)
-            }.filter { !$0.isEmpty }
-        } else {
-            genreTags = []
-        }
+        genreTags = c.decodeGenreTagsCompat(forKey: .genreTags)
         language = try c.decodeIfPresent(String.self, forKey: .language)
         labelOrCompany = try c.decodeIfPresent(String.self, forKey: .labelOrCompany)
         releaseDate = try c.decodeIfPresent(Date.self, forKey: .releaseDate)
@@ -921,16 +913,7 @@ nonisolated struct ArtistSidecar: Codable, Sendable {
         displayName = try c.decode(String.self, forKey: .displayName)
         artworkFileName = try c.decodeIfPresent(String.self, forKey: .artworkFileName)
         description = try c.decodeIfPresent(String.self, forKey: .description)
-        if let decodedTags = try? c.decode([String].self, forKey: .genreTags) {
-            genreTags = decodedTags
-        } else if let decodedTags = try? c.decode(String.self, forKey: .genreTags) {
-            genreTags = decodedTags
-                .split(separator: ",")
-                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        } else {
-            genreTags = []
-        }
+        genreTags = c.decodeGenreTagsCompat(forKey: .genreTags)
         region = try c.decodeIfPresent(String.self, forKey: .region)
         foreignName = try c.decodeIfPresent(String.self, forKey: .foreignName)
         qqMusicSingerMid = try c.decodeIfPresent(String.self, forKey: .qqMusicSingerMid)
@@ -1088,16 +1071,7 @@ nonisolated struct AlbumSidecar: Codable, Sendable {
         releaseYear = try c.decodeIfPresent(Int.self, forKey: .releaseYear) ?? year
         releaseDate = try c.decodeIfPresent(Date.self, forKey: .releaseDate)
         albumType = try c.decodeIfPresent(String.self, forKey: .albumType)
-        if let decodedTags = try? c.decode([String].self, forKey: .genreTags) {
-            genreTags = decodedTags
-        } else if let decodedTags = try? c.decode(String.self, forKey: .genreTags) {
-            genreTags = decodedTags
-                .split(separator: ",")
-                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-        } else {
-            genreTags = []
-        }
+        genreTags = c.decodeGenreTagsCompat(forKey: .genreTags)
         language = try c.decodeIfPresent(String.self, forKey: .language)
         labelOrCompany = try c.decodeIfPresent(String.self, forKey: .labelOrCompany)
         qqMusicAlbumMid = try c.decodeIfPresent(String.self, forKey: .qqMusicAlbumMid)
@@ -1139,5 +1113,23 @@ nonisolated struct AlbumSidecar: Codable, Sendable {
         try c.encodeIfPresent(trackSortKey, forKey: .trackSortKey)
         try c.encodeIfPresent(trackSortOrder, forKey: .trackSortOrder)
         try c.encodeIfPresent(customTrackOrder, forKey: .customTrackOrder)
+    }
+}
+
+// MARK: - Genre Tag Compatibility Decoding
+
+/// Decodes `genreTags` tolerantly: current sidecars store `[String]`, older ones
+/// stored a single comma-separated `String`, and anything else yields no tags.
+nonisolated private extension KeyedDecodingContainer {
+    func decodeGenreTagsCompat(forKey key: Key) -> [String] {
+        if let tags = try? decode([String].self, forKey: key) {
+            return tags
+        }
+        if let raw = try? decode(String.self, forKey: key) {
+            return raw.split(separator: ",").map {
+                String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+            }.filter { !$0.isEmpty }
+        }
+        return []
     }
 }

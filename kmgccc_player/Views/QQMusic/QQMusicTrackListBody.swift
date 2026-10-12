@@ -44,7 +44,15 @@ struct QQMusicTrackListBody: View {
     @EnvironmentObject private var themeStore: ThemeStore
 
     var body: some View {
-        let displayed = displayedTracks
+        // Rows in display order — always the order the source gave. Download mode
+        // used to hoist the tracks the user already had to the top, on the theory
+        // that a block of unselectable rows reads better than dead entries
+        // scattered through the list. The user asked for the list not to move:
+        // entering download mode and finding the rows shuffled makes it impossible
+        // to find the song you are looking at. Already-downloaded rows are still
+        // excluded from 全选 / 反选 (they cannot be downloaded twice), which is the
+        // part that mattered.
+        let displayed = tracks
         let displayedSongMids = displayed.map(\.songMid)
 
         VStack(spacing: 0) {
@@ -53,8 +61,8 @@ struct QQMusicTrackListBody: View {
                     QQMusicTrackRow(
                         track: track,
                         rank: showsRank ? index + 1 : nil,
-                        columnLeftPad: insets.left + Self.contentPadding,
-                        columnRightPad: insets.right + Self.contentPadding,
+                        columnLeftPad: insets.left + QQMusicEntityRow.contentPadding,
+                        columnRightPad: insets.right + QQMusicEntityRow.contentPadding,
                         onPlay: { onPlay(displayed, index) },
                         isSelecting: isSelecting,
                         isSelected: selection.isSelected(track.songMid),
@@ -81,21 +89,7 @@ struct QQMusicTrackListBody: View {
         }
     }
 
-    /// The library's own content padding inside the center pane.
-    private static let contentPadding: CGFloat = 24
-
     private var isSelecting: Bool { allowsSelection && selection.isSelecting }
-
-    /// Rows in display order — always the order the source gave.
-    ///
-    /// Download mode used to hoist the tracks the user already had to the top, on
-    /// the theory that a block of unselectable rows reads better than dead entries
-    /// scattered through the list. The user asked for the list not to move:
-    /// entering download mode and finding the rows shuffled makes it impossible to
-    /// find the song you are looking at. Already-downloaded rows are still
-    /// excluded from 全选 / 反选 (they cannot be downloaded twice), which is the
-    /// part that mattered.
-    private var displayedTracks: [QQMusicOnlineTrack] { tracks }
 }
 
 // MARK: - Shared list chrome
@@ -119,6 +113,16 @@ enum QQMusicTrackListChrome {
         let minutes = (total % 3600) / 60
         if hours > 0 { return "\(hours) 小时 \(minutes) 分" }
         return "\(minutes) 分钟"
+    }
+
+    /// A track's own length as "m:ss", "--:--" when the catalogue has none.
+    ///
+    /// One copy, because every row that shows a length shows it the same way; the
+    /// online views had three of these and a change to one of them would silently
+    /// disagree with the other two.
+    nonisolated static func duration(_ seconds: Int?) -> String {
+        guard let seconds, seconds > 0 else { return "--:--" }
+        return String(format: "%d:%02d", seconds / 60, seconds % 60)
     }
 
     /// "1.2 万" style counts, for listeners and plays.

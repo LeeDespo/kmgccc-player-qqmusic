@@ -117,9 +117,4 @@ actor ArtworkDecodeGate {
         // Resume with true = acquired slot
         waiter.continuation.resume(returning: true)
     }
-
-    /// Returns current diagnostics for debugging.
-    var diagnostics: (running: Int, waiting: Int) {
-        (running, waiters.count)
-    }
 }

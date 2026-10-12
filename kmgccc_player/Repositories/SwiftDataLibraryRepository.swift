@@ -2180,11 +2180,6 @@ final class SwiftDataLibraryRepository: LibraryRepositoryProtocol {
 
         if !persistedResults.isEmpty {
             applyPersistenceReferences(persistedResults, to: uniqueTracks)
-            if mode == .metaAndArtwork || mode == .metaLyricsAndArtwork {
-                for track in uniqueTracks where persistedTrackIDSet.contains(track.id) {
-                    track.releaseFileBackedArtworkData()
-                }
-            }
             rebuildRuntimeDerivedState()
             let persistedTracks = allTracks.filter { persistedTrackIDSet.contains($0.id) }
             upsertTrackIndexEntries(for: persistedTracks)

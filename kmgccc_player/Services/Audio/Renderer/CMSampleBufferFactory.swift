@@ -60,11 +60,7 @@ enum CMSampleBufferFactory {
     /// Deliberately uncached: format descriptions are created once per track
     /// (or per format change), and Swift 6's isolation rules make a global
     /// cached dictionary with Hashable keys awkward to keep nonisolated.
-    nonisolated static func formatDescription(channelCount: Int, sampleRate: Double) -> CMAudioFormatDescription? {
-        makeFormatDescription(channelCount: channelCount, sampleRate: sampleRate)
-    }
-
-    private nonisolated static func makeFormatDescription(
+    nonisolated static func formatDescription(
         channelCount: Int,
         sampleRate: Double
     ) -> CMAudioFormatDescription? {

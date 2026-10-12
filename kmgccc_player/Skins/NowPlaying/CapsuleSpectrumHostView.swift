@@ -255,7 +255,6 @@ final class CapsuleSpectrumHostView: NSView {
 
     // Lease / playback state.
     private var consumerID: UUID?
-    private var hasServiceLease = false
     private var requestedActive = false
     private var isPlaying = false
     private var lastForwardedPlaybackState: Bool?
@@ -366,7 +365,6 @@ final class CapsuleSpectrumHostView: NSView {
         consumerID = service.addAdaptiveConsumer { [weak self] frame in
             self?.applyWave(frame)
         }
-        hasServiceLease = true
         if let state = lastForwardedPlaybackState {
             service.updatePlaybackState(isPlaying: state)
         }
@@ -384,7 +382,6 @@ final class CapsuleSpectrumHostView: NSView {
             service.removeConsumer(consumerID)
             self.consumerID = nil
         }
-        hasServiceLease = false
         invalidateDisplayLink()
         guard resetWave else { return }
         for index in 0..<count {
@@ -416,7 +413,7 @@ final class CapsuleSpectrumHostView: NSView {
     func setPlayback(isPlaying playing: Bool) {
         if lastForwardedPlaybackState != playing {
             lastForwardedPlaybackState = playing
-            if hasServiceLease {
+            if consumerID != nil {
                 service.updatePlaybackState(isPlaying: playing)
             }
         }
@@ -784,7 +781,7 @@ final class CapsuleSpectrumHostView: NSView {
         reconcileVisibleConsumer()
         if window != nil {
             // The display link binds to the view's screen; (re)create it here.
-            if hasServiceLease { wakeDisplayLink() }
+            if consumerID != nil { wakeDisplayLink() }
         } else {
             invalidateDisplayLink()
         }
@@ -860,7 +857,7 @@ final class CapsuleSpectrumHostView: NSView {
         renderHeights()
         // A resize may expose un-settled geometry; nudge the link so the bars
         // re-seat smoothly rather than waiting for the next wave.
-        if hasServiceLease { wakeDisplayLink() }
+        if consumerID != nil { wakeDisplayLink() }
     }
 
     private func resizeFollowerState() {

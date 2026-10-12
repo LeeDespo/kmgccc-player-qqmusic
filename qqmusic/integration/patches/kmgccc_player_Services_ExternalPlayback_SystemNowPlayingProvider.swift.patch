@@ -1,0 +1,118 @@
+diff --git a/kmgccc_player/Services/ExternalPlayback/SystemNowPlayingProvider.swift b/kmgccc_player/Services/ExternalPlayback/SystemNowPlayingProvider.swift
+index 0fc0caf4..e18b9383 100644
+--- a/kmgccc_player/Services/ExternalPlayback/SystemNowPlayingProvider.swift
++++ b/kmgccc_player/Services/ExternalPlayback/SystemNowPlayingProvider.swift
+@@ -975,11 +975,6 @@ final class SystemNowPlayingProvider: ExternalPlaybackProvider {
+             return
+         }
+ 
+-        if previousStableKey == nil {
+-            handlePendingStableCandidate(observation)
+-            return
+-        }
+-
+         handlePendingStableCandidate(observation)
+     }
+ 
+@@ -1214,10 +1209,6 @@ final class SystemNowPlayingProvider: ExternalPlaybackProvider {
+         return candidates
+     }
+ 
+-    private func rawOwnerBundle(for payload: Payload) -> String? {
+-        ownerBundleCandidates(for: payload).first
+-    }
+-
+     private func shouldIgnoreExternalOwner(_ payload: Payload, source: PayloadSource) -> Bool {
+         guard let owner = effectiveExternalBundleId(for: payload) else {
+             if let lockedExternalOwner {
+@@ -1338,7 +1329,7 @@ final class SystemNowPlayingProvider: ExternalPlaybackProvider {
+ 
+     private func logAcceptedExternalPayload(_ payload: Payload, source: PayloadSource) {
+         acceptedExternalPayloadCount += 1
+-        let owner = effectiveExternalBundleId(for: payload) ?? lockedExternalOwner ?? rawOwnerBundle(for: payload) ?? "unknown"
++        let owner = effectiveExternalBundleId(for: payload) ?? lockedExternalOwner ?? "unknown"
+         sourceStore.setCurrentSourceID(owner)
+         if activeExternalOwnerBundle != owner {
+             activeExternalOwnerBundle = owner
+@@ -2111,7 +2102,7 @@ final class SystemNowPlayingProvider: ExternalPlaybackProvider {
+             && resolvedTrackIdentity != nil
+             && latestIdentity != resolvedTrackIdentity
+ 
+-        let finalLyricsText = isTransitioning ? resolvedLyricsText : resolvedLyricsText
++        let finalLyricsText = resolvedLyricsText
+         let finalLyricsIdentity = isTransitioning ? resolvedTrackIdentity : (resolvedTrackIdentity ?? identity)
+         // While the new track's lyrics/offset are still resolving, keep the
+         // renderer paused so stale (previous-track) lyrics don't animate - but do
+@@ -2324,63 +2315,6 @@ final class SystemNowPlayingProvider: ExternalPlaybackProvider {
+         updatePresentationIfNeeded(empty)
+     }
+ 
+-    private func updateDisconnected(reason: String) {
+-        invalidateControlWork()
+-        pendingEmptyPayloadTask?.cancel()
+-        pendingEmptyPayloadTask = nil
+-        streamObservationTask?.cancel()
+-        streamObservationTask = nil
+-        pendingHeavyPresentationTask?.cancel()
+-        pendingHeavyPresentationTask = nil
+-        controlCooldownTask?.cancel()
+-        controlCooldownTask = nil
+-        unidentifiedTrackCandidateTask?.cancel()
+-        unidentifiedTrackCandidateTask = nil
+-        progressPollTask?.cancel()
+-        progressPollTask = nil
+-        emptyPayloadCount = 0
+-        hasReceivedValidPayload = false
+-        hasLoggedFirstValidPayload = false
+-        isInEmptyPayloadWindow = false
+-        optimisticPlayingState = nil
+-        controlCooldownUntil = .distantPast
+-        clearControlExpectation()
+-        unlockExternalOwner(reason: "disconnected")
+-        pendingUnidentifiedPayload = nil
+-        pendingUnidentifiedKey = nil
+-        isCommittingUnidentifiedCandidate = false
+-        lastPayload = nil
+-        latestStableMetadataKey = nil
+-        progressBaseline = nil
+-        clearReliabilityTracking(to: .unavailable)
+-        latestIdentity = nil
+-        latestRawMetadata = nil
+-        resolvedRawMetadata = nil
+-        resolvedTrackIdentity = nil
+-        latestEffectiveMetadata = nil
+-        latestMatchResult = nil
+-        latestMatchedTrack = nil
+-        resolvedLyricsText = nil
+-        autoLyricsLookupState = .idle
+-        displayedArtwork = .none
+-        pendingArtworkIdentity = nil
+-        isInvalidatingCurrentResolution = false
+-        resolutionTask?.cancel()
+-        resolutionTask = nil
+-        cancelPerTrackTasks()
+-
+-        var empty = NowPlayingPresentation.emptySystemNowPlaying
+-        empty.externalConnectionState = .disconnected
+-        empty.emptyTitleKey = source.disconnectedTitleKey
+-        currentCapabilities = .unavailable
+-        empty.isControlEnabled = false
+-        empty.isSeekEnabled = false
+-        empty.isVolumeControlEnabled = false
+-        empty.isPlaybackModeControlEnabled = false
+-        transitionConnectionState(to: .disconnected, reason: reason)
+-        updatePresentationIfNeeded(empty)
+-    }
+-
+     private func startArtworkResolution(
+         identity: String,
+         effective: ExternalPlaybackEffectiveMetadata,
+@@ -2808,8 +2742,6 @@ final class SystemNowPlayingProvider: ExternalPlaybackProvider {
+             recordControlVerificationSuccess(action)
+             if isSkipControlAction(action) {
+                 lastStreamObservation = nil
+-            } else if case .seek = action {
+-                clearControlCooldown(reason: "verified action=\(action)")
+             } else {
+                 clearControlCooldown(reason: "verified action=\(action)")
+             }

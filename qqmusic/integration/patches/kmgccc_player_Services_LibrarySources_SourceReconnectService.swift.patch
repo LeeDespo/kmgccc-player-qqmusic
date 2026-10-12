@@ -1,0 +1,15 @@
+diff --git a/kmgccc_player/Services/LibrarySources/SourceReconnectService.swift b/kmgccc_player/Services/LibrarySources/SourceReconnectService.swift
+index 0afda915..710e6113 100644
+--- a/kmgccc_player/Services/LibrarySources/SourceReconnectService.swift
++++ b/kmgccc_player/Services/LibrarySources/SourceReconnectService.swift
+@@ -514,9 +514,7 @@ final class SourceReconnectService {
+         selected: ReferencedFileFingerprint
+     ) -> Bool {
+         guard let original else { return false }
+-        if let identity = original.identity,
+-           identity.volumeUUID?.isEmpty == false,
+-           identity.resourceIdentifierArchive?.isEmpty == false {
++        if let identity = original.identity, identity.isStablePhysicalIdentity {
+             return identity == selected.identity
+         }
+         return original.fileSize == selected.fileSize

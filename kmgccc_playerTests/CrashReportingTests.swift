@@ -96,7 +96,7 @@ final class CrashReportStoreTests: XCTestCase {
 
     private func temporaryDirectory() -> URL {
         FileManager.default.temporaryDirectory
-            .appendingPathComponent("CrashReportStoreTests-(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("CrashReportStoreTests-\(UUID().uuidString)", isDirectory: true)
     }
 }
 

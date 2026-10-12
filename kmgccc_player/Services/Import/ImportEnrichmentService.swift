@@ -152,24 +152,6 @@ nonisolated private struct ImportEnrichmentItemState: Sendable {
     var flushPendingPartCount: Int {
         partStates.values.filter { $0 == .flushPending }.count
     }
-
-    // Legacy accessors for backward compatibility in existing code
-    var lyricsState: ImportEnrichmentPartState {
-        get { state(for: .lyrics) }
-        set { setState(newValue, for: .lyrics) }
-    }
-    var coverState: ImportEnrichmentPartState {
-        get { state(for: .cover) }
-        set { setState(newValue, for: .cover) }
-    }
-    var lyricAttempts: Int {
-        get { attempts(for: .lyrics) }
-        set { partAttempts[.lyrics] = newValue }
-    }
-    var coverAttempts: Int {
-        get { attempts(for: .cover) }
-        set { partAttempts[.cover] = newValue }
-    }
 }
 
 nonisolated struct ImportEnrichmentProgressSnapshot: Sendable, Equatable {
@@ -759,7 +741,6 @@ final class ImportEnrichmentService {
         artist: String
     ) async -> Bool {
         let canonical = LibraryNormalization.normalizeArtist(artist)
-        guard canonical != LibraryNormalization.normalizeArtist(nil) else { return false }
         let entry = await latestArtistEntry(canonical: canonical, displayName: artist)
         let result = MetadataDetailCoordinator.shared.applyMissingFields(detail, to: entry)
         guard result.changed else { return false }
@@ -770,7 +751,6 @@ final class ImportEnrichmentService {
 
     private func applyArtistArtworkDataUnlocked(_ data: Data, artist: String) async -> Bool {
         let canonical = LibraryNormalization.normalizeArtist(artist)
-        guard canonical != LibraryNormalization.normalizeArtist(nil) else { return false }
         var entry = await latestArtistEntry(canonical: canonical, displayName: artist)
         guard !entry.hasArtwork else { return false }
         entry.artworkData = data
@@ -786,7 +766,6 @@ final class ImportEnrichmentService {
         album: String,
         artist: String
     ) async -> Bool {
-        guard !LibraryNormalization.isUnknownAlbum(album) else { return false }
         let entry = await latestAlbumEntry(album: album, artist: artist)
         let result = MetadataDetailCoordinator.shared.applyMissingFields(detail, to: entry)
         guard result.changed else { return false }
@@ -796,7 +775,6 @@ final class ImportEnrichmentService {
     }
 
     private func applyAlbumArtworkDataUnlocked(_ data: Data, album: String, artist: String) async -> Bool {
-        guard !LibraryNormalization.isUnknownAlbum(album) else { return false }
         var entry = await latestAlbumEntry(album: album, artist: artist)
         guard !entry.hasArtwork else { return false }
         entry.artworkData = data

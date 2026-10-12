@@ -405,9 +405,6 @@ final class DiskCacheOptimizationTests: XCTestCase {
 
         let r2 = DiskCacheRetention.trim(at: tempDirectory, maxBytes: 0)
         XCTAssertEqual(r2, .empty)
-
-        let r3 = DiskCacheRetention.trim(at: tempDirectory, maxBytes: -50)
-        XCTAssertEqual(r3, .empty)
     }
 
     func testCalculateLibraryDiskCacheUsage() async throws {

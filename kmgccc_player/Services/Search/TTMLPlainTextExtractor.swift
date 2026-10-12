@@ -17,10 +17,6 @@ nonisolated enum TTMLPlainTextExtractor {
     private static let lock = NSLock()
     private nonisolated(unsafe) static var warnedDescriptions = Set<String>()
 
-    static func extractPlainText(from ttml: String, sourceDescription: String? = nil) -> String {
-        extractTimedPlainText(from: ttml, sourceDescription: sourceDescription).plainText
-    }
-
     static func extractTimedPlainText(from ttml: String, sourceDescription: String? = nil) -> LyricPlainTextExtraction {
         let parser = TTMLXMLTextParser()
         if let extracted = parser.parse(ttml), !extracted.plainText.isEmpty {

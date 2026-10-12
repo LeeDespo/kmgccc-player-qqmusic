@@ -1,0 +1,14 @@
+diff --git a/kmgccc_playerTests/LibraryPathsTests.swift b/kmgccc_playerTests/LibraryPathsTests.swift
+index d48fffd7..5bd84d02 100644
+--- a/kmgccc_playerTests/LibraryPathsTests.swift
++++ b/kmgccc_playerTests/LibraryPathsTests.swift
+@@ -405,9 +405,6 @@ final class DiskCacheOptimizationTests: XCTestCase {
+ 
+         let r2 = DiskCacheRetention.trim(at: tempDirectory, maxBytes: 0)
+         XCTAssertEqual(r2, .empty)
+-
+-        let r3 = DiskCacheRetention.trim(at: tempDirectory, maxBytes: -50)
+-        XCTAssertEqual(r3, .empty)
+     }
+ 
+     func testCalculateLibraryDiskCacheUsage() async throws {

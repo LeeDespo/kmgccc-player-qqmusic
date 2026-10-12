@@ -147,10 +147,6 @@ actor PlaylistArtworkPipeline {
         }
     }
 
-    nonisolated static func fastLookup(cacheKey: String) -> NSImage? {
-        FastArtworkMemoryCache.shared.image(forKey: cacheKey)
-    }
-
     func clearMemory() {
         memoryGeneration &+= 1
         memoryCache.removeAllObjects()

@@ -433,7 +433,6 @@ final class TrackMediaLocatorTests: XCTestCase {
         let firstLocator = try XCTUnwrap(firstDecode.mediaLocator.referencedFile)
         let stableID = firstLocator.primaryLocationID
         XCTAssertEqual(firstLocator.locations[0].id, stableID)
-        XCTAssertEqual(firstLocator.locations[0].id, stableID)
 
         let reencoded = try encoder.encode(firstDecode)
         let secondDecode = try decoder.decode(TrackSidecar.self, from: reencoded)

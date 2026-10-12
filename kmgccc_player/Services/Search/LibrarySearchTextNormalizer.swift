@@ -156,12 +156,6 @@ nonisolated enum LibrarySearchTextNormalizer {
         return characterNgrams(compactQuery, minimum: 2, maximum: 3)
     }
 
-    static func hasCJKOrHangul(_ value: String) -> Bool {
-        value.unicodeScalars.contains { scalar in
-            isCJKScalar(scalar) || isHangulScalar(scalar) || isKanaScalar(scalar)
-        }
-    }
-
     private static func isSearchableScalar(_ scalar: UnicodeScalar) -> Bool {
         if CharacterSet.alphanumerics.contains(scalar) {
             return true

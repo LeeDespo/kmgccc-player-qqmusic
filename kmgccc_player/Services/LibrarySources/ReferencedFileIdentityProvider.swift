@@ -61,9 +61,7 @@ nonisolated struct ReferencedPhysicalIdentityKey: Hashable, Sendable {
     private let storage: Storage
 
     init(_ fingerprint: ReferencedFileFingerprint) {
-        if let identity = fingerprint.identity,
-           identity.volumeUUID?.isEmpty == false,
-           identity.resourceIdentifierArchive?.isEmpty == false {
+        if let identity = fingerprint.identity, identity.isStablePhysicalIdentity {
             storage = .stable(identity)
         } else {
             storage = .fingerprint(
@@ -71,5 +69,17 @@ nonisolated struct ReferencedPhysicalIdentityKey: Hashable, Sendable {
                 Int64((fingerprint.modifiedAt * 1_000_000).rounded())
             )
         }
+    }
+}
+
+// MARK: - Stable Physical Identity
+
+nonisolated extension ReferencedFileIdentity {
+    /// Whether this identity is complete enough to identify a file physically
+    /// across scans: both the volume UUID and the resource identifier are known.
+    /// Incomplete identities fall back to size/mtime fingerprint matching, so
+    /// this predicate is the single definition of "stable identity".
+    var isStablePhysicalIdentity: Bool {
+        volumeUUID?.isEmpty == false && resourceIdentifierArchive?.isEmpty == false
     }
 }

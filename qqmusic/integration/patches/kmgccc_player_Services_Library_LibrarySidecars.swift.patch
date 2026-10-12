@@ -1,5 +1,5 @@
 diff --git a/kmgccc_player/Services/Library/LibrarySidecars.swift b/kmgccc_player/Services/Library/LibrarySidecars.swift
-index 89370a72..916c3c42 100644
+index 89370a72..f9c66b66 100644
 --- a/kmgccc_player/Services/Library/LibrarySidecars.swift
 +++ b/kmgccc_player/Services/Library/LibrarySidecars.swift
 @@ -302,7 +302,7 @@ nonisolated struct ImportProvenance: Codable, Equatable, Sendable {
@@ -49,7 +49,21 @@ index 89370a72..916c3c42 100644
          self.metadataSource = metadataSource
          self.metadataFetchedAt = metadataFetchedAt
          self.metadataConfidence = metadataConfidence
-@@ -477,6 +487,8 @@ nonisolated struct TrackSidecar: Codable, Sendable {
+@@ -464,19 +474,13 @@ nonisolated struct TrackSidecar: Codable, Sendable {
+         album = try c.decode(String.self, forKey: .album)
+         albumArtist = try c.decodeIfPresent(String.self, forKey: .albumArtist)
+         description = try c.decodeIfPresent(String.self, forKey: .description)
+-        if let tags = try? c.decode([String].self, forKey: .genreTags) {
+-            genreTags = tags
+-        } else if let tags = try? c.decode(String.self, forKey: .genreTags) {
+-            genreTags = tags.split(separator: ",").map {
+-                String($0).trimmingCharacters(in: .whitespacesAndNewlines)
+-            }.filter { !$0.isEmpty }
+-        } else {
+-            genreTags = []
+-        }
++        genreTags = c.decodeGenreTagsCompat(forKey: .genreTags)
+         language = try c.decodeIfPresent(String.self, forKey: .language)
          labelOrCompany = try c.decodeIfPresent(String.self, forKey: .labelOrCompany)
          releaseDate = try c.decodeIfPresent(Date.self, forKey: .releaseDate)
          qqMusicSongMid = try c.decodeIfPresent(String.self, forKey: .qqMusicSongMid)
@@ -58,7 +72,7 @@ index 89370a72..916c3c42 100644
          metadataSource = try c.decodeIfPresent(String.self, forKey: .metadataSource)
          metadataFetchedAt = try c.decodeIfPresent(Date.self, forKey: .metadataFetchedAt)
          metadataConfidence = try c.decodeIfPresent(Double.self, forKey: .metadataConfidence)
-@@ -545,6 +557,8 @@ nonisolated struct TrackSidecar: Codable, Sendable {
+@@ -545,6 +549,8 @@ nonisolated struct TrackSidecar: Codable, Sendable {
          try c.encodeIfPresent(labelOrCompany, forKey: .labelOrCompany)
          try c.encodeIfPresent(releaseDate, forKey: .releaseDate)
          try c.encodeIfPresent(qqMusicSongMid, forKey: .qqMusicSongMid)
@@ -67,3 +81,61 @@ index 89370a72..916c3c42 100644
          try c.encodeIfPresent(metadataSource, forKey: .metadataSource)
          try c.encodeIfPresent(metadataFetchedAt, forKey: .metadataFetchedAt)
          try c.encodeIfPresent(metadataConfidence, forKey: .metadataConfidence)
+@@ -907,16 +913,7 @@ nonisolated struct ArtistSidecar: Codable, Sendable {
+         displayName = try c.decode(String.self, forKey: .displayName)
+         artworkFileName = try c.decodeIfPresent(String.self, forKey: .artworkFileName)
+         description = try c.decodeIfPresent(String.self, forKey: .description)
+-        if let decodedTags = try? c.decode([String].self, forKey: .genreTags) {
+-            genreTags = decodedTags
+-        } else if let decodedTags = try? c.decode(String.self, forKey: .genreTags) {
+-            genreTags = decodedTags
+-                .split(separator: ",")
+-                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+-                .filter { !$0.isEmpty }
+-        } else {
+-            genreTags = []
+-        }
++        genreTags = c.decodeGenreTagsCompat(forKey: .genreTags)
+         region = try c.decodeIfPresent(String.self, forKey: .region)
+         foreignName = try c.decodeIfPresent(String.self, forKey: .foreignName)
+         qqMusicSingerMid = try c.decodeIfPresent(String.self, forKey: .qqMusicSingerMid)
+@@ -1074,16 +1071,7 @@ nonisolated struct AlbumSidecar: Codable, Sendable {
+         releaseYear = try c.decodeIfPresent(Int.self, forKey: .releaseYear) ?? year
+         releaseDate = try c.decodeIfPresent(Date.self, forKey: .releaseDate)
+         albumType = try c.decodeIfPresent(String.self, forKey: .albumType)
+-        if let decodedTags = try? c.decode([String].self, forKey: .genreTags) {
+-            genreTags = decodedTags
+-        } else if let decodedTags = try? c.decode(String.self, forKey: .genreTags) {
+-            genreTags = decodedTags
+-                .split(separator: ",")
+-                .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+-                .filter { !$0.isEmpty }
+-        } else {
+-            genreTags = []
+-        }
++        genreTags = c.decodeGenreTagsCompat(forKey: .genreTags)
+         language = try c.decodeIfPresent(String.self, forKey: .language)
+         labelOrCompany = try c.decodeIfPresent(String.self, forKey: .labelOrCompany)
+         qqMusicAlbumMid = try c.decodeIfPresent(String.self, forKey: .qqMusicAlbumMid)
+@@ -1127,3 +1115,21 @@ nonisolated struct AlbumSidecar: Codable, Sendable {
+         try c.encodeIfPresent(customTrackOrder, forKey: .customTrackOrder)
+     }
+ }
++
++// MARK: - Genre Tag Compatibility Decoding
++
++/// Decodes `genreTags` tolerantly: current sidecars store `[String]`, older ones
++/// stored a single comma-separated `String`, and anything else yields no tags.
++nonisolated private extension KeyedDecodingContainer {
++    func decodeGenreTagsCompat(forKey key: Key) -> [String] {
++        if let tags = try? decode([String].self, forKey: key) {
++            return tags
++        }
++        if let raw = try? decode(String.self, forKey: key) {
++            return raw.split(separator: ",").map {
++                String($0).trimmingCharacters(in: .whitespacesAndNewlines)
++            }.filter { !$0.isEmpty }
++        }
++        return []
++    }
++}

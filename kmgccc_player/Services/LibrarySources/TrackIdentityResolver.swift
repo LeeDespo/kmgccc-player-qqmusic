@@ -172,9 +172,7 @@ nonisolated struct TrackIdentityResolver: Sendable {
     nonisolated private static func stableIdentity(
         _ identity: ReferencedFileIdentity
     ) -> ReferencedFileIdentity? {
-        guard identity.volumeUUID?.isEmpty == false,
-              identity.resourceIdentifierArchive?.isEmpty == false else { return nil }
-        return identity
+        identity.isStablePhysicalIdentity ? identity : nil
     }
 
     // MARK: Canonical path (managed identity tier)
@@ -490,10 +488,6 @@ nonisolated struct TrackIdentityResolver: Sendable {
     nonisolated private static func stableIdentity(
         from fingerprint: ReferencedFileFingerprint
     ) -> ReferencedFileIdentity? {
-        fingerprint.identity.flatMap { identity in
-            guard identity.volumeUUID?.isEmpty == false,
-                  identity.resourceIdentifierArchive?.isEmpty == false else { return nil }
-            return identity
-        }
+        fingerprint.identity.flatMap { $0.isStablePhysicalIdentity ? $0 : nil }
     }
 }

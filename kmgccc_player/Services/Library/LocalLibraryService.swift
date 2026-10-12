@@ -280,27 +280,6 @@ final class LocalLibraryService {
         try fileManager.createDirectory(at: paths.albumsRootURL, withIntermediateDirectories: true)
     }
 
-    // MARK: - Import
-
-    func importAudioFile(from sourceURL: URL, trackId: UUID) throws -> String {
-        ensureLibraryFolders()
-
-        let trackFolder = paths.trackFolderURL(for: trackId)
-        try fileManager.createDirectory(at: trackFolder, withIntermediateDirectories: true)
-
-        let ext = sourceURL.pathExtension.trimmingCharacters(in: .whitespacesAndNewlines)
-        let safeExt = ext.isEmpty ? "audio" : ext
-        let audioFileName = "audio.\(safeExt)"
-        let destURL = trackFolder.appendingPathComponent(audioFileName)
-
-        if fileManager.fileExists(atPath: destURL.path) {
-            try fileManager.removeItem(at: destURL)
-        }
-        try fileManager.copyItem(at: sourceURL, to: destURL)
-
-        return "Tracks/\(trackId.uuidString)/\(audioFileName)"
-    }
-
     // MARK: - Sidecar Write
 
     /// Import-only full resource persistence.
@@ -436,75 +415,6 @@ final class LocalLibraryService {
             for task in tasks {
                 await task.value
             }
-        }
-    }
-
-    @discardableResult
-    func writeTrackMetaAndLyrics(for track: Track, reason: String) -> Bool {
-        guard Self.isPersistable(track.mediaLocator) else { return false }
-
-        do {
-            let references = loadTrackPersistenceReferences(for: track.id)
-            let trackFolder = try ensureTrackFolder(for: track.id)
-            let updatedReferences = try writeLyricsAssets(for: track, folder: trackFolder, existing: references)
-            logTrackPersistence(track: track, reason: reason, action: "meta+lyrics", artwork: "not-requested")
-            try writeTrackMeta(for: track, references: updatedReferences)
-            return true
-        } catch {
-            Log.error("Failed to write meta+lyrics for \(track.title): \(error)", category: .library)
-            return false
-        }
-    }
-
-    @discardableResult
-    func writeTrackMetaAndArtwork(for track: Track, reason: String) -> Bool {
-        guard Self.isPersistable(track.mediaLocator) else { return false }
-
-        do {
-            let references = loadTrackPersistenceReferences(for: track.id)
-            let artworkFileName = try writeArtworkIfChanged(
-                for: track,
-                reason: reason,
-                existingFileName: references.artworkFileName
-            )
-            let finalReferences = TrackPersistenceReferences(
-                artworkFileName: artworkFileName,
-                lyricsFileName: references.lyricsFileName,
-                lyricsType: references.lyricsType,
-                ttmlLyricsFileName: references.ttmlLyricsFileName
-            )
-            try writeTrackMeta(for: track, references: finalReferences)
-            return true
-        } catch {
-            Log.error("Failed to write meta+artwork for \(track.title): \(error)", category: .library)
-            return false
-        }
-    }
-
-    @discardableResult
-    func writeTrackMetaLyricsAndArtwork(for track: Track, reason: String) -> Bool {
-        guard Self.isPersistable(track.mediaLocator) else { return false }
-
-        do {
-            let references = loadTrackPersistenceReferences(for: track.id)
-            let trackFolder = try ensureTrackFolder(for: track.id)
-            let artworkFileName = try writeArtworkIfChanged(
-                for: track,
-                reason: reason,
-                existingFileName: references.artworkFileName
-            )
-            let updatedReferences = try writeLyricsAssets(for: track, folder: trackFolder, existing: references)
-            let finalReferences = TrackPersistenceReferences(
-                artworkFileName: artworkFileName,
-                lyricsFileName: updatedReferences.lyricsFileName,
-                lyricsType: updatedReferences.lyricsType,
-                ttmlLyricsFileName: updatedReferences.ttmlLyricsFileName
-            )
-            try writeTrackMeta(for: track, references: finalReferences)
-            return true
-        } catch {
-            Log.error("Failed to write meta+lyrics+artwork for \(track.title): \(error)", category: .library)
-            return false
         }
     }
 
@@ -1218,10 +1128,6 @@ final class LocalLibraryService {
         return nil
     }
 
-    private func isPNGData(_ data: Data) -> Bool {
-        data.starts(with: [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
-    }
-
     private func logTrackPersistence(track: Track, reason: String, action: String, artwork: String) {
         Log.info(
             "[TrackPersistence] reason=\(reason) track=\(track.id.uuidString) title=\(track.title) action=\(action) artwork=\(artwork)",
@@ -1242,10 +1148,6 @@ final class LocalLibraryService {
     }
 
     // MARK: - Track Deletion
-
-    func deleteTrackFiles(_ track: Track) {
-        _ = deleteTrackFolder(trackID: track.id)
-    }
 
     @discardableResult
     nonisolated func deleteTrackFolder(trackID: UUID) -> Bool {
@@ -1371,12 +1273,6 @@ final class LocalLibraryService {
                 playlistID: playlistID,
                 reason: error.localizedDescription
             )
-        }
-    }
-
-    func writeAllPlaylists(_ playlists: [Playlist]) throws {
-        for playlist in playlists {
-            try writePlaylist(playlist)
         }
     }
 
@@ -1507,12 +1403,6 @@ final class LocalLibraryService {
         }
     }
 
-    func savePlaylistCustomArtwork(playlistID: UUID, image: NSImage) {
-        let fileURL = paths.playlistCustomArtworkURL(for: playlistID)
-        guard writePNGArtwork(image, to: fileURL) else { return }
-        savePlaylistCustomArtworkMetadata(playlistID: playlistID, fileURL: fileURL)
-    }
-
     @discardableResult
     nonisolated func savePlaylistCustomArtworkData(playlistID: UUID, pngData: Data) -> Bool {
         Self.savePlaylistCustomArtworkDataOnDisk(
@@ -1561,27 +1451,6 @@ final class LocalLibraryService {
             playlistID: playlistID,
             fileURL: fileURL,
             paths: paths
-        )
-    }
-
-    @discardableResult
-    private nonisolated func savePlaylistCustomArtworkMetadata(playlistID: UUID, fileURL: URL) -> Bool {
-        let existing = loadPlaylistSidecar(playlistID: playlistID)
-
-        // Delete old generated artwork file when switching to custom
-        if let generatedFileName = existing?.generatedHeaderArtworkFileName {
-            let generatedURL = paths.playlistsRootURL
-                .appendingPathComponent(generatedFileName)
-            try? FileManager.default.removeItem(at: generatedURL)
-        }
-
-        return updatePlaylistArtworkMetadata(
-            playlistID: playlistID,
-            customFileName: fileURL.lastPathComponent,
-            generatedFileName: nil, // Clear generated file reference
-            activeSource: .custom,
-            generatedSignature: nil, // Clear signature since we're using custom
-            artworkRevision: UUID().uuidString
         )
     }
 
@@ -1672,47 +1541,6 @@ final class LocalLibraryService {
             generatedSignature: nil,
             artworkRevision: UUID().uuidString
         )
-    }
-
-    /// Explicitly regenerate playlist artwork from tracks and set it as the active artwork.
-    /// This clears any custom artwork and forces generation (or re-generation) of the built-in cover.
-    func regeneratePlaylistArtwork(
-        playlistID: UUID,
-        tracks: [Track],
-        image: NSImage
-    ) -> Bool {
-        let fileURL = paths.playlistGeneratedArtworkURL(for: playlistID)
-        guard writePNGArtwork(image, to: fileURL) else {
-            debugArtworkPersistence(
-                "selectionIdentity=\(playlistID) source=generated filePath=\(fileURL.path) phase=regenerate save=failed reason=png-write-failed tracks=\(tracks.count)"
-            )
-            return false
-        }
-
-        let existing = loadPlaylistSidecar(playlistID: playlistID)
-
-        // Delete old custom artwork file when switching to generated
-        if let customFileName = existing?.customHeaderArtworkFileName {
-            let customURL = paths.playlistsRootURL
-                .appendingPathComponent(customFileName)
-            try? FileManager.default.removeItem(at: customURL)
-        }
-
-        // Clear custom artwork (set to nil) and set active source to generated
-        let metadataSaved = updatePlaylistArtworkMetadata(
-            playlistID: playlistID,
-            customFileName: nil,
-            generatedFileName: fileURL.lastPathComponent,
-            activeSource: .generated,
-            generatedSignature: nil, // Signature not used for stability anymore
-            artworkRevision: UUID().uuidString
-        )
-        if !metadataSaved {
-            debugArtworkPersistence(
-                "selectionIdentity=\(playlistID) source=generated filePath=\(fileURL.path) phase=regenerate save=failed reason=metadata-write-failed tracks=\(tracks.count)"
-            )
-        }
-        return metadataSaved
     }
 
     nonisolated func loadPlaylistSidecar(playlistID: UUID) -> PlaylistSidecar? {
@@ -1987,10 +1815,6 @@ final class LocalLibraryService {
         }
     }
 
-    private func debugArtworkPersistence(_ message: String) {
-        Log.debug("[HeaderArtworkPersistence] \(message)", category: .library)
-    }
-
     // MARK: - Artist/Album Sidecars
 
     func loadArtistSidecarsFromDisk() -> [(sidecar: ArtistSidecar, folderURL: URL)] {
@@ -2213,320 +2037,6 @@ final class LocalLibraryService {
                 reason: error.localizedDescription
             )
         }
-    }
-
-    // MARK: - Bootstrap / Sync
-
-    func bootstrapIfNeeded(repository: LibraryRepositoryProtocol) async {
-        ensureLibraryFolders()
-
-        let count = await repository.totalTrackCount()
-        if count == 0 {
-            let tracks = loadTracksFromDisk()
-            if !tracks.isEmpty {
-                await repository.addTracks(tracks)
-            }
-
-            let tracksById = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
-            let playlists = loadPlaylistsFromDisk(tracksById: tracksById)
-            for playlist in playlists {
-                await repository.addPlaylist(playlist)
-            }
-        } else {
-            await migrateLegacyTracksIfNeeded(repository: repository)
-            await refreshAvailability(repository: repository)
-        }
-    }
-
-    func refreshAvailability(repository: LibraryRepositoryProtocol) async {
-        // 1. Refresh Tracks Availability
-        let tracks = await repository.fetchTracks(in: nil)
-        for track in tracks {
-            guard case let .managed(libraryRelativePath) = track.mediaLocator else { continue }
-            guard let url = paths.libraryURL(from: libraryRelativePath) else { continue }
-            let exists = fileManager.fileExists(atPath: url.path)
-
-            let newAvailability: TrackAvailability = exists ? .available : .missing
-            let needsImportBackfill = track.importedAt == nil
-
-            if track.availability != newAvailability || needsImportBackfill {
-                track.availability = newAvailability
-                if needsImportBackfill {
-                    track.importedAt = track.addedAt
-                }
-                await repository.persistTrackMetaOnly(track, reason: "availabilityRefresh")
-            }
-        }
-
-        // 2. Refresh Playlists from Disk
-        await refreshPlaylists(repository: repository)
-    }
-
-    /// Refresh playlists by comparing raw disk sidecar data against the DB.
-    /// IMPORTANT: We use PlaylistSidecar structs (not @Model Playlist objects) to avoid
-    /// SwiftData implicitly inserting phantom Playlist objects into the context when
-    /// managed Track objects are assigned to their relationships.
-    /// IMPORTANT: We do NOT write back to disk during sync to avoid triggering
-    /// the file system monitor and creating an infinite feedback loop.
-    private func refreshPlaylists(repository: LibraryRepositoryProtocol) async {
-        let tracks = await repository.fetchTracks(in: nil)
-        let tracksById = Dictionary(uniqueKeysWithValues: tracks.map { ($0.id, $0) })
-        let diskSidecars = loadPlaylistSidecarsFromDisk()
-
-        let dbPlaylists = await repository.fetchPlaylists()
-
-        // 1. Identify IDs
-        let diskIds = Set(diskSidecars.map { $0.id })
-        let dbIds = Set(dbPlaylists.map { $0.id })
-
-        // 2. Add New (On Disk, not in DB)
-        for sidecar in diskSidecars where !dbIds.contains(sidecar.id) {
-            Log.debug("Found new playlist on disk: \(sidecar.name)", category: .library)
-            let resolvedTracks = sidecar.trackIDs.compactMap { tracksById[$0] }
-            let playlist = Playlist(
-                id: sidecar.id,
-                name: sidecar.name,
-                createdAt: sidecar.createdAt,
-                tracks: resolvedTracks
-            )
-            await repository.addPlaylist(playlist)
-        }
-
-        // 3. Delete Stale (In DB, not on Disk)
-        for playlist in dbPlaylists where !diskIds.contains(playlist.id) {
-            Log.debug("Removing stale playlist from DB: \(playlist.name)", category: .library)
-            do {
-                try await repository.deletePlaylist(playlist)
-            } catch {
-                Log.error(
-                    "Failed to remove stale playlist '\(playlist.name)' during disk refresh: \(error)",
-                    category: .library
-                )
-            }
-        }
-
-        // 4. Update Existing
-        // Use Set comparison to avoid false positives from SwiftData ordering differences.
-        // Directly modify the managed Playlist object and save WITHOUT writing back to disk,
-        // to prevent triggering the file system monitor → infinite refresh loop.
-        var needsSave = false
-        for sidecar in diskSidecars {
-            if let dbPlaylist = dbPlaylists.first(where: { $0.id == sidecar.id }) {
-                // Sync Name
-                if dbPlaylist.name != sidecar.name {
-                    dbPlaylist.name = sidecar.name
-                    needsSave = true
-                }
-
-                // Sync Tracks — compare as Sets (order-insensitive)
-                let dbTrackIdSet = Set(dbPlaylist.tracks.map { $0.id })
-                let diskTrackIdSet = Set(sidecar.trackIDs)
-
-                if dbTrackIdSet != diskTrackIdSet {
-                    Log.debug("Syncing tracks for playlist: \(sidecar.name)", category: .library)
-                    let resolvedTracks = sidecar.trackIDs.compactMap { tracksById[$0] }
-                    dbPlaylist.tracks = resolvedTracks
-                    needsSave = true
-                }
-            }
-        }
-
-        if needsSave {
-            await repository.save()
-        }
-    }
-
-    /// Load raw playlist sidecar data from disk without creating @Model objects.
-    /// This is safe to call during refresh because it does not touch the SwiftData context.
-    func loadPlaylistSidecarsFromDisk() -> [PlaylistSidecar] {
-        ensureLibraryFolders()
-        var sidecars: [PlaylistSidecar] = []
-
-        let files =
-            (try? fileManager.contentsOfDirectory(
-                at: paths.playlistsRootURL,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-            )) ?? []
-
-        for file in files where file.pathExtension.lowercased() == "json" {
-            guard let data = try? Data(contentsOf: file),
-                let sidecar = try? decoder.decode(PlaylistSidecar.self, from: data)
-            else {
-                continue
-            }
-            sidecars.append(sidecar)
-        }
-
-        return sidecars
-    }
-
-    func migrateLegacyTracksIfNeeded(repository: LibraryRepositoryProtocol) async {
-        let tracks = await repository.fetchTracks(in: nil)
-        for track in tracks {
-            guard case let .referenced(locator) = track.mediaLocator,
-                  locator.sourceMemberships.isEmpty,
-                  !locator.fileBookmarkData.isEmpty
-            else { continue }
-
-            let result = track.resolveFileURL()
-            guard let sourceURL = result.url else {
-                track.availability = result.newAvailability
-                await repository.persistTrackMetaOnly(track, reason: "legacyMigration")
-                continue
-            }
-            defer { result.lease.release() }
-
-            do {
-                let relativePath = try importAudioFile(from: sourceURL, trackId: track.id)
-                track.mediaLocator = .managed(libraryRelativePath: relativePath)
-                if track.originalFilePath.isEmpty {
-                    track.originalFilePath = sourceURL.path
-                }
-                track.availability = .available
-                await repository.persistTrackMetaOnly(track, reason: "legacyMigration")
-            } catch {
-                Log.error("Failed to migrate track \(track.title): \(error)", category: .library)
-            }
-        }
-    }
-
-    // MARK: - Disk Load
-
-    func loadTracksFromDisk() -> [Track] {
-        ensureLibraryFolders()
-        var tracks: [Track] = []
-
-        let trackDirs =
-            (try? fileManager.contentsOfDirectory(
-                at: paths.tracksRootURL,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-            )) ?? []
-
-        for dir in trackDirs where dir.hasDirectoryPath {
-            let metaURL = dir.appendingPathComponent("meta.json")
-            guard let data = try? Data(contentsOf: metaURL),
-                let sidecar = try? decoder.decode(TrackSidecar.self, from: data)
-            else {
-                continue
-            }
-
-            let audioFileName = sidecar.audioFileName ?? findAudioFileName(in: dir)
-            let relativePath: String = {
-                if let audioFileName {
-                    return "Tracks/\(sidecar.id.uuidString)/\(audioFileName)"
-                }
-                return ""
-            }()
-
-            let audioURL =
-                relativePath.isEmpty
-                ? nil
-                : paths.libraryURL(from: relativePath)
-            let isAvailable = audioURL.map { fileManager.fileExists(atPath: $0.path) } ?? false
-
-            let resolvedArtworkFileName = resolvedTrackArtworkFileName(
-                in: dir,
-                preferredFileName: sidecar.artworkFileName
-            )
-
-            let track = Track(
-                id: sidecar.id,
-                title: sidecar.title,
-                artist: sidecar.artist,
-                album: sidecar.album,
-                albumArtist: sidecar.albumArtist,
-                userDescription: sidecar.description ?? "",
-                genreTags: sidecar.genreTags,
-                language: sidecar.language ?? "",
-                labelOrCompany: sidecar.labelOrCompany ?? "",
-                releaseDate: sidecar.releaseDate,
-                qqMusicSongMid: sidecar.qqMusicSongMid,
-                qqMusicDownloadOrigin: sidecar.qqMusicDownloadOrigin,
-                qqMusicDownloadedAt: sidecar.qqMusicDownloadedAt,
-                metadataSource: sidecar.metadataSource,
-                metadataFetchedAt: sidecar.metadataFetchedAt,
-                metadataConfidence: sidecar.metadataConfidence,
-                duration: sidecar.duration,
-                addedAt: sidecar.addedAt,
-                importedAt: sidecar.importedAt ?? sidecar.addedAt,
-                lyricsTimeOffsetMs: sidecar.lyricsTimeOffsetMs ?? 0,
-                fileBookmarkData: Data(),
-                originalFilePath: sidecar.originalFilePath ?? "",
-                libraryRelativePath: relativePath,
-                availability: isAvailable ? .available : .missing,
-                artworkData: nil,
-                ttmlLyricText: nil,
-                lyricsText: nil
-            )
-
-            track.libraryRootSnapshot = paths.rootURL.path
-            track.audioFileName = audioFileName ?? ""
-            track.artworkFileName = resolvedArtworkFileName
-            track.lyricsFileName = sidecar.lyricsFileName
-            track.ttmlLyricsFileName = sidecar.ttmlLyricsFileName
-
-            // Load preference stats into cache if available.
-            // If preferenceStats exists in sidecar, use it; otherwise migration will happen on first write.
-            preferenceStatsService.loadStats(from: sidecar)
-
-            tracks.append(track)
-        }
-
-        return tracks
-    }
-
-    func loadPlaylistsFromDisk(tracksById: [UUID: Track]) -> [Playlist] {
-        ensureLibraryFolders()
-        var playlists: [Playlist] = []
-
-        let files =
-            (try? fileManager.contentsOfDirectory(
-                at: paths.playlistsRootURL,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-            )) ?? []
-
-        for file in files where file.pathExtension.lowercased() == "json" {
-            guard let data = try? Data(contentsOf: file),
-                let sidecar = try? decoder.decode(PlaylistSidecar.self, from: data)
-            else {
-                continue
-            }
-
-            let tracks = sidecar.trackIDs.compactMap { tracksById[$0] }
-            let playlist = Playlist(
-                id: sidecar.id,
-                name: sidecar.name,
-                createdAt: sidecar.createdAt,
-                tracks: tracks
-            )
-            playlists.append(playlist)
-        }
-
-        return playlists
-    }
-
-    private func findAudioFileName(in folder: URL) -> String? {
-        let files =
-            (try? fileManager.contentsOfDirectory(
-                at: folder,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-            )) ?? []
-
-        if let audio = files.first(where: { $0.lastPathComponent.lowercased().hasPrefix("audio.") })
-        {
-            return audio.lastPathComponent
-        }
-
-        let supported = Set(Constants.FileTypes.supportedAudioExtensions)
-        if let audio = files.first(where: { supported.contains($0.pathExtension.lowercased()) }) {
-            return audio.lastPathComponent
-        }
-
-        return nil
     }
 
 }

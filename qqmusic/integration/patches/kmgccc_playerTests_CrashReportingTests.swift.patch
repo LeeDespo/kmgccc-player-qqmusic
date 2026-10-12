@@ -1,7 +1,16 @@
 diff --git a/kmgccc_playerTests/CrashReportingTests.swift b/kmgccc_playerTests/CrashReportingTests.swift
-index 6915474f..c5434b07 100644
+index 6915474f..f021c9d9 100644
 --- a/kmgccc_playerTests/CrashReportingTests.swift
 +++ b/kmgccc_playerTests/CrashReportingTests.swift
+@@ -96,7 +96,7 @@ final class CrashReportStoreTests: XCTestCase {
+ 
+     private func temporaryDirectory() -> URL {
+         FileManager.default.temporaryDirectory
+-            .appendingPathComponent("CrashReportStoreTests-(UUID().uuidString)", isDirectory: true)
++            .appendingPathComponent("CrashReportStoreTests-\(UUID().uuidString)", isDirectory: true)
+     }
+ }
+ 
 @@ -124,14 +124,19 @@ final class CrashReportDeliveryModelTests: XCTestCase {
          XCTAssertNil(legacyDecoded.sessionID)
      }

@@ -1,0 +1,15 @@
+diff --git a/kmgccc_player/Services/Automation/MP3EmbeddedTagService.swift b/kmgccc_player/Services/Automation/MP3EmbeddedTagService.swift
+index 41f48f5c..ef601a3c 100644
+--- a/kmgccc_player/Services/Automation/MP3EmbeddedTagService.swift
++++ b/kmgccc_player/Services/Automation/MP3EmbeddedTagService.swift
+@@ -145,8 +145,8 @@ nonisolated enum MP3EmbeddedTagService {
+         let version = sourceValues.version
+         var newFrames = preservedFrames
+         for field in fields.keys.sorted() {
+-            guard let frameID = frameIDs[field],
+-            let value = fields[field] ?? nil else { continue }
++            let frameID = frameIDs[field]!
++            guard let value = fields[field] ?? nil else { continue }
+             newFrames.append(try makeFrame(id: frameID, value: value, version: version))
+         }
+         let body = newFrames.reduce(into: Data()) { $0.append($1) }

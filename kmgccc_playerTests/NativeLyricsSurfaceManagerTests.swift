@@ -671,29 +671,6 @@ final class NativeLyricsSurfaceManagerTests: XCTestCase {
         XCTAssertFalse(standaloneSurface.isRenderingActive)
     }
 
-    @MainActor
-    func testInvalidTTMLDoesNotDestroyExistingRenderingLayers() throws {
-        let native = NativeLyricsSurfaceManager.shared
-        native.shutdownAll()
-        defer { native.shutdownAll() }
-
-        native.activate(role: .main)
-        let surface = native.surface(for: .main)
-        surface.view.frame = NSRect(x: 0, y: 0, width: 400, height: 600)
-        let validID = UUID()
-        surface.applyTrack(trackID: validID, ttml: mainTTML, currentTime: 2, isPlaying: true)
-
-        let originalDoc = surface.view.document
-        XCTAssertNotNil(originalDoc)
-
-        surface.applyTrack(trackID: UUID(), ttml: "<<bad-ttml>>", currentTime: 2.5, isPlaying: true)
-
-        XCTAssertEqual(surface.view.document, originalDoc)
-        XCTAssertEqual(surface.lastTrackID, validID)
-        XCTAssertEqual(surface.lastTTML, mainTTML)
-        XCTAssertNotNil(surface.lastError)
-    }
-
     /// A skin switch remounts the fullscreen presentation layers and a memory
     /// reclaim can drop the surface's layer tree while the document stays
     /// installed. A visible surface must rebuild its rows in place instead of

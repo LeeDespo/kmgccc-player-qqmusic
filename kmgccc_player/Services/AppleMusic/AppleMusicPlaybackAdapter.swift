@@ -724,14 +724,6 @@ final class AppleMusicPlaybackAdapter {
         artworkTask = nil
     }
 
-    private func updateEmptyPlayingPresentation(from info: AppleMusicBridge.NowPlayingInfo) {
-        updateUnavailablePresentation(
-            from: info,
-            titleKey: "apple_music.not_playing",
-            connectionState: .runningTemporarilyUnavailable
-        )
-    }
-
     private func updateUnavailablePresentation(
         from info: AppleMusicBridge.NowPlayingInfo,
         titleKey: String,

@@ -234,8 +234,7 @@ struct QQMusicTrackRow: View {
     }
 
     private var durationText: String {
-        guard let duration = track.duration, duration > 0 else { return "--:--" }
-        return String(format: "%d:%02d", duration / 60, duration % 60)
+        QQMusicTrackListChrome.duration(track.duration)
     }
 
     // MARK: - Row background

@@ -77,11 +77,10 @@ struct QQMusicHeroCard: View {
         useArtworkTint: false
     )
 
-    /// Local polarity of the rendered composite, and the decision behind it.
+    /// Local polarity of the rendered composite.
     /// Nil until the first map exists, which is why the fallback is light ink:
     /// an unmeasured card must not flash dark text over a dark cover.
     @State private var localPolarity: ArtworkForegroundPolarity?
-    @State private var localDecision: LocalForegroundDecision?
 
     // MARK: - Metrics (HomeHeroView's)
 
@@ -382,8 +381,7 @@ struct QQMusicHeroCard: View {
     }
 
     private var formattedDuration: String {
-        guard let duration = track.duration, duration > 0 else { return "--:--" }
-        return String(format: "%d:%02d", duration / 60, duration % 60)
+        QQMusicTrackListChrome.duration(track.duration)
     }
 
     // MARK: - Description geometry
@@ -527,7 +525,6 @@ struct QQMusicHeroCard: View {
             lightForeground: candidates.lightOnDarkBackground.foregroundPrimary,
             samples: [(readabilityMap, regions)]
         )
-        localDecision = decision
         // No implicit animation: blend-mode and colour tiers must not
         // interpolate through a grey middle state when the polarity flips.
         withTransaction(Transaction(animation: nil)) {
@@ -578,7 +575,6 @@ struct QQMusicHeroCard: View {
         readabilityMap = nil
         artworkAnalysis = nil
         localPolarity = nil
-        localDecision = nil
         guard let url = track.imageURL, !url.isEmpty, let loader = artworkLoader else { return }
         guard let data = await loader.artwork(for: url) else { return }
         guard !Task.isCancelled else { return }

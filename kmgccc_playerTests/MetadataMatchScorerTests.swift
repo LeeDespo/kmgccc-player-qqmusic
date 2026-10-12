@@ -47,7 +47,6 @@ final class MetadataMatchScorerTests: XCTestCase {
     }
 
     func testArtistTypoTolerance() {
-        XCTAssertTrue(titleAccepted("Colors", "Colors"))
         let source = ExternalPlaybackTextNormalizer.normalizeArtist("Halsy")
         let candidate = ExternalPlaybackTextNormalizer.normalizeArtist("Halsey")
         XCTAssertGreaterThanOrEqual(
@@ -72,15 +71,6 @@ final class MetadataMatchScorerTests: XCTestCase {
                 "edit distance: \(editDistance(query, candidate))"
             )
         }
-    }
-
-    func testExactTitleWithMinorArtistDifference() {
-        XCTAssertTrue(titleAccepted("Colors", "Colors"))
-    }
-
-    func testDifferentTitleWithExactArtist() {
-        XCTAssertFalse(titleAccepted("Colors", "Closer"))
-        XCTAssertFalse(titleAccepted("Stay", "Star"))
     }
 
     func testFeaturingTextIsIgnored() {

@@ -666,18 +666,6 @@ actor TrackArtworkCache {
         derivativesRootURL.appendingPathComponent("\(Self.stableDigest(imageKey)).png")
     }
 
-    private nonisolated static func readData(at url: URL) async -> Data? {
-        let task = Task.detached(priority: .utility) { () -> Data? in
-            guard !Task.isCancelled else { return nil }
-            return try? Data(contentsOf: url)
-        }
-        return await withTaskCancellationHandler {
-            await task.value
-        } onCancel: {
-            task.cancel()
-        }
-    }
-
     private nonisolated static func readImage(at url: URL, maxPixelSize: Int) async -> NSImage? {
         let task = Task.detached(priority: .utility) { () -> NSImage? in
             guard !Task.isCancelled else { return nil }

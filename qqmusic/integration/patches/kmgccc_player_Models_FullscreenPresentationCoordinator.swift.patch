@@ -1,0 +1,52 @@
+diff --git a/kmgccc_player/Models/FullscreenPresentationCoordinator.swift b/kmgccc_player/Models/FullscreenPresentationCoordinator.swift
+index d4bb82a6..23d9b14e 100644
+--- a/kmgccc_player/Models/FullscreenPresentationCoordinator.swift
++++ b/kmgccc_player/Models/FullscreenPresentationCoordinator.swift
+@@ -176,7 +176,7 @@ public final class FullscreenPresentationCoordinator {
+             skinID: skinID,
+             visualizerMode: targetVisualizerMode
+         )
+-        updateConfiguration(applyingMiniPlayerSpectrumDefaultIfNeeded(to: proposed))
++        updateConfiguration(proposed)
+     }
+ 
+     public func setVisualizerMode(_ mode: FullscreenVisualizerMode) {
+@@ -263,11 +263,9 @@ public final class FullscreenPresentationCoordinator {
+     @discardableResult
+     public func normalizeConfiguration() -> FullscreenPresentationConfiguration {
+         let current = configuration
+-        let normalized = applyingMiniPlayerSpectrumDefaultIfNeeded(
+-            to: FullscreenPresentationConfiguration(
+-                skinID: current.skinID,
+-                visualizerMode: current.visualizerMode
+-            )
++        let normalized = FullscreenPresentationConfiguration(
++            skinID: current.skinID,
++            visualizerMode: current.visualizerMode
+         )
+         if normalized != current {
+             updateConfiguration(normalized)
+@@ -322,12 +320,6 @@ public final class FullscreenPresentationCoordinator {
+         )
+     }
+ 
+-    private func applyingMiniPlayerSpectrumDefaultIfNeeded(
+-        to config: FullscreenPresentationConfiguration
+-    ) -> FullscreenPresentationConfiguration {
+-        config
+-    }
+-
+     private func clearSkinVisualizer(for skinID: String) {
+         guard let descriptor = SkinRegistry.registeredDescriptor(for: skinID),
+               descriptor.audio.hasLedMeter || descriptor.audio.supportsEmbeddedVisualizer else { return }
+@@ -415,10 +407,6 @@ public final class FullscreenPresentationCoordinator {
+         _ = normalizeConfiguration()
+     }
+ 
+-    public func validateOnStartup() {
+-        _ = normalizeConfiguration()
+-    }
+-
+     public func resetToDefaults() {
+         UserDefaults.standard.removeObject(forKey: Keys.userExplicitlyDisabledMiniPlayerSpectrum)
+         updateConfiguration(FullscreenPresentationConfiguration(

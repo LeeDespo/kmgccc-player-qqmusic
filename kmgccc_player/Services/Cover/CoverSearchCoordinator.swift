@@ -193,11 +193,6 @@ final class CoverSearchCoordinator {
         selectedForPreview = candidate
     }
 
-    /// Returns the image data for the currently selected preview candidate.
-    func getPreviewImageData() -> Data? {
-        selectedForPreview?.imageData
-    }
-
     /// Normalizes artist+album into a stable query string for ID generation.
     private func normalizeQuery(artist: String, album: String) -> String {
         let combined = "\(artist)-\(album)"

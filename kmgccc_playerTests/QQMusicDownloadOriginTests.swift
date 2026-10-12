@@ -166,14 +166,11 @@ final class QQMusicDownloadOriginTests: XCTestCase {
     /// on was recorded as the user's own, so every listening session looked like
     /// deliberate downloads — the cache read as empty and nothing was reclaimable.
     func testPlaybackDownloadsAreAutomatic() {
-        XCTAssertEqual(QQMusicDownloadOrigin.prefetch.displayName, "自动下载")
-        XCTAssertEqual(QQMusicDownloadOrigin.userRequested.displayName, "手动下载")
-
         let prefetched = makeTrack(origin: QQMusicDownloadOrigin.prefetch.rawValue)
-        XCTAssertTrue(prefetched.countsAsDownloadCache, "playback-downloaded audio is cache")
+        XCTAssertEqual(prefetched.qqMusicOrigin, .prefetch, "playback-downloaded audio is automatic")
 
         let chosen = makeTrack(origin: QQMusicDownloadOrigin.userRequested.rawValue)
-        XCTAssertFalse(chosen.countsAsDownloadCache, "a download the user asked for is not cache")
+        XCTAssertEqual(chosen.qqMusicOrigin, .userRequested, "a download the user asked for is their own")
     }
 
     /// A download needs a managed library, which is a separate question from

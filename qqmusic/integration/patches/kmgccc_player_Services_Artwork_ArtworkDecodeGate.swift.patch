@@ -1,0 +1,14 @@
+diff --git a/kmgccc_player/Services/Artwork/ArtworkDecodeGate.swift b/kmgccc_player/Services/Artwork/ArtworkDecodeGate.swift
+index c07b8515..151a8b4b 100644
+--- a/kmgccc_player/Services/Artwork/ArtworkDecodeGate.swift
++++ b/kmgccc_player/Services/Artwork/ArtworkDecodeGate.swift
+@@ -117,9 +117,4 @@ actor ArtworkDecodeGate {
+         // Resume with true = acquired slot
+         waiter.continuation.resume(returning: true)
+     }
+-
+-    /// Returns current diagnostics for debugging.
+-    var diagnostics: (running: Int, waiting: Int) {
+-        (running, waiters.count)
+-    }
+ }

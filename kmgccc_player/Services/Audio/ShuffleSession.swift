@@ -241,17 +241,6 @@ final class ShuffleSession {
         return Array(generatedTrackIDs[startIndex..<endIndex])
     }
 
-    /// Peek at the previous N tracks without moving.
-    func peekPrevious(count: Int) -> [UUID] {
-        guard isActive, currentIndex > 0 else { return [] }
-
-        let endIndex = currentIndex
-        let startIndex = max(0, endIndex - count)
-
-        guard startIndex < endIndex else { return [] }
-        return Array(generatedTrackIDs[startIndex..<endIndex])
-    }
-
     /// Insert tracks into the generated sequence after the current play-next block.
     @discardableResult
     func insertTracksAfterCurrent(_ tracks: [Track]) -> Int {
@@ -522,12 +511,6 @@ final class ShuffleSession {
     func jumpTo(trackID: UUID) {
         guard let targetIndex = generatedTrackIDs.firstIndex(of: trackID) else { return }
         
-        // If target is before current, we need to adjust history
-        if targetIndex < currentIndex {
-            // Move tracks from current position back to history
-            // This ensures forward navigation works correctly after jump
-        }
-        
         // Update current index
         currentIndex = targetIndex
         playNextInsertionAnchorID = nil
@@ -542,12 +525,6 @@ final class ShuffleSession {
         
         // Ensure queue is extended if needed
         extendQueueIfNeeded()
-    }
-
-    /// Check if a track was recently played.
-    func wasRecentlyPlayed(_ trackID: UUID, within: Int = 10) -> Bool {
-        let recent = Array(recentlyPlayedTrackIDs.suffix(within))
-        return recent.contains(trackID)
     }
 
     // MARK: - Statistics

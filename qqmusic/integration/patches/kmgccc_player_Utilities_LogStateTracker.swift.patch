@@ -1,0 +1,55 @@
+diff --git a/kmgccc_player/Utilities/LogStateTracker.swift b/kmgccc_player/Utilities/LogStateTracker.swift
+index b818b86a..027a5760 100644
+--- a/kmgccc_player/Utilities/LogStateTracker.swift
++++ b/kmgccc_player/Utilities/LogStateTracker.swift
+@@ -47,11 +47,6 @@ actor LogStateTracker {
+         return checkStateChanged(key: key, value: jsonString)
+     }
+     
+-    /// Clear tracked state for a specific key.
+-    func clearState(key: String) {
+-        stateValues.removeValue(forKey: key)
+-    }
+-    
+     /// Clear all tracked states.
+     func clearAll() {
+         stateValues.removeAll()
+@@ -88,38 +83,8 @@ final class LogStateTrackerSync {
+         return checkStateChanged(key: key, value: jsonString)
+     }
+     
+-    /// Clear tracked state for a specific key.
+-    func clearState(key: String) {
+-        stateValues.removeValue(forKey: key)
+-    }
+-    
+     /// Clear all tracked states.
+     func clearAll() {
+         stateValues.removeAll()
+     }
+ }
+-
+-// MARK: - Convenience Extensions for Common Patterns
+-
+-extension LogStateTracker {
+-    
+-    /// Track theme-related state changes.
+-    /// Common keys: "theme.updateThemeFromArtworkData", "theme.refreshPalette.scheme", "theme.applyTheme.palette"
+-    func trackThemeState(_ key: String, trackID: UUID?, checksum: UInt64) -> Bool {
+-        let value = "track=\(trackID?.uuidString ?? "nil")|checksum=\(checksum)"
+-        return checkStateChanged(key: key, value: value)
+-    }
+-    
+-    /// Track playback state changes.
+-    func trackPlaybackState(_ key: String, trackID: UUID?, isPlaying: Bool, time: Double) -> Bool {
+-        let timeInt = Int(time * 100) // Reduce precision to avoid noise
+-        let value = "track=\(trackID?.uuidString.prefix(8) ?? "nil")|playing=\(isPlaying)|time=\(timeInt)"
+-        return checkStateChanged(key: key, value: value)
+-    }
+-    
+-    /// Track fullscreen state changes.
+-    func trackFullscreenState(_ key: String, isActive: Bool, isTransitioning: Bool) -> Bool {
+-        let value = "active=\(isActive)|transitioning=\(isTransitioning)"
+-        return checkStateChanged(key: key, value: value)
+-    }
+-}

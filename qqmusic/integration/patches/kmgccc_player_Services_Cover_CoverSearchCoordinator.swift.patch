@@ -1,0 +1,16 @@
+diff --git a/kmgccc_player/Services/Cover/CoverSearchCoordinator.swift b/kmgccc_player/Services/Cover/CoverSearchCoordinator.swift
+index 52a53a39..11c5c3a4 100644
+--- a/kmgccc_player/Services/Cover/CoverSearchCoordinator.swift
++++ b/kmgccc_player/Services/Cover/CoverSearchCoordinator.swift
+@@ -193,11 +193,6 @@ final class CoverSearchCoordinator {
+         selectedForPreview = candidate
+     }
+ 
+-    /// Returns the image data for the currently selected preview candidate.
+-    func getPreviewImageData() -> Data? {
+-        selectedForPreview?.imageData
+-    }
+-
+     /// Normalizes artist+album into a stable query string for ID generation.
+     private func normalizeQuery(artist: String, album: String) -> String {
+         let combined = "\(artist)-\(album)"

@@ -217,11 +217,6 @@ final class QQMusicOnlineCoordinator {
         userDownloadProgress = progress
     }
 
-    /// Record one item's outcome, then let the box linger briefly.
-    private func finishUserDownloadItem(_ songMid: String, outcome: String) {
-        updateUserDownloadItem(songMid, outcome: outcome)
-    }
-
     /// The tracks of a running batch, so rows can mark them and selection can
     /// refuse them: downloading is not the same as downloaded, and picking one
     /// twice would queue it twice.
@@ -500,10 +495,6 @@ final class QQMusicOnlineCoordinator {
     /// *finished* `Task` is neither nil nor cancelled, so task identity cannot
     /// answer "is it still feeding the queue?".
     private var isPrefetching = false
-    /// How many browsing-wide preparations are running. A count for the same
-    /// reason as `listLoadsInFlight`: one finishing must not clear the state of
-    /// one still running.
-    private var isPreparingForBrowsing = 0
     /// Bumped whenever a loop starts or is stopped, so a finishing loop can tell
     /// whether the flag still belongs to it.
     private var prefetchGeneration: UInt64 = 0
@@ -624,15 +615,12 @@ final class QQMusicOnlineCoordinator {
     /// liked-mid set the hearts read from — a row's heart is wrong until that
     /// set has been filled.
     func prepareForBrowsing(force: Bool = false) async {
-        // A count, not a flag, and no early return: this is driven by the
+        // No early return: this is driven by the
         // surface's `.task`, which SwiftUI cancels when the surface goes away, so
         // a re-entry could find the *previous* prepare still "in flight" (its
         // guard set, its cancellation unobserved for a moment) and drop its own —
         // landing the page with nothing loaded and no way back except leaving
         // again. Each loader inside guards itself, so overlap is cheap.
-        isPreparingForBrowsing += 1
-        defer { isPreparingForBrowsing -= 1 }
-
         await loadInitialContentIfNeeded(force: force)
         await ensureLikedSongMidsIfNeeded(force: force)
         // The landing shelves read every account list, and the account library
@@ -834,9 +822,6 @@ final class QQMusicOnlineCoordinator {
     /// page's first request landed, so the button appeared to animate away on
     /// arrival and back a moment later. Whether a page offers a selection is a
     /// property of the page, not of a network round trip.
-    ///
-    /// Not derived from `QQMusicPage.isFiniteList`, which also calls the landing
-    /// page finite — there is no list there to act on.
     func offersBatchDownload(_ page: QQMusicPage) -> Bool {
         switch page {
         case .likedSongs, .newSongs, .playlist, .album, .toplist:
@@ -1680,13 +1665,6 @@ final class QQMusicOnlineCoordinator {
         try? await helper.fetchArtistDetail(name: nil, singerMid: singerMid)
     }
 
-    /// Artist biography, or nil when upstream has none.
-    func artistBiography(singerMid: String) async -> String? {
-        let detail = try? await helper.fetchArtistDetail(singerMid: singerMid)
-        let text = detail?.description?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (text?.isEmpty == false) ? text : nil
-    }
-
     /// Sort order for an artist's albums, hot or by release date. The same
     /// enumeration as the songs': "热门 / 最新" means the same thing in both tabs,
     /// and the upstream ignores ordering parameters in both, so the helper
@@ -2121,20 +2099,6 @@ final class QQMusicOnlineCoordinator {
             await storeTracks(playlistTracks, category: .playlistTracks, key: list.cacheKey)
         } catch {
             Log.warning("[QQMusicOnline] list paging failed: \(noteFailure(error))", category: .import)
-        }
-    }
-
-    /// Keep loading pages until the open list is complete.
-    ///
-    /// Bounded, and each pass must make progress, so a mis-reported total cannot
-    /// spin the loop.
-    func loadRemainingListTracks(maxPasses: Int = 12) async {
-        var passes = 0
-        while hasMorePlaylistTracks, passes < maxPasses, !Task.isCancelled {
-            passes += 1
-            let before = playlistTracks.count
-            await loadMorePlaylistTracks()
-            if playlistTracks.count == before { break }
         }
     }
 
@@ -2711,7 +2675,7 @@ final class QQMusicOnlineCoordinator {
     /// it — that is the surface for "how is the batch going", which is why this
     /// does not need to block.
     func startBatchDownload(_ tracks: [QQMusicOnlineTrack]) {
-        guard canDownload, stagingDirectory != nil else {
+        guard canDownload, let stagingDirectory else {
             Log.warning("[QQMusicOnline] batch download needs a managed library", category: .import)
             return
         }
@@ -2726,7 +2690,7 @@ final class QQMusicOnlineCoordinator {
         let generation = prefetchGeneration
         userBatchTask = Task { [weak self] in
             guard let self else { return }
-            await self.runBatch(selection)
+            await self.runBatch(selection, stagingDirectory: stagingDirectory)
             // Only the batch that is still current may clear the box.
             guard generation == self.prefetchGeneration else { return }
             self.endUserDownload()
@@ -2744,8 +2708,7 @@ final class QQMusicOnlineCoordinator {
     /// the upstream is sensitive to concurrent requests, and that part is cheap
     /// next to the transfer.)
     @discardableResult
-    private func runBatch(_ selection: [QQMusicOnlineTrack]) async -> (downloaded: Int, converted: Int, failed: Int) {
-        guard let stagingDirectory else { return (0, 0, 0) }
+    private func runBatch(_ selection: [QQMusicOnlineTrack], stagingDirectory: URL) async -> (downloaded: Int, converted: Int, failed: Int) {
         var downloaded = 0
         var converted = 0
         var failed = 0

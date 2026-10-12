@@ -778,21 +778,6 @@ final class SmartPlaybackController {
         return upcomingIDs.compactMap { id in sourceTracks.first { $0.id == id } }
     }
 
-    /// Get previous tracks (for UI history).
-    func getPreviousTracks(count: Int) -> [Track] {
-        guard isShuffleEnabled, let session = shuffleSession else {
-            // Linear mode: return previous N tracks.
-            let endIndex = currentSourceIndex
-            let startIndex = max(0, endIndex - count)
-            guard startIndex < endIndex else { return [] }
-            return Array(sourceTracks[startIndex..<endIndex])
-        }
-
-        // Shuffle mode: use session's peek.
-        let previousIDs = session.peekPrevious(count: count)
-        return previousIDs.compactMap { id in sourceTracks.first { $0.id == id } }
-    }
-
     private func playNextInsertionIndex(in queue: [Track], currentIndex: Int) -> Int {
         if let anchorID = playNextInsertionAnchorID,
            let anchorIndex = queue.firstIndex(where: { $0.id == anchorID }),

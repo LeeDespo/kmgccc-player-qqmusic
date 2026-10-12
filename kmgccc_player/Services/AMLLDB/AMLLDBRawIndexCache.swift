@@ -336,16 +336,6 @@ final class AMLLDBRawIndexCache: ObservableObject {
 
         Self.logger.info("[AMLLDB] Cache cleared")
     }
-
-    /// Get cache size in bytes
-    func getCacheSize() -> Int64 {
-        guard let attributes = try? FileManager.default.attributesOfItem(atPath: localIndexURL.path),
-              let size = attributes[.size] as? Int64
-        else {
-            return 0
-        }
-        return size
-    }
 }
 
 private struct AMLLDBRawIndexLoadResult: Sendable {

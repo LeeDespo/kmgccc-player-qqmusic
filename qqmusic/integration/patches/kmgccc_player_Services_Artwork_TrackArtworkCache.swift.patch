@@ -1,0 +1,23 @@
+diff --git a/kmgccc_player/Services/Artwork/TrackArtworkCache.swift b/kmgccc_player/Services/Artwork/TrackArtworkCache.swift
+index ae820f8d..365341ec 100644
+--- a/kmgccc_player/Services/Artwork/TrackArtworkCache.swift
++++ b/kmgccc_player/Services/Artwork/TrackArtworkCache.swift
+@@ -666,18 +666,6 @@ actor TrackArtworkCache {
+         derivativesRootURL.appendingPathComponent("\(Self.stableDigest(imageKey)).png")
+     }
+ 
+-    private nonisolated static func readData(at url: URL) async -> Data? {
+-        let task = Task.detached(priority: .utility) { () -> Data? in
+-            guard !Task.isCancelled else { return nil }
+-            return try? Data(contentsOf: url)
+-        }
+-        return await withTaskCancellationHandler {
+-            await task.value
+-        } onCancel: {
+-            task.cancel()
+-        }
+-    }
+-
+     private nonisolated static func readImage(at url: URL, maxPixelSize: Int) async -> NSImage? {
+         let task = Task.detached(priority: .utility) { () -> NSImage? in
+             guard !Task.isCancelled else { return nil }

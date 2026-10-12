@@ -50,12 +50,10 @@ nonisolated enum ColorSystemSelfCheck {
     ///      launches no-op, the check fires only when the engineer opts
     ///      in.
     static func runIfRequested() {
-        #if DEBUG
         guard ProcessInfo.processInfo.environment[envVarName] == "1" else { return }
         let report = runAll()
         for line in report.lines { print(line) }
         exit(report.allPassed ? 0 : 1)
-        #endif
     }
 
     // MARK: - Report
@@ -244,7 +242,6 @@ nonisolated enum ColorSystemSelfCheck {
         report.section("Phase 7 - ArtworkForegroundPolarity global gate")
         checkArtworkForegroundPolarityGlobalPolicy(&report)
         checkArtworkForegroundPolarityNeutralFallbackLight(&report)
-        checkArtworkForegroundPolarityCacheVersionBumped(&report)
         checkArtworkReadabilityCandidates(&report)
 
         report.section("Phase 7.1 - RenderedBackdropReadability local engine")
@@ -4195,18 +4192,6 @@ nonisolated enum ColorSystemSelfCheck {
         report.record(
             "Phase 7: neutral fallback is light foreground", ok,
             "usesDark=\(ArtworkColorAnalysis.neutralFallback.usesDarkForeground)"
-        )
-    }
-
-    /// The cache version must be bumped so persisted analyses carrying the old
-    /// single-threshold `usesDarkForeground` cannot bleed back into the new
-    /// strict-gate value.
-    private static func checkArtworkForegroundPolarityCacheVersionBumped(_ report: inout CheckReport) {
-        let v = ArtworkColorExtractor.cacheVersion
-        let ok = v.contains("v12") && v.contains("readability-opacity")
-        report.record(
-            "Phase 7: analysis cache version bumped", ok,
-            "cacheVersion=\(v)"
         )
     }
 

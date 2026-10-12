@@ -326,7 +326,7 @@ struct QQMusicDownloadProgressControl: View {
             if let outcome = item.outcome {
                 Text(outcome)
                     .font(.system(size: 11))
-                    .foregroundStyle(outcome == "失败" || outcome == "导入失败" ? Color.red : Color.secondary)
+                    .foregroundStyle(isFailed(item) ? Color.red : Color.secondary)
             } else if let engineTask, engineTask.isFailed {
                 Image(systemName: "exclamationmark.circle.fill")
                     .font(.system(size: 11))

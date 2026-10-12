@@ -698,7 +698,6 @@ private final class BKArtBackgroundLayerView: NSView {
         var shapeStates: [ShapeState] = []
         var shapeTints: [CGColor] = []
         var shapeSwatches: [CGColor] = []
-        var swatchDiagnostics: BKColorEngine.ShapeSwatchDiagnostics?
         var bgVariantIndex: Int = 0
         var seed: UInt64 = 0
 
@@ -1337,7 +1336,6 @@ private final class BKArtBackgroundLayerView: NSView {
             analysis: currentAnalysis
         )
         container.shapeSwatches = swatchResult.colors.isEmpty ? harmonized.shapePool : swatchResult.colors
-        container.swatchDiagnostics = swatchResult.diagnostics
 
         let count = targetShapeCount(using: &rng)
         let chosenShapes = chooseShapeImages(count: count, rng: &rng)
@@ -1421,10 +1419,6 @@ private final class BKArtBackgroundLayerView: NSView {
             container.dotGradient = nil
             container.dotRoot = nil
             container.backgroundToneLayer.isHidden = false
-
-#if DEBUG
-            assert(container.dotRoot == nil || container.dotRoot?.isHidden == true)
-#endif
 
         case .dot:
             if container.dotRoot == nil {
@@ -1680,7 +1674,6 @@ private final class BKArtBackgroundLayerView: NSView {
             analysis: currentAnalysis
         )
         container.shapeSwatches = swatchResult.colors.isEmpty ? harmonized.shapePool : swatchResult.colors
-        container.swatchDiagnostics = swatchResult.diagnostics
         var rng = BKSeededRandom(
             seed: swatchSeed
                 ^ UInt64(truncatingIfNeeded: container.shapeLayers.count)
@@ -2314,10 +2307,6 @@ private final class BKArtBackgroundLayerView: NSView {
                 }
             }
         }
-    }
-
-    private var shouldFreezeVisualUpdates: Bool {
-        speedTarget <= 0.01 || speedCurrent <= 0.01
     }
 
     private func startSpeedRampTimerIfNeeded() {
@@ -3765,10 +3754,6 @@ private final class BKArtBackgroundLayerView: NSView {
 
     private var initialBackgroundUpgradeDelay: UInt64 {
         resourceProfile == .cassetteForeground ? 900_000_000 : 180_000_000
-    }
-
-    private var initialMaskWarmupDelay: UInt64 {
-        resourceProfile == .cassetteForeground ? 700_000_000 : 420_000_000
     }
 
     private var shouldAutoWarmMasksOnIdle: Bool {

@@ -176,17 +176,6 @@ final class LyricsSurfaceManager {
         NativeLyricsSurfaceManager.shared.deactivate(role: role)
     }
 
-    /// Kept as named lifecycle hooks for the fullscreen coordinator. Native
-    /// surfaces are paused/deactivated here; no legacy renderer is created.
-    func teardownMainStore() {
-        deactivate(role: .main)
-    }
-
-    func teardownFullscreenStores() {
-        deactivate(role: .fullscreen)
-        deactivate(role: .fullscreenCoverBlurHighlight)
-    }
-
     // MARK: - Playback and configuration
 
     func applyTrack(

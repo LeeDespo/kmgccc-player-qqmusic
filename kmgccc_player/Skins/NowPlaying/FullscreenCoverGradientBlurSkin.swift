@@ -275,7 +275,6 @@ private struct CoverGradientBlurSkinBackgroundBridge: View {
             .compositingGroup()
             .blur(radius: transitionBlurRadius, opaque: true)
             .onChange(of: targetCentered) { _, newValue in
-                print("[CoverBlur] targetCentered changed to \(newValue), current pos=\(transitionPosition) isActive=\(isTransitionActive)")
                 runLayoutTransition(to: newValue)
             }
             .onAppear {
@@ -349,7 +348,6 @@ private struct CoverGradientBlurSkinBackgroundBridge: View {
         case .transition:
             transitionRenderedFrame = frame
         }
-        print("[CoverBlur] frame arrived: \(frame.placement) cs=\(frame.artworkChecksum) leading=\(leadingRenderedFrame != nil) centered=\(centeredRenderedFrame != nil) transition=\(transitionRenderedFrame != nil) isActive=\(isTransitionActive)")
         prepareBokehSourcesIfPossible()
     }
 
@@ -378,23 +376,18 @@ private struct CoverGradientBlurSkinBackgroundBridge: View {
             // "Bokeh shows briefly -> Gaussian fallback" jank and choppiness
             // during auto track switching. The position/blur animation must
             // run to completion.
-            if wasBokeh {
-                // The base surface holds textures from the previous artwork,
-                // but the Metal renderer is still animating position/opacity
-                // and its blur is visually acceptable for the remainder of
-                // this transition. Keep it running; do NOT clear the base
-                // source set or switch to Gaussian. New sources for the new
-                // artwork are prepared in the background
-                // (acceptRenderedFrame -> prepareBokehSourcesIfPossible) and
-                // stored in bokehPreparedSourceSet. The actual swap is
-                // deferred to retirement (after the position settles) so the
-                // texture upload does not cause frame drops during the
-                // position animation and the blur decrease + overlay fade-out
-                // start simultaneously.
-                print("[CoverBlur] artwork changed during Bokeh transition: keeping Bokeh, pos=\(transitionPosition)")
-            } else {
-                print("[CoverBlur] artwork changed during non-Bokeh transition: letting it continue pos=\(transitionPosition)")
-            }
+            // The base surface holds textures from the previous artwork,
+            // but the Metal renderer is still animating position/opacity
+            // and its blur is visually acceptable for the remainder of
+            // this transition. Keep it running; do NOT clear the base
+            // source set or switch to Gaussian. New sources for the new
+            // artwork are prepared in the background
+            // (acceptRenderedFrame -> prepareBokehSourcesIfPossible) and
+            // stored in bokehPreparedSourceSet. The actual swap is
+            // deferred to retirement (after the position settles) so the
+            // texture upload does not cause frame drops during the
+            // position animation and the blur decrease + overlay fade-out
+            // start simultaneously.
         } else {
             // No transition active. Clear the source sets (old artwork
             // textures) so the next transition prepares fresh sources.
@@ -405,10 +398,7 @@ private struct CoverGradientBlurSkinBackgroundBridge: View {
             let targetCentered = Self.shouldCenterArtwork(for: context)
             let targetPosition: CGFloat = targetCentered ? 1 : 0
             if abs(transitionPosition - targetPosition) > 0.001 {
-                print("[CoverBlur] artwork changed: no transition, starting one pos=\(transitionPosition)->\(targetPosition)")
                 runLayoutTransition(to: targetCentered)
-            } else {
-                print("[CoverBlur] artwork changed: already at target pos=\(targetPosition)")
             }
         }
 
@@ -447,9 +437,6 @@ private struct CoverGradientBlurSkinBackgroundBridge: View {
         guard bokehPrewarmEnabled, !isTransitionActive else { return }
 
         let tier = preferredBokehTier()
-        let hasAllFrames = leadingRenderedFrame != nil
-            && centeredRenderedFrame != nil
-            && transitionRenderedFrame != nil
         guard BokehTransitionMetalContext.shared.availability.isReady,
               let frames = BokehTransitionSourceFrames(
                 leading: leadingRenderedFrame,
@@ -467,15 +454,9 @@ private struct CoverGradientBlurSkinBackgroundBridge: View {
                 ),
                 tier: tier
               ) else {
-            if hasAllFrames {
-                let leadingW = leadingRenderedFrame?.logicalCanvasSize.width ?? 0
-                let leadingH = leadingRenderedFrame?.logicalCanvasSize.height ?? 0
-                print("[CoverBlur] prepare skipped despite all frames: metal=\(BokehTransitionMetalContext.shared.availability.isReady) viewport=\(bokehViewportSize) leadingSize=\(leadingW)x\(leadingH) tier=\(tier.rawValue)")
-            }
             return
         }
 
-        print("[CoverBlur] preparing Bokeh source set: cs=\(frames.leading.artworkChecksum) tier=\(tier.rawValue) isActive=\(isTransitionActive)")
         bokehSourcePreparer.prepare(
             frames: frames,
             renderSize: renderSize,
@@ -655,10 +636,7 @@ private struct CoverGradientBlurSkinBackgroundBridge: View {
         let targetPosition: CGFloat = targetCentered ? 1 : 0
         let shouldRetargetImmediately = isTransitionActive
 
-        print("[CoverBlur] runLayoutTransition: target=\(targetPosition) pos=\(transitionPosition) isActive=\(isTransitionActive)")
-
         guard transitionPosition != targetPosition || isTransitionActive else {
-            print("[CoverBlur] runLayoutTransition: guard returned, already at target")
             retireTransitionEffect()
             return
         }
@@ -727,7 +705,6 @@ private struct CoverGradientBlurSkinBackgroundBridge: View {
                 }
 
                 if artworkChanged {
-                    print("[CoverBlur] retirement: polling for source set, active=\(activeChecksum ?? 0) target=\(targetChecksum) prepared=\(bokehPreparedSourceSet?.identity.artworkChecksum ?? 0)")
                     // Poll for the source set during the blur fall. When
                     // ready, swap + start the overlay fade-out.
                     let pollInterval: UInt64 = 16_000_000
@@ -738,7 +715,6 @@ private struct CoverGradientBlurSkinBackgroundBridge: View {
                         elapsed += pollInterval
                         if let prepared = bokehPreparedSourceSet,
                            prepared.identity.artworkChecksum == targetChecksum {
-                            print("[CoverBlur] retirement swap+fade at +\(elapsed / 1_000_000)ms: \(activeChecksum ?? 0) -> \(targetChecksum)")
                             let oldSourceSet = bokehSourceSets[0]
                             withoutSwiftUIAnimation {
                                 bokehSourceSets[1] = oldSourceSet
@@ -749,9 +725,6 @@ private struct CoverGradientBlurSkinBackgroundBridge: View {
                             swapped = true
                             break
                         }
-                    }
-                    if !swapped {
-                        print("[CoverBlur] retirement: source set not ready within blur fall, no swap")
                     }
                     // Wait for the overlay fade-out to complete. If the swap
                     // happened late in the blur fall, the fade-out (0.60 s)

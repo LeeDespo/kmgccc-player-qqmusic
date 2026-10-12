@@ -56,11 +56,6 @@ struct QQMusicTrackDescriptionSheet: View {
     /// "歌曲 - 歌手", the same composition 查看详情 uses, so the two sheets read
     /// alike.
     private var subtitle: String {
-        let title = track.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let artist = track.artist.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !title.isEmpty, !artist.isEmpty { return "\(title) - \(artist)" }
-        if !title.isEmpty { return title }
-        if !artist.isEmpty { return artist }
-        return "未知歌曲"
+        QQMusicTrackDetail.subtitle(for: track)
     }
 }

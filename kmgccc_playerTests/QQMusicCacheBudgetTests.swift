@@ -23,11 +23,17 @@ final class QQMusicCacheBudgetTests: XCTestCase {
 
     /// A track whose audio file is really on disk, so sizes are measured rather
     /// than assumed.
+    ///
+    /// `libraryRootSnapshot` overrides the per-track root, which exists to
+    /// reproduce the state a relocated library leaves behind: the per-track
+    /// snapshot keeps the *old* path (or is empty), so resolving through the
+    /// track alone finds nothing.
     private func makeTrack(
         _ name: String,
         megabytes: Int,
         origin: QQMusicDownloadOrigin?,
-        downloadedAt: Date? = nil
+        downloadedAt: Date? = nil,
+        libraryRootSnapshot: String? = nil
     ) throws -> Track {
         let relative = "Tracks/\(UUID().uuidString)/\(name).bin"
         let url = root.appendingPathComponent(relative)
@@ -46,37 +52,7 @@ final class QQMusicCacheBudgetTests: XCTestCase {
             duration: 100,
             fileBookmarkData: Data(),
             mediaLocator: .managed(libraryRelativePath: relative),
-            libraryRootSnapshot: root.path
-        )
-    }
-
-    /// The same measurement, but with a configurable root snapshot.
-    ///
-    /// Exists to reproduce the state a relocated library leaves behind: the
-    /// per-track snapshot keeps the *old* path (or is empty), so resolving
-    /// through the track alone finds nothing.
-    private func makeTrack(
-        _ name: String,
-        megabytes: Int,
-        origin: QQMusicDownloadOrigin?,
-        libraryRootSnapshot: String
-    ) throws -> Track {
-        let relative = "Tracks/\(UUID().uuidString)/\(name).bin"
-        let url = root.appendingPathComponent(relative)
-        try FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        try Data(count: megabytes * 1_000_000).write(to: url)
-        return Track(
-            title: name,
-            qqMusicSongMid: name,
-            qqMusicDownloadOrigin: origin?.rawValue,
-            qqMusicDownloadedAt: Date(timeIntervalSince1970: 1_700_000_000),
-            duration: 100,
-            fileBookmarkData: Data(),
-            mediaLocator: .managed(libraryRelativePath: relative),
-            libraryRootSnapshot: libraryRootSnapshot
+            libraryRootSnapshot: libraryRootSnapshot ?? root.path
         )
     }
 
